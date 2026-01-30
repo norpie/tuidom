@@ -1,0 +1,11 @@
+[package]
+name = "tuidom"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A DOM-based terminal UI library for Rust"
+
+[dependencies]
+# Re-export macro
+tuidom-derive = { path = "../tuidom-derive" }

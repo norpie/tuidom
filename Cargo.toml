@@ -1,6 +1,9 @@
-[package]
-name = "tuidom"
+[workspace]
+members = ["tuidom", "tuidom-derive"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
+authors = ["norpie"]
+repository = "https://github.com/norpie/tuidom"
