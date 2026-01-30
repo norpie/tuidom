@@ -17,8 +17,8 @@
     - [ ] Enables: custom graphics, charts, half-block images, native image protocols
 - [ ] Typed style struct for known properties + `HashMap<String, String>` fallback for custom/unknown
 - [ ] Attributes stored as `HashMap<String, String>`
-- [ ] `get_element(id)` for ID-based lookup — also exposes computed layout info (position, size)
-- [ ] `element_at(x, y)` for hit testing — returns topmost element at coordinates
+- [ ] `get_node(id)` for ID-based lookup — also exposes computed layout info (position, size)
+- [ ] `node_at(x, y)` for hit testing — returns topmost node at coordinates
 - [ ] Child ordering: `insert_before(parent, child, before_sibling)`, `move_child()`
 - [ ] Input (text input with cursor, selection, internal state)
   - [ ] Full selection support (mouse drag, ctrl+a, shift+arrows)
@@ -30,7 +30,7 @@
 ## Cursor
 
 - [ ] Fake cursor — real terminal cursor hidden, we render cursors as styled cells
-- [ ] Cursor style (document-wide default, per-element override):
+- [ ] Cursor style (document-wide default, per-node override):
   - [ ] Shape: block (semi-transparent), hollow_block, underline, bar
   - [ ] Colors: `cursor_bg`, `cursor_fg` (part of style system)
 - [ ] Default behavior:
@@ -45,30 +45,30 @@
 - [ ] Focus is `Option<NodeId>` per stacking context — can be `None`
 - [ ] Tab order follows DOM definition order
 - [ ] Arrow key navigation based on visual/spatial distance:
-  - [ ] Press arrow → focus nearest focusable element in that direction
+  - [ ] Press arrow → focus nearest focusable node in that direction
   - [ ] Distance measured edge-to-edge
   - [ ] Tiebreaker: topmost (smallest y)
   - [ ] No wrap — if nothing in that direction, do nothing (downstream can override via events)
-- [ ] Tab when focus is `None` focuses first focusable element (re-enter cycle)
+- [ ] Tab when focus is `None` focuses first focusable node (re-enter cycle)
 - [ ] Imperative control:
   - [ ] `doc.focus(node_id)` — succeeds only if node is in active context (not behind a modal)
   - [ ] `doc.blur()` — sets focus to `None` within current context
 - [ ] Focusable property: Box defaults to false, Input defaults to true
 - [ ] Escape key behavior:
-  - [ ] First press: blur current element (focus → None)
+  - [ ] First press: blur current node (focus → None)
   - [ ] Second press (when already None): propagates to handlers (e.g., close modal)
 - [ ] Focus stack for modal nesting (see Layering)
 
 ## Layering & Stacking Contexts
 
 Solves the "dropdown in modal" problem: a dropdown in App1 shouldn't appear above a modal in App2. 
-Each stacking context is an isolated layering environment — elements can't visually escape their context.
+Each stacking context is an isolated layering environment — nodes can't visually escape their context.
 
 - [ ] Stacking contexts: created explicitly (`stacking_context: true`) or implicitly by modals
   - [ ] Children are stacked relative to their context, not globally
   - [ ] Prevents z-index bleed-through between unrelated UI sections
 - [ ] Local layers within each stacking context (ordered lowest to highest):
-  - [ ] `content` — default layer for normal elements
+  - [ ] `content` — default layer for normal nodes
   - [ ] `overlay` — dropdowns, tooltips (above content, below modals)
   - [ ] `modal` — modals (creates a new nested stacking context)
 - [ ] Global escape hatch: `top` layer at root level, bypasses all contexts (for toasts, drag visuals, etc.)
@@ -79,15 +79,15 @@ Each stacking context is an isolated layering environment — elements can't vis
   - [ ] Nested modals: inner modal traps focus, outer modal is inert until inner closes
 - [ ] Focus stack for modals:
   - [ ] On modal open: push current focus to stack, auto-focus first focusable in modal
-  - [ ] On modal close: pop stack, restore focus to previous element
-  - [ ] If stored element no longer exists, fall back to first focusable in context
-- [ ] `top` layer elements: not focusable by default, optionally focusable if they have actions (e.g., dismissable toasts)
+  - [ ] On modal close: pop stack, restore focus to previous node
+  - [ ] If stored node no longer exists, fall back to first focusable in context
+- [ ] `top` layer nodes: not focusable by default, optionally focusable if they have actions (e.g., dismissable toasts)
 
 ## Scrolling & Virtualization
 
 - [ ] Auto-cull at render time for any overflow-scrollable container:
-  - [ ] Skip painting elements outside the visible scroll area
-  - [ ] Elements still exist in DOM, just not rendered when off-screen
+  - [ ] Skip painting nodes outside the visible scroll area
+  - [ ] Nodes still exist in DOM, just not rendered when off-screen
   - [ ] Best-effort for variable-height items (may need measurement)
 - [ ] Explicit opt-in virtualization widget (name TBD) for large uniform-sized collections
   - [ ] Works for both vertical and horizontal scrolling
@@ -122,9 +122,9 @@ Each stacking context is an isolated layering environment — elements can't vis
 - [ ] Explicit inheritance via `StyleValue::Inherit` — nothing inherits unless specified
 - [ ] Style resolution walks parent chain for inherited values, caches results
 - [ ] Pseudo-state style overrides (merged on top of base style):
-  - [ ] `set_focus_style()` — when element is focused (hover = focus)
-  - [ ] `set_active_style()` — when element is being pressed
-  - [ ] `set_disabled_style()` — when element is disabled
+  - [ ] `set_focus_style()` — when node is focused (hover = focus)
+  - [ ] `set_active_style()` — when node is being pressed
+  - [ ] `set_disabled_style()` — when node is disabled
 
 ## Borders
 
@@ -134,7 +134,7 @@ Each stacking context is an isolated layering environment — elements can't vis
   - [ ] Per-side control (top, right, bottom, left independently)
 - [ ] Half-block edges (opt-in, later milestone):
   - [ ] Uses `▀▄▌▐` characters with fg/bg colors to create smooth color transitions
-  - [ ] Renderer detects adjacent element colors at boundary cells
+  - [ ] Renderer detects adjacent node colors at boundary cells
   - [ ] Modern look without traditional box-drawing characters
 
 ## Colors
@@ -151,8 +151,8 @@ Each stacking context is an isolated layering environment — elements can't vis
   - [ ] `with_alpha(a)`
   - [ ] `contrast()` — compute readable contrast color
   - [ ] Explicit color space: `.as_hsl().lighten(0.1)` if you want HSL math
-- [ ] Derive from current element: `CurrentBg.darken(0.1)`, `CurrentFg.with_alpha(0.5)`
-  - [ ] Resolution order: variables resolved first, then `CurrentBg`/`CurrentFg` reference the element's resolved colors, then derivations applied
+- [ ] Derive from current node: `CurrentBg.darken(0.1)`, `CurrentFg.with_alpha(0.5)`
+  - [ ] Resolution order: variables resolved first, then `CurrentBg`/`CurrentFg` reference the node's resolved colors, then derivations applied
 - [ ] Alpha blending at render time:
   - [ ] Render back-to-front (painter's algorithm)
   - [ ] Semi-transparent colors blend with buffer content below
@@ -200,7 +200,7 @@ Each stacking context is an isolated layering environment — elements can't vis
   - [ ] Keyboard: key down, key up
   - [ ] Mouse: click, mouse down, mouse up, wheel (raw input)
   - [ ] Focus: focus, blur
-    - [ ] Hover = focus: mousing over a focusable element focuses it (no separate hover state)
+    - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
   - [ ] Scroll: `on_scroll` fires on overflow containers when scroll position changes
   - [ ] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
 - [ ] Listener registration returns handle for removal
@@ -237,11 +237,11 @@ Each stacking context is an isolated layering environment — elements can't vis
 - [ ] No built-in Ctrl+C or signal handling — user's responsibility (use `tokio::signal`, etc.)
 - [ ] `doc.bell()` — trigger terminal bell
 
-## DSL / Element Macro
+## DSL / Node Macro
 
-- [ ] RSX-style `element!` macro for declaring DOM structure:
+- [ ] RSX-style `node!` macro for declaring DOM structure:
   ```rust
-  element!(doc,
+  node!(doc,
       box id="container" style={my_style} {
           text { "Hello World" }
           box focusable=true on_click={handler} {
@@ -254,7 +254,7 @@ Each stacking context is an isolated layering environment — elements can't vis
 - [ ] Returns root `NodeId`
 - [ ] Expression escape hatch `{expr}` for inserting dynamic children:
   ```rust
-  element!(doc,
+  node!(doc,
       box {
           {some_component(doc, props)}  // Any expr returning NodeId
       }
@@ -275,11 +275,11 @@ Each stacking context is an isolated layering environment — elements can't vis
   - [ ] Animation ticks
 - [ ] Snapshot serialization (bincode for speed):
   - [ ] Full document snapshot for comparison/testing (no restore — handlers can't be serialized)
-  - [ ] Per-element serialization: `doc.serialize_element(node_id)` for external storage/comparison
+  - [ ] Per-node serialization: `doc.serialize_node(node_id)` for external storage/comparison
   - [ ] Captures: DOM structure, styles, text content, computed layout, focus/selection state
 - [ ] Built-in debug overlay (toggle-able):
   - [ ] FPS / frame time
-  - [ ] Element count
+  - [ ] Node count
   - [ ] Render latency
   - [ ] Layout latency
   - [ ] Event latency
