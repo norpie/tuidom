@@ -1,7 +1,7 @@
 //! Render + event loop — the main `Document::run()` implementation.
 
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event::KeyEventKind;
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode};
@@ -43,13 +43,13 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                         screen_w = w;
                         screen_h = h;
                         renderer.resize(w, h);
-                        doc.compute_layout(w, h);
-                        let stats = renderer.render_full(&doc).unwrap_or_default();
-                        doc.record_frame_metrics(
-                            std::time::Instant::now().elapsed(),
-                            Duration::ZERO,
-                            stats,
-                        );
+
+                        doc.dispatch_event(crate::event::Event::Resize(crate::event::ResizeEvent {
+                            width: w,
+                            height: h,
+                        }));
+
+                        render_full_timed(&doc, &mut renderer, screen_w, screen_h);
                     }
                     Some(Ok(CrosstermEvent::Key(key))) => {
                         if key.kind == KeyEventKind::Press {
@@ -74,7 +74,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     Ok(())
 }
 
-/// Render a frame with timing for the debug overlay.
+/// Render a diffed frame with timing for the debug overlay.
 fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) {
     let frame_start = Instant::now();
 
@@ -83,6 +83,20 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
     let layout_time = layout_start.elapsed();
 
     let stats = renderer.render_frame(doc).unwrap_or_default();
+
+    let frame_time = frame_start.elapsed();
+    doc.record_frame_metrics(frame_time, layout_time, stats);
+}
+
+/// Render a full redraw with timing for the debug overlay.
+fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) {
+    let frame_start = Instant::now();
+
+    let layout_start = Instant::now();
+    doc.compute_layout(sw, sh);
+    let layout_time = layout_start.elapsed();
+
+    let stats = renderer.render_full(doc).unwrap_or_default();
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);

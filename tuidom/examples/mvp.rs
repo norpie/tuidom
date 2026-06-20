@@ -62,8 +62,12 @@ async fn main() {
     let d = doc.clone();
     let ov = opacity_visible.clone();
 
-    doc.on(move |event: &Event| match event {
-        Event::KeyPress(key) => match key.code {
+    doc.on(move |event: &Event| {
+        let Event::KeyPress(key) = event else {
+            return;
+        };
+
+        match key.code {
             // Toggle opacity — engine picks up style change and animates
             KeyCode::Char(' ') => {
                 let was_visible = ov.fetch_not(Ordering::Relaxed);
@@ -73,9 +77,6 @@ async fn main() {
             // Quit
             KeyCode::Char('q') | KeyCode::Esc => d.quit(),
             _ => {}
-        },
-        Event::Resize(_size) => {
-            // Engine handles relayout automatically.
         }
     });
 
