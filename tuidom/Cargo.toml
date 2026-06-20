@@ -7,6 +7,7 @@ repository.workspace = true
 description = "A DOM-based terminal UI library for Rust"
 
 [dependencies]
+crossterm = "0.29.0"
 dashmap = "6.2.1"
 palette = "0.7.6"
 taffy = "0.11.0"
