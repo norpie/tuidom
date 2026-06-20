@@ -110,20 +110,11 @@ impl Grid {
     pub fn fill_rect(&mut self, x: u16, y: u16, w: u16, h: u16, cell: Cell, alpha: f64) {
         let x_end = (x + w).min(self.width);
         let y_end = (y + h).min(self.height);
-        let mut samples = Vec::new();
         for row in y..y_end {
             for col in x..x_end {
                 let dst = &self.cells[row as usize][col as usize];
-                let blended = blend_cell(dst, &cell, alpha);
-                if row == y && (col == x || col == x + w / 2 || col == x_end - 1) {
-                    samples.push(format!("  ({col},{row}) dst={dst:?} src={cell:?} alpha={alpha:.6} → {blended:?}"));
-                }
-                self.cells[row as usize][col as usize] = blended;
+                self.cells[row as usize][col as usize] = blend_cell(dst, &cell, alpha);
             }
-        }
-        if !samples.is_empty() {
-            log::info!("[fill_rect] {x},{y} {w}x{h} alpha={alpha:.6} cell={cell:?}");
-            for s in &samples { log::info!("{s}"); }
         }
     }
 

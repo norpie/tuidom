@@ -36,19 +36,13 @@ enum MeasureContext {
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
     let root = match doc.root() {
         Some(r) => r,
-        None => {
-            log::info!("[layout] no root set");
-            return;
-        }
+        None => return,
     };
-
-    log::info!("[layout] screen={screen_width}x{screen_height}, root={root:?}");
 
     let mut taffy_tree = TaffyTree::<MeasureContext>::new();
     let mut mapping = Vec::new();
 
     let taffy_root = build_node(doc, &mut taffy_tree, root, &mut mapping);
-    log::info!("[layout] mapping has {} nodes", mapping.len());
 
     if let Some(taffy_root) = taffy_root {
         let available = Size {
@@ -69,14 +63,11 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
                     width: layout.size.width.round() as u16,
                     height: layout.size.height.round() as u16,
                 };
-                log::info!("[layout] node={node_id:?} rect={rect:?}");
                 if let Some(mut data) = doc.inner.nodes.get_mut(node_id) {
                     data.layout = Some(rect);
                 }
             }
         }
-    } else {
-        log::info!("[layout] build_node returned None for root");
     }
 }
 
@@ -158,13 +149,13 @@ fn build_container(
 
 /// Measure function passed to taffy for computing text node sizes.
 fn measure_fn(
-    known_dimensions: Size<Option<f32>>,
-    available_space: Size<AvailableSpace>,
+    _known_dimensions: Size<Option<f32>>,
+    _available_space: Size<AvailableSpace>,
     _node_id: taffy::NodeId,
     context: Option<&mut MeasureContext>,
     _style: &Style,
 ) -> Size<f32> {
-    let result = match context {
+    match context {
         Some(MeasureContext::Text { content }) => {
             let width = content
                 .lines()
@@ -174,12 +165,7 @@ fn measure_fn(
             Size { width, height }
         }
         _ => Size::ZERO,
-    };
-    log::info!(
-        "[measure] known={known_dimensions:?} avail={available_space:?} ctx={:?} result={result:?}",
-        context.is_some()
-    );
-    result
+    }
 }
 
 // ---------------------------------------------------------------------------

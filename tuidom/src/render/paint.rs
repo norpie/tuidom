@@ -19,18 +19,12 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
 fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
     let view = match doc.get_node(node_id) {
         Some(v) => v,
-        None => {
-            log::info!("[paint] node {node_id:?} not found");
-            return;
-        }
+        None => return,
     };
 
     let layout = match view.layout {
         Some(l) => l,
-        None => {
-            log::info!("[paint] node {node_id:?} has no layout");
-            return;
-        }
+        None => return,
     };
 
     let resolved = doc.resolved_style(node_id);
@@ -45,7 +39,6 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
 
     match &view.kind {
         NodeKindView::Box => {
-            log::info!("[paint] Box {node_id:?} at {},{} {}x{} alpha={alpha} bg={bg_rgb:?}", layout.x, layout.y, layout.width, layout.height);
             if let Some(bg) = bg_rgb {
                 let bg_cell = Cell { ch: ' ', fg: None, bg: Some(bg) };
                 grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell, alpha);
@@ -53,7 +46,6 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
         }
 
         NodeKindView::Text { content } => {
-            log::info!("[paint] Text {node_id:?} at {},{} {}x{} alpha={alpha} bg={bg_rgb:?} fg={fg_rgb:?}", layout.x, layout.y, layout.width, layout.height);
             if let Some(bg) = bg_rgb {
                 let bg_cell = Cell { ch: ' ', fg: None, bg: Some(bg) };
                 grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell, alpha);
