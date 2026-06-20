@@ -13,6 +13,8 @@ mod id;
 mod inner;
 /// Render + event loop.
 mod event_loop;
+/// Animation driver and types.
+pub mod animation;
 /// Taffy-based flexbox layout.
 pub(crate) mod layout;
 /// Node data storage and views.

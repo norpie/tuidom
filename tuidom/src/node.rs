@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use crate::animation::TransitionConfig;
+use crate::animation::TransitionProperty;
 use crate::id::NodeId;
 use crate::style::resolution::ResolvedStyle;
 use crate::style::Style;
@@ -53,6 +55,8 @@ pub(crate) struct NodeData {
     pub resolved_style: RwLock<Option<ResolvedStyle>>,
     /// Computed layout (set by [`crate::layout::compute_layout`]).
     pub layout: Option<LayoutRect>,
+    /// Transition configs for animatable properties.
+    pub transition_configs: HashMap<TransitionProperty, TransitionConfig>,
     /// Arbitrary string attributes.
     pub attrs: HashMap<String, String>,
 }
@@ -67,6 +71,7 @@ impl NodeData {
             style: Style::default(),
             resolved_style: RwLock::new(None),
             layout: None,
+            transition_configs: HashMap::new(),
             attrs: HashMap::new(),
         }
     }
@@ -80,6 +85,7 @@ impl NodeData {
             style: Style::default(),
             resolved_style: RwLock::new(None),
             layout: None,
+            transition_configs: HashMap::new(),
             attrs: HashMap::new(),
         }
     }

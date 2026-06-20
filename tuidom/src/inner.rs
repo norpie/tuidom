@@ -1,11 +1,12 @@
 //! Internal document state behind `Arc`.
 
 use std::sync::atomic::AtomicU64;
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
 use tokio::sync::Notify;
 
+use crate::animation::driver::AnimationDriver;
 use crate::id::NodeId;
 use crate::node::NodeData;
 
@@ -28,6 +29,17 @@ pub(crate) struct DocumentInner {
 
     /// Shutdown signal — triggered by [`Document::quit`].
     pub shutdown: RwLock<bool>,
+
+    /// Animation driver for managing transitions.
+    pub animation: Arc<Mutex<AnimationDriver>>,
+
+    /// Configuration change signal for the animation tick task.
+    pub anim_config_changed: Arc<Notify>,
+
+    /// Animation tick signal — the render loop `select!`s on this.
+    /// Woken by the tick task each frame. When no tick task runs,
+    /// this never fires (passive idle).
+    pub anim_tick: Arc<Notify>,
 }
 
 impl DocumentInner {

@@ -1,7 +1,11 @@
 //! The [`Document`] type — the public API surface for tuidom.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use tokio::sync::Notify;
+
+use crate::animation::driver::{spawn_tick_task, AnimationDriver};
+use crate::animation::TransitionConfig;
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
 use crate::node::{NodeData, NodeView};
@@ -44,6 +48,9 @@ impl Document {
                 root: std::sync::RwLock::new(None),
                 notify: tokio::sync::Notify::new(),
                 shutdown: std::sync::RwLock::new(false),
+                animation: Arc::new(Mutex::new(AnimationDriver::new())),
+                anim_config_changed: Arc::new(Notify::new()),
+                anim_tick: Arc::new(Notify::new()),
             }),
         }
     }
@@ -99,30 +106,52 @@ impl Document {
     }
 
     // ------------------------------------------------------------------
+    // Transitions
+    // ------------------------------------------------------------------
+
+    /// Set a transition configuration for a node.
+    ///
+    /// When the given property changes (via [`update_style`] or [`set_style`]),
+    /// the engine will animate the change over the specified duration and easing.
+    pub fn set_transition(&self, id: NodeId, config: TransitionConfig) {
+        if let Some(mut data) = self.inner.nodes.get_mut(&id) {
+            data.transition_configs.insert(config.property, config);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Style
     // ------------------------------------------------------------------
 
     /// Set the inline style for a node.
     ///
-    /// This replaces any previously set style and invalidates the resolved
-    /// style cache for this node and all descendants.
+    /// This replaces any previously set style, invalidates the resolved
+    /// style cache, and signals the animation driver if any transitionable
+    /// properties changed.
     pub fn set_style(&self, id: NodeId, style: Style) {
+        let old_resolved = self.resolved_base_style(id);
+
         if let Some(mut data) = self.inner.nodes.get_mut(&id) {
             data.style = style;
         }
         self.invalidate_resolved_style(id);
         self.inner.notify.notify_one();
+
+        self.signal_animation(id, &old_resolved);
     }
 
     /// Update a node's style in-place via a closure.
     ///
-    /// Invalidates the resolved style cache for this node and all descendants
-    /// after the closure runs.
+    /// Invalidates the resolved style cache, triggers a re-render, and signals
+    /// the animation driver if any transitionable properties changed.
     ///
     /// # Panics
     ///
     /// Panics if the node does not exist.
     pub fn update_style(&self, id: NodeId, f: impl FnOnce(&mut Style)) {
+        // Capture old resolved values before the mutation
+        let old_resolved = self.resolved_base_style(id);
+
         if let Some(mut data) = self.inner.nodes.get_mut(&id) {
             f(&mut data.style);
         } else {
@@ -130,18 +159,42 @@ impl Document {
         }
         self.invalidate_resolved_style(id);
         self.inner.notify.notify_one();
+
+        self.signal_animation(id, &old_resolved);
     }
 
-    /// Get the fully resolved style for a node.
+    /// Get the fully resolved style for a node, including animation overrides.
     ///
     /// Returns the cached value if available, otherwise computes it by
     /// walking the parent chain. The resolved style has all [`StyleValue::Inherit`]
     /// values replaced with concrete values.
     ///
+    /// During active animations, property values are overridden with the
+    /// interpolated animation value.
+    ///
     /// # Panics
     ///
     /// Panics if the node does not exist.
     pub fn resolved_style(&self, id: NodeId) -> ResolvedStyle {
+        let mut resolved = self.resolved_base_style(id);
+
+        // Apply animation overrides
+        {
+            let driver = self.inner.animation.lock().unwrap();
+            for (prop, val) in driver.overrides_for(id) {
+                match prop {
+                    crate::animation::TransitionProperty::Opacity => resolved.opacity = val,
+                }
+            }
+        }
+
+        resolved
+    }
+
+    /// Get the base resolved style without animation overrides.
+    ///
+    /// Used internally by the animation driver to read target values.
+    pub(crate) fn resolved_base_style(&self, id: NodeId) -> ResolvedStyle {
         // Check cache
         {
             let node = self.inner.nodes.get(&id).expect("node not found");
@@ -152,13 +205,40 @@ impl Document {
 
         // Cache miss — compute
         let parent = self.get_parent(id);
-        let parent_resolved = parent.map(|pid| self.resolved_style(pid));
+        let parent_resolved = parent.map(|pid| self.resolved_base_style(pid));
 
         let node = self.inner.nodes.get(&id).expect("node not found");
         let resolved = ResolvedStyle::compute(&node, parent_resolved.as_ref());
 
         *node.resolved_style.write().expect("lock poisoned") = Some(resolved.clone());
         resolved
+    }
+
+    /// Signal the animation driver about a style change and spawn tick task if needed.
+    fn signal_animation(&self, id: NodeId, old_resolved: &ResolvedStyle) {
+        // Read transition configs before locking the driver
+        let configs = {
+            let node = self.inner.nodes.get(&id);
+            node.map(|n| n.transition_configs.clone())
+                .unwrap_or_default()
+        };
+
+        // Compute the new resolved value BEFORE locking the driver
+        let new_resolved = self.resolved_base_style(id);
+
+        let mut driver = self.inner.animation.lock().unwrap();
+        let started = driver.style_changed(id, old_resolved, &new_resolved, &configs);
+        drop(driver);
+
+        if started {
+            spawn_tick_task(
+                self.inner.animation.clone(),
+                self.inner.anim_config_changed.clone(),
+                Arc::clone(&self.inner.anim_tick),
+            );
+        } else {
+            self.inner.anim_config_changed.notify_one();
+        }
     }
 
     /// Invalidate the resolved style cache for a node and all descendants.

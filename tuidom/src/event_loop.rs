@@ -15,21 +15,21 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     let (screen_w, screen_h) = crossterm::terminal::size()?;
     let mut renderer = Renderer::new(screen_w, screen_h)?;
     let mut event_stream = EventStream::new();
+    let inner = doc.inner.clone();
 
     // Initial render
     doc.compute_layout(screen_w, screen_h);
     renderer.render_frame(&doc)?;
 
     loop {
-        // Check shutdown before blocking
-        if *doc.inner.shutdown.read().expect("lock poisoned") {
+        if *inner.shutdown.read().expect("lock poisoned") {
             break;
         }
 
         tokio::select! {
             // DOM mutations → re-render
-            _ = doc.inner.notify.notified() => {
-                if *doc.inner.shutdown.read().expect("lock poisoned") {
+            _ = inner.notify.notified() => {
+                if *inner.shutdown.read().expect("lock poisoned") {
                     break;
                 }
                 doc.compute_layout(screen_w, screen_h);
@@ -41,11 +41,11 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                 match maybe_event {
                     Some(Ok(Event::Resize(w, h))) => {
                         renderer.resize(w, h);
-                        doc.inner.notify.notify_one();
+                        inner.notify.notify_one();
                     }
                     Some(Ok(Event::Key(key))) => {
                         if key.kind == KeyEventKind::Press {
-                            // TODO(phase 8): dispatch to registered handlers
+                            // TODO: event dispatch (phase 8 — debug overlay, smoke test)
                             let _ = key;
                         }
                     }
@@ -53,7 +53,16 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                 }
             }
 
-            // Animation tick arm — added in phase 7
+            // Animation tick → re-render
+            // Fires only while animations are active (tick task periodically
+            // calls notify_one). When idle, this branch never fires.
+            _ = inner.anim_tick.notified() => {
+                if *inner.shutdown.read().expect("lock poisoned") {
+                    break;
+                }
+                doc.compute_layout(screen_w, screen_h);
+                renderer.render_frame(&doc)?;
+            }
         }
     }
 
