@@ -125,24 +125,13 @@ impl AnimationDriver {
     }
 
     /// Determine the next deadline for a frame, if any animations are active.
-    fn next_deadline(&self) -> Option<tokio::time::Instant> {
-        let now = Instant::now();
-
-        self.active
-            .iter()
-            .map(|t| {
-                let remaining =
-                    t.config
-                        .duration
-                        .saturating_sub(now.duration_since(t.started));
-                // Clamp: at least 8ms, at most 100ms between frames
-                let step = remaining
-                    .min(Duration::from_millis(100))
-                    .max(Duration::from_millis(8));
-                let deadline = now + step;
-                tokio::time::Instant::from_std(deadline)
-            })
-            .min()
+    fn next_deadline(&self, min_tick: Duration) -> Option<tokio::time::Instant> {
+        if self.active.is_empty() {
+            return None;
+        }
+        // Fire at min_tick intervals — transition progress is checked each frame.
+        // Actual fps is naturally capped by render speed (Notify coalesces permits).
+        Some(tokio::time::Instant::from_std(Instant::now() + min_tick))
     }
 }
 
@@ -156,13 +145,13 @@ pub(crate) fn spawn_tick_task(
     driver: Arc<Mutex<AnimationDriver>>,
     config_changed: Arc<Notify>,
     anim_tick: Arc<Notify>,
+    min_tick: Duration,
 ) {
     tokio::spawn(async move {
         loop {
-            // Compute next deadline
             let deadline = {
                 let d = driver.lock().unwrap();
-                d.next_deadline()
+                d.next_deadline(min_tick)
             };
 
             let Some(deadline) = deadline else {

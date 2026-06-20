@@ -19,44 +19,46 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
 fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
     let view = match doc.get_node(node_id) {
         Some(v) => v,
-        None => return,
+        None => {
+            log::info!("[paint] node {node_id:?} not found");
+            return;
+        }
     };
 
     let layout = match view.layout {
         Some(l) => l,
-        None => return,
+        None => {
+            log::info!("[paint] node {node_id:?} has no layout");
+            return;
+        }
     };
 
     let resolved = doc.resolved_style(node_id);
+    let alpha = resolved.opacity;
 
-    // Skip fully transparent nodes
-    if resolved.opacity <= 0.0 {
+    if alpha <= 0.0 {
         return;
     }
 
-    let bg = resolved.background.to_rgb();
-    let fg = resolved.color.to_rgb();
+    let bg_rgb = resolved.background.map(|c| c.to_rgb());
+    let fg_rgb = resolved.color.to_rgb();
 
     match &view.kind {
         NodeKindView::Box => {
-            // Paint background
-            let bg_cell = Cell {
-                ch: ' ',
-                fg: None,
-                bg: Some(bg),
-            };
-            grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell);
+            log::info!("[paint] Box {node_id:?} at {},{} {}x{} alpha={alpha} bg={bg_rgb:?}", layout.x, layout.y, layout.width, layout.height);
+            if let Some(bg) = bg_rgb {
+                let bg_cell = Cell { ch: ' ', fg: None, bg: Some(bg) };
+                grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell, alpha);
+            }
         }
 
         NodeKindView::Text { content } => {
-            let bg_cell = Cell {
-                ch: ' ',
-                fg: None,
-                bg: Some(bg),
-            };
-            grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell);
-
-            grid.write_text(layout.x, layout.y, content, Some(fg), Some(bg));
+            log::info!("[paint] Text {node_id:?} at {},{} {}x{} alpha={alpha} bg={bg_rgb:?} fg={fg_rgb:?}", layout.x, layout.y, layout.width, layout.height);
+            if let Some(bg) = bg_rgb {
+                let bg_cell = Cell { ch: ' ', fg: None, bg: Some(bg) };
+                grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell, alpha);
+            }
+            grid.write_text(layout.x, layout.y, content, Some(fg_rgb), alpha);
         }
     }
 

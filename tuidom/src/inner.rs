@@ -38,6 +38,10 @@ pub(crate) struct DocumentInner {
     /// Configuration change signal for the animation tick task.
     pub anim_config_changed: Arc<Notify>,
 
+    /// Minimum interval between animation ticks, to prevent busy-waiting.
+    /// Defaults to 1ms (render as fast as possible).
+    pub min_animation_tick: std::sync::RwLock<std::time::Duration>,
+
     /// Animation tick signal — the render loop `select!`s on this.
     /// Woken by the tick task each frame. When no tick task runs,
     /// this never fires (passive idle).

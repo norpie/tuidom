@@ -14,7 +14,7 @@ use crate::render::Renderer;
 ///
 /// Blocks until [`Document::quit`] is called from a handler.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
-    let (screen_w, screen_h) = crossterm::terminal::size()?;
+    let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
     let mut renderer = Renderer::new(screen_w, screen_h)?;
     let mut event_stream = EventStream::new();
     let inner = doc.inner.clone();
@@ -40,8 +40,11 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
             maybe_event = event_stream.next() => {
                 match maybe_event {
                     Some(Ok(CrosstermEvent::Resize(w, h))) => {
+                        screen_w = w;
+                        screen_h = h;
                         renderer.resize(w, h);
-                        inner.notify.notify_one();
+                        doc.compute_layout(w, h);
+                        let _ = renderer.render_full(&doc);
                     }
                     Some(Ok(CrosstermEvent::Key(key))) => {
                         if key.kind == KeyEventKind::Press {

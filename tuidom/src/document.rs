@@ -1,6 +1,7 @@
 //! The [`Document`] type — the public API surface for tuidom.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::Notify;
 
@@ -42,6 +43,15 @@ impl Default for Document {
 impl Document {
     /// Create a new, empty document.
     pub fn new() -> Self {
+        // Initialize file-based logging
+        let file = std::fs::File::create("/tmp/tuidom.log")
+            .expect("failed to create /tmp/tuidom.log");
+        let _ = simplelog::WriteLogger::init(
+            log::LevelFilter::Trace,
+            simplelog::Config::default(),
+            file,
+        );
+
         Self {
             inner: Arc::new(DocumentInner {
                 nodes: dashmap::DashMap::new(),
@@ -52,6 +62,7 @@ impl Document {
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
                 anim_tick: Arc::new(Notify::new()),
+                min_animation_tick: std::sync::RwLock::new(Duration::from_millis(1)),
                 debug_overlay: Mutex::new(DebugOverlay::new()),
                 listeners: Mutex::new(Vec::new()),
             }),
@@ -158,6 +169,13 @@ impl Document {
         if let Some(mut data) = self.inner.nodes.get_mut(&id) {
             data.transition_configs.insert(config.property, config);
         }
+    }
+
+    /// Set the minimum interval between animation frames.
+    ///
+    /// Lower values = smoother but higher CPU. Default is 1ms.
+    pub fn set_min_animation_tick(&self, interval: Duration) {
+        *self.inner.min_animation_tick.write().unwrap() = interval;
     }
 
     // ------------------------------------------------------------------
@@ -272,10 +290,12 @@ impl Document {
         drop(driver);
 
         if started {
+            let min_tick = *self.inner.min_animation_tick.read().unwrap();
             spawn_tick_task(
                 self.inner.animation.clone(),
                 self.inner.anim_config_changed.clone(),
                 Arc::clone(&self.inner.anim_tick),
+                min_tick,
             );
         } else {
             self.inner.anim_config_changed.notify_one();

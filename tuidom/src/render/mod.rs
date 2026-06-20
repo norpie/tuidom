@@ -59,9 +59,27 @@ impl Renderer {
         Ok(cells_changed)
     }
 
-    /// Handle terminal resize.
+    /// Handle terminal resize — clears and full-redraws the screen.
     pub fn resize(&mut self, width: u16, height: u16) {
-        self.old_grid.resize(width, height);
-        self.new_grid.resize(width, height);
+        self.old_grid = grid::Grid::new(width, height);
+        self.new_grid = grid::Grid::new(width, height);
+    }
+
+    /// Render a full-screen redraw (e.g. after resize) — skips diffing.
+    pub fn render_full(&mut self, doc: &Document) -> io::Result<usize> {
+        self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
+        paint::paint(doc, &mut self.new_grid);
+
+        {
+            let overlay = doc.inner.debug_overlay.lock().unwrap();
+            if overlay.enabled {
+                overlay.render(&mut self.new_grid);
+            }
+        }
+
+        let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);
+        self.terminal.flush_full(&self.new_grid)?;
+        std::mem::swap(&mut self.old_grid, &mut self.new_grid);
+        Ok(cells)
     }
 }

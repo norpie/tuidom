@@ -20,8 +20,8 @@ pub struct ResolvedStyle {
     pub opacity: f64,
     /// Resolved foreground text color.
     pub color: Color,
-    /// Resolved background color.
-    pub background: Color,
+    /// Resolved background color. `None` means transparent (terminal default shows through).
+    pub background: Option<Color>,
     /// Resolved cross-axis alignment.
     pub align_items: AlignItems,
     /// Resolved main-axis alignment.
@@ -36,7 +36,7 @@ impl Default for ResolvedStyle {
             display: Display::Flex,
             opacity: 1.0,
             color: Color::white(),
-            background: Color::black(),
+            background: None,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::FlexStart,
         }
@@ -62,10 +62,10 @@ impl ResolvedStyle {
                 &defaults.opacity,
             ),
             color: resolve(&data.style.color, parent.map(|p| &p.color), &defaults.color),
-            background: resolve(
+            background: resolve_opt(
                 &data.style.background,
-                parent.map(|p| &p.background),
-                &defaults.background,
+                parent.and_then(|p| p.background),
+                defaults.background,
             ),
             align_items: resolve(
                 &data.style.align_items,
@@ -87,5 +87,21 @@ fn resolve<T: Clone>(value: &StyleValue<T>, parent: Option<&T>, default: &T) -> 
     match value {
         StyleValue::Set(v) => v.clone(),
         StyleValue::Inherit => parent.cloned().unwrap_or_else(|| default.clone()),
+    }
+}
+
+/// Resolve a [`StyleValue<Color>`] to `Option<Color>`.
+///
+/// `Set(Color)` → `Some(Color)`. `Inherit` uses the parent's value or
+/// falls back to the default (which is `None` for the root, meaning
+/// transparent / terminal default background).
+fn resolve_opt(
+    value: &StyleValue<Color>,
+    parent: Option<Color>,
+    default: Option<Color>,
+) -> Option<Color> {
+    match value {
+        StyleValue::Set(v) => Some(v.clone()),
+        StyleValue::Inherit => parent.or(default),
     }
 }

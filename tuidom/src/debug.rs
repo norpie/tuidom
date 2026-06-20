@@ -112,8 +112,8 @@ impl DebugOverlay {
         for (i, line) in lines.iter().enumerate() {
             let y = i as u16;
             let cell = crate::render::grid::Cell { ch: ' ', fg: None, bg };
-            grid.fill_rect(x, y, max_width as u16, 1, cell);
-            grid.write_text(x, y, line, fg, bg);
+            grid.fill_rect(x, y, max_width as u16, 1, cell, 1.0);
+            grid.write_text(x, y, line, fg, 1.0);
         }
     }
 

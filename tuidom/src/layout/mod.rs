@@ -36,13 +36,19 @@ enum MeasureContext {
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
     let root = match doc.root() {
         Some(r) => r,
-        None => return,
+        None => {
+            log::info!("[layout] no root set");
+            return;
+        }
     };
+
+    log::info!("[layout] screen={screen_width}x{screen_height}, root={root:?}");
 
     let mut taffy_tree = TaffyTree::<MeasureContext>::new();
     let mut mapping = Vec::new();
 
     let taffy_root = build_node(doc, &mut taffy_tree, root, &mut mapping);
+    log::info!("[layout] mapping has {} nodes", mapping.len());
 
     if let Some(taffy_root) = taffy_root {
         let available = Size {
@@ -50,26 +56,27 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
             height: AvailableSpace::Definite(screen_height as f32),
         };
 
-        if taffy_tree
+        taffy_tree
             .compute_layout_with_measure(taffy_root, available, measure_fn)
-            .is_err()
-        {
-            return;
-        }
+            .expect("taffy compute_layout failed");
 
         // Store results back on DOM nodes
         for (node_id, taffy_id) in &mapping {
             if let Ok(layout) = taffy_tree.layout(*taffy_id) {
+                let rect = LayoutRect {
+                    x: layout.location.x.round() as u16,
+                    y: layout.location.y.round() as u16,
+                    width: layout.size.width.round() as u16,
+                    height: layout.size.height.round() as u16,
+                };
+                log::info!("[layout] node={node_id:?} rect={rect:?}");
                 if let Some(mut data) = doc.inner.nodes.get_mut(node_id) {
-                    data.layout = Some(LayoutRect {
-                        x: layout.location.x.round() as u16,
-                        y: layout.location.y.round() as u16,
-                        width: layout.size.width.round() as u16,
-                        height: layout.size.height.round() as u16,
-                    });
+                    data.layout = Some(rect);
                 }
             }
         }
+    } else {
+        log::info!("[layout] build_node returned None for root");
     }
 }
 
@@ -91,13 +98,12 @@ fn build_node(
         return None;
     }
 
-    let style = to_taffy_style(&resolved);
     let children_ids = doc.get_children(node_id);
 
     let taffy_node = if children_ids.is_empty() {
-        build_leaf(taffy, style, doc, node_id)
+        build_leaf(taffy, doc, node_id)
     } else {
-        build_container(taffy, style, doc, node_id, &children_ids, mapping)
+        build_container(taffy, doc, node_id, &children_ids, mapping)
     };
 
     if let Some(tn) = taffy_node {
@@ -110,11 +116,12 @@ fn build_node(
 /// Build a leaf node (no children).
 fn build_leaf(
     taffy: &mut TaffyTree<MeasureContext>,
-    style: Style,
     doc: &Document,
     node_id: NodeId,
 ) -> Option<taffy::NodeId> {
     let node_view = doc.get_node(node_id)?;
+    let resolved = doc.resolved_style(node_id);
+    let style = to_taffy_leaf_style(&resolved);
 
     let context = match &node_view.kind {
         crate::node::NodeKindView::Text { content } => {
@@ -123,24 +130,26 @@ fn build_leaf(
         _ => MeasureContext::None,
     };
 
-    taffy.new_leaf_with_context(style, context).ok()
+    Some(taffy.new_leaf_with_context(style, context).expect("taffy new_leaf_with_context failed"))
 }
 
 /// Build a container node with children.
 fn build_container(
     taffy: &mut TaffyTree<MeasureContext>,
-    style: Style,
     doc: &Document,
     _node_id: NodeId,
     children_ids: &[NodeId],
     mapping: &mut Vec<(NodeId, taffy::NodeId)>,
 ) -> Option<taffy::NodeId> {
+    let resolved = doc.resolved_style(_node_id);
+    let style = to_taffy_container_style(&resolved);
+
     let child_taffy_nodes: Vec<taffy::NodeId> = children_ids
         .iter()
         .filter_map(|&child| build_node(doc, taffy, child, mapping))
         .collect();
 
-    taffy.new_with_children(style, &child_taffy_nodes).ok()
+    Some(taffy.new_with_children(style, &child_taffy_nodes).expect("taffy new_with_children failed"))
 }
 
 // ---------------------------------------------------------------------------
@@ -150,39 +159,46 @@ fn build_container(
 /// Measure function passed to taffy for computing text node sizes.
 fn measure_fn(
     known_dimensions: Size<Option<f32>>,
-    _available_space: Size<AvailableSpace>,
+    available_space: Size<AvailableSpace>,
     _node_id: taffy::NodeId,
     context: Option<&mut MeasureContext>,
     _style: &Style,
 ) -> Size<f32> {
-    match context {
+    let result = match context {
         Some(MeasureContext::Text { content }) => {
             let width = content
                 .lines()
                 .map(|line| UnicodeWidthStr::width(line) as f32)
                 .fold(0.0_f32, f32::max);
-
-            let width = if let Some(known) = known_dimensions.width {
-                width.min(known)
-            } else {
-                width
-            };
-
-            Size {
-                width,
-                height: content.lines().count() as f32,
-            }
+            let height = content.lines().count() as f32;
+            Size { width, height }
         }
         _ => Size::ZERO,
-    }
+    };
+    log::info!(
+        "[measure] known={known_dimensions:?} avail={available_space:?} ctx={:?} result={result:?}",
+        context.is_some()
+    );
+    result
 }
 
 // ---------------------------------------------------------------------------
 // Style translation
 // ---------------------------------------------------------------------------
 
-/// Convert a [`ResolvedStyle`] to taffy's [`Style`].
-fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
+/// Convert a resolved style to a taffy style for a leaf node (no children).
+fn to_taffy_leaf_style(resolved: &ResolvedStyle) -> Style {
+    Style {
+        size: Size {
+            width: to_dimension(resolved.width),
+            height: to_dimension(resolved.height),
+        },
+        ..Default::default()
+    }
+}
+
+/// Convert a resolved style to a taffy style for a container node (has children).
+fn to_taffy_container_style(resolved: &ResolvedStyle) -> Style {
     Style {
         display: match resolved.display {
             Display::Flex => taffy::style::Display::Flex,
@@ -201,7 +217,7 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
 fn to_dimension(length: Length) -> Dimension {
     match length {
         Length::Pixels(n) => Dimension::length(n as f32),
-        Length::Percent(p) => Dimension::percent(p as f32),
+        Length::Percent(p) => Dimension::percent(p as f32 / 100.0),
         Length::Auto => Dimension::auto(),
     }
 }
