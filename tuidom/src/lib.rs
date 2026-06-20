@@ -15,6 +15,8 @@ mod inner;
 pub(crate) mod layout;
 /// Node data storage and views.
 mod node;
+/// Screen buffer and rendering.
+pub(crate) mod render;
 
 /// The [`Document`] type and public API.
 pub mod document;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 /// Final color format sent to the terminal.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Rgb {
     pub r: u8,
     pub g: u8,
