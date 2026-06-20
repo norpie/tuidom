@@ -18,3 +18,4 @@ tokio-stream = "0.1.18"
 # Re-export macro
 tuidom-derive = { path = "../tuidom-derive" }
 unicode-width = "0.2.2"
+unicode-segmentation = "1.12.0"

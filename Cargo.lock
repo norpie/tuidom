@@ -623,6 +623,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tuidom-derive",
+ "unicode-segmentation",
  "unicode-width",
 ]
 
