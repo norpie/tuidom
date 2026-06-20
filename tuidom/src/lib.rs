@@ -7,8 +7,20 @@
 
 #![warn(missing_docs)]
 
-/// Style system: [`Color`], [`Style`], [`StyleValue`], and supporting types.
+/// Node handle types.
+mod id;
+/// Internal document state.
+mod inner;
+/// Node data storage and views.
+mod node;
+
+/// The [`Document`] type and public API.
+pub mod document;
+/// Style system: [`Color`](style::Color), [`Style`](style::Style), [`StyleValue`](style::StyleValue), and supporting types.
 pub mod style;
+
+pub use document::Document;
+pub use id::NodeId;
 
 // Re-export the macro
 pub use tuidom_derive::node;
