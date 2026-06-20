@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::RwLock;
 
 use dashmap::DashMap;
+use tokio::sync::Notify;
 
 use crate::id::NodeId;
 use crate::node::NodeData;
@@ -21,6 +22,12 @@ pub(crate) struct DocumentInner {
 
     /// The root node for rendering.
     pub root: RwLock<Option<NodeId>>,
+
+    /// Notification signal — woken when DOM mutations require a re-render.
+    pub notify: Notify,
+
+    /// Shutdown signal — triggered by [`Document::quit`].
+    pub shutdown: RwLock<bool>,
 }
 
 impl DocumentInner {

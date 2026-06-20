@@ -42,6 +42,8 @@ impl Document {
                 nodes: dashmap::DashMap::new(),
                 next_id: std::sync::atomic::AtomicU64::new(0),
                 root: std::sync::RwLock::new(None),
+                notify: tokio::sync::Notify::new(),
+                shutdown: std::sync::RwLock::new(false),
             }),
         }
     }
@@ -74,11 +76,26 @@ impl Document {
     /// one root at a time; calling this again replaces the previous root.
     pub fn set_root(&self, id: NodeId) {
         *self.inner.root.write().expect("root lock poisoned") = Some(id);
+        self.inner.notify.notify_one();
     }
 
     /// Get the current root node, if set.
     pub fn root(&self) -> Option<NodeId> {
         *self.inner.root.read().expect("root lock poisoned")
+    }
+
+    /// Trigger shutdown of the render loop.
+    pub fn quit(&self) {
+        *self.inner.shutdown.write().expect("shutdown lock poisoned") = true;
+        self.inner.notify.notify_one();
+    }
+
+    /// Run the render + event loop until [`quit`](Self::quit) is called.
+    ///
+    /// Consumes the document. Clone it first if you need to keep a handle
+    /// for event handlers or other tasks.
+    pub async fn run(self) -> std::io::Result<()> {
+        crate::event_loop::run(self).await
     }
 
     // ------------------------------------------------------------------
@@ -94,6 +111,7 @@ impl Document {
             data.style = style;
         }
         self.invalidate_resolved_style(id);
+        self.inner.notify.notify_one();
     }
 
     /// Update a node's style in-place via a closure.
@@ -111,6 +129,7 @@ impl Document {
             panic!("update_style: node {id:?} does not exist");
         }
         self.invalidate_resolved_style(id);
+        self.inner.notify.notify_one();
     }
 
     /// Get the fully resolved style for a node.
@@ -180,6 +199,7 @@ impl Document {
 
         // New parent — recompute resolved style for subtree
         self.invalidate_resolved_style(child);
+        self.inner.notify.notify_one();
     }
 
     /// Insert `child` into `parent`'s children list before `before_sibling`.
@@ -209,6 +229,7 @@ impl Document {
 
         // New parent — recompute resolved style for subtree
         self.invalidate_resolved_style(child);
+        self.inner.notify.notify_one();
     }
 
     /// Remove `child` from `parent` and delete the entire subtree rooted at
@@ -223,6 +244,7 @@ impl Document {
 
         // Remove the entire subtree
         self.remove_subtree(child);
+        self.inner.notify.notify_one();
     }
 
     /// Move `child` from its current parent to `new_parent`, inserting it
@@ -257,6 +279,7 @@ impl Document {
 
         // New parent — recompute resolved style for subtree
         self.invalidate_resolved_style(child);
+        self.inner.notify.notify_one();
     }
 
     // ------------------------------------------------------------------
