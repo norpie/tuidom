@@ -13,6 +13,7 @@ log = "0.4.32"
 palette = "0.7.6"
 simplelog = "0.12.2"
 taffy = "0.11.0"
+thiserror = "2.0.17"
 tokio = { version = "1.52.3", features = ["rt", "sync", "macros", "time", "rt-multi-thread"] }
 tokio-stream = "0.1.18"
 # Re-export macro
