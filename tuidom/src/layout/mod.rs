@@ -115,13 +115,17 @@ fn build_leaf(
     let style = to_taffy_leaf_style(&resolved);
 
     let context = match &node_view.kind {
-        crate::node::NodeKindView::Text { content } => {
-            MeasureContext::Text { content: content.clone() }
-        }
+        crate::node::NodeKindView::Text { content } => MeasureContext::Text {
+            content: content.clone(),
+        },
         _ => MeasureContext::None,
     };
 
-    Some(taffy.new_leaf_with_context(style, context).expect("taffy new_leaf_with_context failed"))
+    Some(
+        taffy
+            .new_leaf_with_context(style, context)
+            .expect("taffy new_leaf_with_context failed"),
+    )
 }
 
 /// Build a container node with children.
@@ -140,7 +144,11 @@ fn build_container(
         .filter_map(|&child| build_node(doc, taffy, child, mapping))
         .collect();
 
-    Some(taffy.new_with_children(style, &child_taffy_nodes).expect("taffy new_with_children failed"))
+    Some(
+        taffy
+            .new_with_children(style, &child_taffy_nodes)
+            .expect("taffy new_with_children failed"),
+    )
 }
 
 // ---------------------------------------------------------------------------

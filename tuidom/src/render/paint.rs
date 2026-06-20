@@ -40,17 +40,47 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
     match &view.kind {
         NodeKindView::Box => {
             if let Some(bg) = bg_rgb {
-                let bg_cell = Cell { ch: ' ', fg: None, bg: Some(bg) };
-                grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell, alpha);
+                let bg_cell = Cell {
+                    ch: ' ',
+                    fg: None,
+                    bg: Some(bg),
+                };
+                grid.fill_rect(
+                    layout.x,
+                    layout.y,
+                    layout.width,
+                    layout.height,
+                    bg_cell,
+                    alpha,
+                );
             }
         }
 
         NodeKindView::Text { content } => {
             if let Some(bg) = bg_rgb {
-                let bg_cell = Cell { ch: ' ', fg: None, bg: Some(bg) };
-                grid.fill_rect(layout.x, layout.y, layout.width, layout.height, bg_cell, alpha);
+                let bg_cell = Cell {
+                    ch: ' ',
+                    fg: None,
+                    bg: Some(bg),
+                };
+                grid.fill_rect(
+                    layout.x,
+                    layout.y,
+                    layout.width,
+                    layout.height,
+                    bg_cell,
+                    alpha,
+                );
             }
-            grid.write_text(layout.x, layout.y, content, Some(fg_rgb), alpha);
+            grid.write_text_clipped(
+                layout.x,
+                layout.y,
+                layout.width,
+                layout.height,
+                content,
+                Some(fg_rgb),
+                alpha,
+            );
         }
     }
 

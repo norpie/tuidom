@@ -42,7 +42,12 @@ fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, alpha: f64, cell_bg: Option<Rgb>
         (None, None) => None,
         (None, Some(s)) => {
             // Fade toward the background color behind us
-            let target = cell_bg.unwrap_or(Rgb { r: 0, g: 0, b: 0, a: 255 });
+            let target = cell_bg.unwrap_or(Rgb {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            });
             Some(Rgb {
                 r: lerp_u8(target.r, s.r, alpha),
                 g: lerp_u8(target.g, s.g, alpha),
@@ -84,6 +89,14 @@ fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {
     (a as f64 + (b as f64 - a as f64) * t).round() as u8
 }
 
+fn clamp_alpha(alpha: f64) -> f64 {
+    if alpha.is_nan() {
+        0.0
+    } else {
+        alpha.clamp(0.0, 1.0)
+    }
+}
+
 /// A 2D buffer of [`Cell`]s representing a single frame's screen state.
 #[derive(Debug, Clone)]
 pub(crate) struct Grid {
@@ -108,8 +121,17 @@ impl Grid {
 
     /// Fill a rectangular region with a cell value, blending by `alpha`.
     pub fn fill_rect(&mut self, x: u16, y: u16, w: u16, h: u16, cell: Cell, alpha: f64) {
-        let x_end = (x + w).min(self.width);
-        let y_end = (y + h).min(self.height);
+        if x >= self.width || y >= self.height || w == 0 || h == 0 {
+            return;
+        }
+
+        let alpha = clamp_alpha(alpha);
+        if alpha <= 0.0 {
+            return;
+        }
+
+        let x_end = x.saturating_add(w).min(self.width);
+        let y_end = y.saturating_add(h).min(self.height);
         for row in y..y_end {
             for col in x..x_end {
                 let dst = &self.cells[row as usize][col as usize];
@@ -118,27 +140,67 @@ impl Grid {
         }
     }
 
-    /// Write text at a position, blending fg by `alpha` toward the cell's bg.
+    /// Write one line of text at a position, clipped to the screen width.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
-    pub fn write_text(
+    pub fn write_text(&mut self, x: u16, y: u16, text: &str, fg: Option<Rgb>, alpha: f64) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+
+        let max_width = self.width - x;
+        self.write_text_line_clipped(x, y, max_width, text, fg, alpha);
+    }
+
+    /// Write multiline text clipped to a rectangular region.
+    /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
+    pub fn write_text_clipped(
         &mut self,
         x: u16,
         y: u16,
+        w: u16,
+        h: u16,
         text: &str,
         fg: Option<Rgb>,
         alpha: f64,
     ) {
-        for (i, ch) in text.chars().enumerate() {
-            if x + i as u16 >= self.width {
-                break;
-            }
-            let dst = &self.cells[y as usize][(x + i as u16) as usize];
+        if x >= self.width || y >= self.height || w == 0 || h == 0 {
+            return;
+        }
+
+        let max_width = w.min(self.width - x);
+        let max_height = h.min(self.height - y);
+        for (line_index, line) in text.lines().take(max_height as usize).enumerate() {
+            self.write_text_line_clipped(x, y + line_index as u16, max_width, line, fg, alpha);
+        }
+    }
+
+    fn write_text_line_clipped(
+        &mut self,
+        x: u16,
+        y: u16,
+        max_width: u16,
+        text: &str,
+        fg: Option<Rgb>,
+        alpha: f64,
+    ) {
+        let alpha = clamp_alpha(alpha);
+        if alpha <= 0.0 || max_width == 0 {
+            return;
+        }
+
+        let row = y as usize;
+        let start = x as usize;
+        let end = start + max_width as usize;
+
+        for (offset, ch) in text.chars().take(end - start).enumerate() {
+            let col = start + offset;
+            let dst = &self.cells[row][col];
             let cell = Cell {
                 ch,
                 fg: blend_fg(dst.fg, fg, alpha, dst.bg),
                 bg: dst.bg,
             };
-            self.cells[y as usize][(x + i as u16) as usize] = cell;
+            self.cells[row][col] = cell;
         }
     }
 }
