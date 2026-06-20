@@ -7,5 +7,8 @@
 
 #![warn(missing_docs)]
 
+/// Style system: [`Color`], [`Style`], [`StyleValue`], and supporting types.
+pub mod style;
+
 // Re-export the macro
 pub use tuidom_derive::node;
