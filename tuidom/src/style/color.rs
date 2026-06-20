@@ -2,6 +2,8 @@ use palette::{IntoColor, Oklch, Srgb};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
+use crate::lock;
+
 /// Final color format sent to the terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Rgb {
@@ -123,7 +125,7 @@ impl Color {
         };
 
         {
-            let cache = RGB_CACHE.lock().expect("RGB cache lock poisoned");
+            let cache = lock::mutex(&RGB_CACHE);
             if let Some(&rgb) = cache.get(&key) {
                 return rgb;
             }
@@ -140,10 +142,7 @@ impl Color {
             a: (self.a * 255.0).round().clamp(0.0, 255.0) as u8,
         };
 
-        RGB_CACHE
-            .lock()
-            .expect("RGB cache lock poisoned")
-            .insert(key, rgb);
+        lock::mutex(&RGB_CACHE).insert(key, rgb);
 
         rgb
     }

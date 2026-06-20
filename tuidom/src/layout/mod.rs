@@ -50,9 +50,10 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
             height: AvailableSpace::Definite(screen_height as f32),
         };
 
-        taffy_tree
-            .compute_layout_with_measure(taffy_root, available, measure_fn)
-            .expect("taffy compute_layout failed");
+        if let Err(err) = taffy_tree.compute_layout_with_measure(taffy_root, available, measure_fn) {
+            log::error!("taffy compute_layout failed: {err:?}");
+            return;
+        }
 
         // Store results back on DOM nodes
         for (node_id, taffy_id) in &mapping {
@@ -121,11 +122,13 @@ fn build_leaf(
         _ => MeasureContext::None,
     };
 
-    Some(
-        taffy
-            .new_leaf_with_context(style, context)
-            .expect("taffy new_leaf_with_context failed"),
-    )
+    match taffy.new_leaf_with_context(style, context) {
+        Ok(node) => Some(node),
+        Err(err) => {
+            log::error!("taffy new_leaf_with_context failed for {node_id:?}: {err:?}");
+            None
+        }
+    }
 }
 
 /// Build a container node with children.
@@ -144,11 +147,13 @@ fn build_container(
         .filter_map(|&child| build_node(doc, taffy, child, mapping))
         .collect();
 
-    Some(
-        taffy
-            .new_with_children(style, &child_taffy_nodes)
-            .expect("taffy new_with_children failed"),
-    )
+    match taffy.new_with_children(style, &child_taffy_nodes) {
+        Ok(node) => Some(node),
+        Err(err) => {
+            log::error!("taffy new_with_children failed for {_node_id:?}: {err:?}");
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ use crate::animation::driver::{AnimationDriver, spawn_tick_task};
 use crate::debug::DebugOverlay;
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
+use crate::lock;
 use crate::node::{NodeData, NodeView};
 use crate::style::Style;
 use crate::style::resolution::ResolvedStyle;
@@ -43,14 +44,15 @@ impl Default for Document {
 impl Document {
     /// Create a new, empty document.
     pub fn new() -> Self {
-        // Initialize file-based logging
-        let file =
-            std::fs::File::create("/tmp/tuidom.log").expect("failed to create /tmp/tuidom.log");
-        let _ = simplelog::WriteLogger::init(
-            log::LevelFilter::Trace,
-            simplelog::Config::default(),
-            file,
-        );
+        // Initialize file-based logging. This is best-effort: logging must never
+        // prevent a TUI from starting.
+        if let Ok(file) = std::fs::File::create("/tmp/tuidom.log") {
+            let _ = simplelog::WriteLogger::init(
+                log::LevelFilter::Trace,
+                simplelog::Config::default(),
+                file,
+            );
+        }
 
         Self {
             inner: Arc::new(DocumentInner {
@@ -96,24 +98,24 @@ impl Document {
     /// Only the root and its descendants are rendered. There can only be
     /// one root at a time; calling this again replaces the previous root.
     pub fn set_root(&self, id: NodeId) {
-        *self.inner.root.write().expect("root lock poisoned") = Some(id);
+        *lock::rw_write(&self.inner.root) = Some(id);
         self.inner.notify.notify_one();
     }
 
     /// Get the current root node, if set.
     pub fn root(&self) -> Option<NodeId> {
-        *self.inner.root.read().expect("root lock poisoned")
+        *lock::rw_read(&self.inner.root)
     }
 
     /// Trigger shutdown of the render loop.
     pub fn quit(&self) {
-        *self.inner.shutdown.write().expect("shutdown lock poisoned") = true;
+        *lock::rw_write(&self.inner.shutdown) = true;
         self.inner.notify.notify_one();
     }
 
     /// Toggle the debug overlay on/off.
     pub fn toggle_debug_overlay(&self) {
-        let mut overlay = self.inner.debug_overlay.lock().unwrap();
+        let mut overlay = lock::mutex(&self.inner.debug_overlay);
         overlay.enabled = !overlay.enabled;
         self.inner.notify.notify_one();
     }
@@ -126,12 +128,12 @@ impl Document {
     where
         F: Fn(&crate::event::Event) + Send + Sync + 'static,
     {
-        self.inner.listeners.lock().unwrap().push(Box::new(handler));
+        lock::mutex(&self.inner.listeners).push(Box::new(handler));
     }
 
     /// Dispatch an event to all registered listeners.
     pub(crate) fn dispatch_event(&self, event: crate::event::Event) {
-        let listeners = self.inner.listeners.lock().unwrap();
+        let listeners = lock::mutex(&self.inner.listeners);
         for handler in listeners.iter() {
             (handler)(&event);
         }
@@ -144,7 +146,7 @@ impl Document {
         layout: std::time::Duration,
         stats: crate::render::RenderStats,
     ) {
-        let mut overlay = self.inner.debug_overlay.lock().unwrap();
+        let mut overlay = lock::mutex(&self.inner.debug_overlay);
         overlay.record(frame, layout, stats);
     }
 
@@ -174,7 +176,7 @@ impl Document {
     ///
     /// Lower values = smoother but higher CPU. Default is 1ms.
     pub fn set_min_animation_tick(&self, interval: Duration) {
-        *self.inner.min_animation_tick.write().unwrap() = interval;
+        *lock::rw_write(&self.inner.min_animation_tick) = interval;
     }
 
     // ------------------------------------------------------------------
@@ -238,7 +240,7 @@ impl Document {
 
         // Apply animation overrides
         {
-            let driver = self.inner.animation.lock().unwrap();
+            let driver = lock::mutex(&self.inner.animation);
             for (prop, val) in driver.overrides_for(id) {
                 match prop {
                     crate::animation::TransitionProperty::Opacity => resolved.opacity = val,
@@ -256,7 +258,7 @@ impl Document {
         // Check cache
         {
             let node = self.inner.nodes.get(&id).expect("node not found");
-            if let Some(resolved) = &*node.resolved_style.read().expect("lock poisoned") {
+            if let Some(resolved) = &*lock::rw_read(&node.resolved_style) {
                 return resolved.clone();
             }
         }
@@ -268,7 +270,7 @@ impl Document {
         let node = self.inner.nodes.get(&id).expect("node not found");
         let resolved = ResolvedStyle::compute(&node, parent_resolved.as_ref());
 
-        *node.resolved_style.write().expect("lock poisoned") = Some(resolved.clone());
+        *lock::rw_write(&node.resolved_style) = Some(resolved.clone());
         resolved
     }
 
@@ -284,12 +286,12 @@ impl Document {
         // Compute the new resolved value BEFORE locking the driver
         let new_resolved = self.resolved_base_style(id);
 
-        let mut driver = self.inner.animation.lock().unwrap();
+        let mut driver = lock::mutex(&self.inner.animation);
         let started = driver.style_changed(id, old_resolved, &new_resolved, &configs);
         drop(driver);
 
         if started {
-            let min_tick = *self.inner.min_animation_tick.read().unwrap();
+            let min_tick = *lock::rw_read(&self.inner.min_animation_tick);
             spawn_tick_task(
                 self.inner.animation.clone(),
                 self.inner.anim_config_changed.clone(),
@@ -304,7 +306,7 @@ impl Document {
     /// Invalidate the resolved style cache for a node and all descendants.
     pub(crate) fn invalidate_resolved_style(&self, id: NodeId) {
         if let Some(node) = self.inner.nodes.get(&id) {
-            *node.resolved_style.write().expect("lock poisoned") = None;
+            *lock::rw_write(&node.resolved_style) = None;
             let children = node.children.clone();
             drop(node); // release lock before recursing
             for child in children {

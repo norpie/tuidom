@@ -11,6 +11,7 @@ use std::time::Duration;
 use terminal::Terminal;
 
 use crate::document::Document;
+use crate::lock;
 
 /// Breakdown of time spent in each render phase.
 #[derive(Debug, Clone, Copy, Default)]
@@ -74,7 +75,7 @@ impl Renderer {
         // 3. Paint debug overlay
         let mut overlay_paint_time = Duration::ZERO;
         {
-            let overlay = doc.inner.debug_overlay.lock().unwrap();
+            let overlay = lock::mutex(&doc.inner.debug_overlay);
             if overlay.enabled {
                 let overlay_paint_start = std::time::Instant::now();
                 overlay.render(&mut self.new_grid);
@@ -124,7 +125,7 @@ impl Renderer {
 
         let mut overlay_paint_time = Duration::ZERO;
         {
-            let overlay = doc.inner.debug_overlay.lock().unwrap();
+            let overlay = lock::mutex(&doc.inner.debug_overlay);
             if overlay.enabled {
                 let overlay_paint_start = std::time::Instant::now();
                 overlay.render(&mut self.new_grid);

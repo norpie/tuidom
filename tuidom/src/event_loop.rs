@@ -8,6 +8,7 @@ use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as Crosster
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
+use crate::lock;
 use crate::render::Renderer;
 
 /// Run the main loop: layout, paint, diff, flush, and event dispatch.
@@ -23,14 +24,14 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
 
     loop {
-        if *inner.shutdown.read().expect("lock poisoned") {
+        if *lock::rw_read(&inner.shutdown) {
             break;
         }
 
         tokio::select! {
             // DOM mutations → re-render
             _ = inner.notify.notified() => {
-                if *inner.shutdown.read().expect("lock poisoned") {
+                if *lock::rw_read(&inner.shutdown) {
                     break;
                 }
                 render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
@@ -63,7 +64,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
 
             // Animation tick → re-render
             _ = inner.anim_tick.notified() => {
-                if *inner.shutdown.read().expect("lock poisoned") {
+                if *lock::rw_read(&inner.shutdown) {
                     break;
                 }
                 render_frame_timed(&doc, &mut renderer, screen_w, screen_h);

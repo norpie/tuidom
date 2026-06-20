@@ -9,6 +9,7 @@ use tokio::time::sleep_until;
 
 use crate::animation::{Easing, TransitionConfig, TransitionProperty};
 use crate::id::NodeId;
+use crate::lock;
 use crate::style::resolution::ResolvedStyle;
 
 // ---------------------------------------------------------------------------
@@ -148,7 +149,7 @@ pub(crate) fn spawn_tick_task(
     tokio::spawn(async move {
         loop {
             let deadline = {
-                let d = driver.lock().unwrap();
+                let d = lock::mutex(&driver);
                 d.next_deadline(min_tick)
             };
 
@@ -160,7 +161,7 @@ pub(crate) fn spawn_tick_task(
 
             tokio::select! {
                 _ = sleep_until(deadline) => {
-                    let mut d = driver.lock().unwrap();
+                    let mut d = lock::mutex(&driver);
                     let has_active = d.cleanup();
                     anim_tick.notify_one();
                     if !has_active {

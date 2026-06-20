@@ -19,6 +19,7 @@ mod event_loop;
 mod id;
 /// Internal document state.
 mod inner;
+mod lock;
 /// Taffy-based flexbox layout.
 pub(crate) mod layout;
 /// Node data storage and views.
