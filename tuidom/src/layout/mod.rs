@@ -3,6 +3,8 @@
 //! Builds a parallel taffy tree from the DOM, computes layout, and stores
 //! resulting positions/sizes back on each node.
 
+use std::collections::HashMap;
+
 use taffy::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
@@ -40,7 +42,7 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
     };
 
     let mut taffy_tree = TaffyTree::<MeasureContext>::new();
-    let mut mapping = Vec::new();
+    let mut mapping = HashMap::new();
 
     let taffy_root = build_node(doc, &mut taffy_tree, root, &mut mapping);
 
@@ -56,21 +58,49 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
             return;
         }
 
-        // Store results back on DOM nodes
-        for (node_id, taffy_id) in &mapping {
-            if let Ok(layout) = taffy_tree.layout(*taffy_id) {
-                let rect = LayoutRect {
-                    x: layout.location.x.round() as u16,
-                    y: layout.location.y.round() as u16,
-                    width: layout.size.width.round() as u16,
-                    height: layout.size.height.round() as u16,
-                };
-                if let Some(mut data) = doc.inner.nodes.get_mut(node_id) {
-                    data.layout = Some(rect);
-                }
-            }
-        }
+        // Store absolute screen coordinates back on DOM nodes. Taffy stores
+        // locations relative to each node's parent, while the renderer paints
+        // from screen-space coordinates.
+        store_layouts(doc, &taffy_tree, root, &mapping, 0.0, 0.0);
     }
+}
+
+fn store_layouts(
+    doc: &Document,
+    taffy_tree: &TaffyTree<MeasureContext>,
+    node_id: NodeId,
+    mapping: &HashMap<NodeId, taffy::NodeId>,
+    parent_x: f32,
+    parent_y: f32,
+) {
+    let Some(&taffy_id) = mapping.get(&node_id) else {
+        return;
+    };
+
+    let Ok(layout) = taffy_tree.layout(taffy_id) else {
+        return;
+    };
+
+    let absolute_x = parent_x + layout.location.x;
+    let absolute_y = parent_y + layout.location.y;
+    let rect = LayoutRect {
+        x: round_to_u16(absolute_x),
+        y: round_to_u16(absolute_y),
+        width: round_to_u16(layout.size.width),
+        height: round_to_u16(layout.size.height),
+    };
+
+    if let Some(mut data) = doc.inner.nodes.get_mut(&node_id) {
+        data.layout = Some(rect);
+    }
+
+    for child in doc.get_children(node_id) {
+        store_layouts(doc, taffy_tree, child, mapping, absolute_x, absolute_y);
+    }
+}
+
+fn round_to_u16(value: f32) -> u16 {
+    value.round().clamp(0.0, u16::MAX as f32) as u16
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +112,7 @@ fn build_node(
     doc: &Document,
     taffy: &mut TaffyTree<MeasureContext>,
     node_id: NodeId,
-    mapping: &mut Vec<(NodeId, taffy::NodeId)>,
+    mapping: &mut HashMap<NodeId, taffy::NodeId>,
 ) -> Option<taffy::NodeId> {
     let resolved = doc.resolved_style(node_id);
 
@@ -100,7 +130,7 @@ fn build_node(
     };
 
     if let Some(tn) = taffy_node {
-        mapping.push((node_id, tn));
+        mapping.insert(node_id, tn);
     }
 
     taffy_node
@@ -138,7 +168,7 @@ fn build_container(
     doc: &Document,
     _node_id: NodeId,
     children_ids: &[NodeId],
-    mapping: &mut Vec<(NodeId, taffy::NodeId)>,
+    mapping: &mut HashMap<NodeId, taffy::NodeId>,
 ) -> Option<taffy::NodeId> {
     let resolved = doc.resolved_style(_node_id);
     let style = to_taffy_container_style(&resolved);
@@ -238,5 +268,51 @@ fn to_justify_content(j: JustifyContent) -> taffy::style::JustifyContent {
         JustifyContent::Center => taffy::style::JustifyContent::CENTER,
         JustifyContent::SpaceBetween => taffy::style::JustifyContent::SPACE_BETWEEN,
         JustifyContent::SpaceAround => taffy::style::JustifyContent::SPACE_AROUND,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::Style as DomStyle;
+
+    fn fixed_centered_style(width: u16, height: u16) -> DomStyle {
+        let mut style = DomStyle::new();
+        style.width(Length::Pixels(width));
+        style.height(Length::Pixels(height));
+        style.justify_content(JustifyContent::Center);
+        style.align_items(AlignItems::Center);
+        style
+    }
+
+    #[test]
+    fn nested_layout_positions_are_stored_as_absolute_screen_coordinates() {
+        let doc = Document::new();
+
+        let root = doc.create_box();
+        let parent = doc.create_box();
+        let child = doc.create_box();
+
+        doc.set_style(root, &fixed_centered_style(100, 40));
+        doc.set_style(parent, &fixed_centered_style(50, 20));
+
+        let mut child_style = DomStyle::new();
+        child_style.width(Length::Pixels(10));
+        child_style.height(Length::Pixels(5));
+        doc.set_style(child, &child_style);
+
+        doc.append_child(root, parent).unwrap();
+        doc.append_child(parent, child).unwrap();
+        doc.set_root(root);
+
+        compute_layout(&doc, 100, 40);
+
+        let root_layout = doc.get_node(root).unwrap().layout.unwrap();
+        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+
+        assert_eq!((root_layout.x, root_layout.y), (0, 0));
+        assert_eq!((parent_layout.x, parent_layout.y), (25, 10));
+        assert_eq!((child_layout.x, child_layout.y), (45, 18));
     }
 }
