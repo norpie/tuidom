@@ -19,23 +19,23 @@ async fn main() {
 
     // --- Styles -------------------------------------------------------
 
-    let container_style = Style::new()
-        .width(Length::Percent(100.0))
-        .height(Length::Percent(100.0))
-        .justify_content(JustifyContent::Center)
-        .align_items(AlignItems::Center);
+    let mut container_style = Style::new();
+    container_style.width(Length::Percent(100.0));
+    container_style.height(Length::Percent(100.0));
+    container_style.justify_content(JustifyContent::Center);
+    container_style.align_items(AlignItems::Center);
 
-    let text_style = Style::new()
-        .color(Color::white())
-        .background(Color::blue());
+    let mut text_style = Style::new();
+    text_style.color(Color::white());
+    text_style.background(Color::blue());
 
     // --- DOM ----------------------------------------------------------
 
     let container = doc.create_box();
-    doc.set_style(container, container_style);
+    doc.set_style(container, &container_style);
 
     let text = doc.create_text("Hello, tuidom!");
-    doc.set_style(text, text_style);
+    doc.set_style(text, &text_style);
 
     doc.append_child(container, text);
     doc.set_root(container);
@@ -70,15 +70,12 @@ async fn main() {
             KeyCode::Char('q') | KeyCode::Esc => d.quit(),
             _ => {}
         },
-        Event::Resize(size) => {
+        Event::Resize(_size) => {
             // Engine handles relayout automatically.
-            // React here if needed, e.g.: reposition absolute elements.
-            let _ = (d.clone(), size);
         }
-        _ => {}
     });
 
     // --- Run ----------------------------------------------------------
 
-    doc.run().await;
+    let _ = doc.run().await;
 }
