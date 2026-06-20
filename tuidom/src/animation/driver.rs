@@ -63,9 +63,7 @@ pub(crate) struct AnimationDriver {
 impl AnimationDriver {
     /// Create a new empty driver.
     pub fn new() -> Self {
-        Self {
-            active: Vec::new(),
-        }
+        Self { active: Vec::new() }
     }
 
     /// Called after a style change to check for transitionable properties.

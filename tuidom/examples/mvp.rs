@@ -5,8 +5,8 @@
 //! F1     — toggle debug overlay
 //! q/Esc  — quit
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tuidom::animation::{Easing, TransitionConfig};

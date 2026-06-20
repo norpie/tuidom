@@ -38,12 +38,22 @@ pub struct Color {
 impl Color {
     /// White.
     pub fn white() -> Self {
-        Self { l: 1.0, c: 0.0, h: 0.0, a: 1.0 }
+        Self {
+            l: 1.0,
+            c: 0.0,
+            h: 0.0,
+            a: 1.0,
+        }
     }
 
     /// Black.
     pub fn black() -> Self {
-        Self { l: 0.0, c: 0.0, h: 0.0, a: 1.0 }
+        Self {
+            l: 0.0,
+            c: 0.0,
+            h: 0.0,
+            a: 1.0,
+        }
     }
 
     /// Red.
@@ -82,12 +92,22 @@ impl Color {
     /// - `c`: chroma (0–~0.37)
     /// - `h`: hue in degrees (0–360)
     pub fn oklch(l: f64, c: f64, h: f64) -> Self {
-        Self { l: l as f32, c: c as f32, h: h as f32, a: 1.0 }
+        Self {
+            l: l as f32,
+            c: c as f32,
+            h: h as f32,
+            a: 1.0,
+        }
     }
 
     /// Create a color from OKLCH with alpha.
     pub fn oklcha(l: f64, c: f64, h: f64, a: f64) -> Self {
-        Self { l: l as f32, c: c as f32, h: h as f32, a: a as f32 }
+        Self {
+            l: l as f32,
+            c: c as f32,
+            h: h as f32,
+            a: a as f32,
+        }
     }
 
     /// Convert to terminal-ready RGB.

@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
-use crate::render::grid::Grid;
 use crate::render::RenderStats;
+use crate::render::grid::Grid;
 use crate::style::color::Rgb;
 
 /// Performance metrics collected each frame.
@@ -115,12 +115,26 @@ impl DebugOverlay {
         let height = lines.len() as u16;
 
         let x = grid.width.saturating_sub(max_width as u16 + 1).max(0);
-        let fg = Some(Rgb { r: 255, g: 255, b: 255, a: 255 });
-        let bg = Some(Rgb { r: 30, g: 30, b: 30, a: 200 });
+        let fg = Some(Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        });
+        let bg = Some(Rgb {
+            r: 30,
+            g: 30,
+            b: 30,
+            a: 200,
+        });
 
         // Background strip
         for y in 0..height {
-            let cell = crate::render::grid::Cell { ch: ' ', fg: None, bg };
+            let cell = crate::render::grid::Cell {
+                ch: ' ',
+                fg: None,
+                bg,
+            };
             grid.fill_rect(x, y, max_width as u16, 1, cell, 1.0);
         }
         for (i, line) in lines.iter().enumerate() {

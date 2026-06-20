@@ -57,7 +57,9 @@ pub(crate) struct DocumentInner {
 impl DocumentInner {
     /// Allocate the next [`NodeId`] and insert node data into the arena.
     pub fn next_id(&self) -> NodeId {
-        let index = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let index = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         NodeId::new(index)
     }
 

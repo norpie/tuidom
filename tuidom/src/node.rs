@@ -6,8 +6,8 @@ use std::sync::RwLock;
 use crate::animation::TransitionConfig;
 use crate::animation::TransitionProperty;
 use crate::id::NodeId;
-use crate::style::resolution::ResolvedStyle;
 use crate::style::Style;
+use crate::style::resolution::ResolvedStyle;
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -79,7 +79,9 @@ impl NodeData {
     /// Create a new text node.
     pub fn text(content: impl Into<String>) -> Self {
         Self {
-            kind: NodeKind::Text { content: content.into() },
+            kind: NodeKind::Text {
+                content: content.into(),
+            },
             parent: None,
             children: Vec::new(),
             style: Style::default(),

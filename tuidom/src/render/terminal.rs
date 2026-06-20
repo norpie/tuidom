@@ -5,7 +5,9 @@ use std::io::{self, Stdout, Write};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::queue;
 use crossterm::style::{Print, SetBackgroundColor, SetForegroundColor};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 
 use crate::render::diff::CellChange;
 use crate::render::grid::Grid;
@@ -61,8 +63,7 @@ impl Terminal {
                 {
                     x += 1;
                 }
-                let run_text: String =
-                    (run_start..x).map(|i| row[i as usize].ch).collect();
+                let run_text: String = (run_start..x).map(|i| row[i as usize].ch).collect();
                 queue!(self.stdout, Print(run_text))?;
             }
         }
@@ -79,7 +80,12 @@ impl Drop for Terminal {
 }
 
 /// Queue a single cell to stdout (no flush).
-fn queue_cell(stdout: &mut Stdout, x: u16, y: u16, cell: &crate::render::grid::Cell) -> io::Result<()> {
+fn queue_cell(
+    stdout: &mut Stdout,
+    x: u16,
+    y: u16,
+    cell: &crate::render::grid::Cell,
+) -> io::Result<()> {
     queue!(
         stdout,
         MoveTo(x, y),

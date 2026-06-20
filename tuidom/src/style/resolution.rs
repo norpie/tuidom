@@ -54,8 +54,16 @@ impl ResolvedStyle {
 
         Self {
             width: resolve(&data.style.width, parent.map(|p| &p.width), &defaults.width),
-            height: resolve(&data.style.height, parent.map(|p| &p.height), &defaults.height),
-            display: resolve(&data.style.display, parent.map(|p| &p.display), &defaults.display),
+            height: resolve(
+                &data.style.height,
+                parent.map(|p| &p.height),
+                &defaults.height,
+            ),
+            display: resolve(
+                &data.style.display,
+                parent.map(|p| &p.display),
+                &defaults.display,
+            ),
             opacity: resolve(
                 &data.style.opacity,
                 parent.map(|p| &p.opacity),

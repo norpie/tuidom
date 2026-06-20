@@ -5,14 +5,14 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use crate::animation::driver::{spawn_tick_task, AnimationDriver};
 use crate::animation::TransitionConfig;
+use crate::animation::driver::{AnimationDriver, spawn_tick_task};
 use crate::debug::DebugOverlay;
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
 use crate::node::{NodeData, NodeView};
-use crate::style::resolution::ResolvedStyle;
 use crate::style::Style;
+use crate::style::resolution::ResolvedStyle;
 
 /// The root container and public API surface for tuidom.
 ///
@@ -44,8 +44,8 @@ impl Document {
     /// Create a new, empty document.
     pub fn new() -> Self {
         // Initialize file-based logging
-        let file = std::fs::File::create("/tmp/tuidom.log")
-            .expect("failed to create /tmp/tuidom.log");
+        let file =
+            std::fs::File::create("/tmp/tuidom.log").expect("failed to create /tmp/tuidom.log");
         let _ = simplelog::WriteLogger::init(
             log::LevelFilter::Trace,
             simplelog::Config::default(),
@@ -352,7 +352,11 @@ impl Document {
     /// Panics if `parent` or `child` does not exist.
     pub fn insert_before(&self, parent: NodeId, child: NodeId, before_sibling: NodeId) {
         if let Some(mut parent_data) = self.inner.nodes.get_mut(&parent) {
-            if let Some(pos) = parent_data.children.iter().position(|&c| c == before_sibling) {
+            if let Some(pos) = parent_data
+                .children
+                .iter()
+                .position(|&c| c == before_sibling)
+            {
                 parent_data.children.insert(pos, child);
             } else {
                 parent_data.children.push(child);
@@ -410,7 +414,11 @@ impl Document {
 
         // Insert into new parent
         if let Some(mut parent_data) = self.inner.nodes.get_mut(&new_parent) {
-            if let Some(pos) = parent_data.children.iter().position(|&c| c == before_sibling) {
+            if let Some(pos) = parent_data
+                .children
+                .iter()
+                .position(|&c| c == before_sibling)
+            {
                 parent_data.children.insert(pos, child);
             } else {
                 parent_data.children.push(child);
@@ -514,7 +522,10 @@ mod tests {
         let text_view = doc.get_node(text_id).unwrap();
 
         assert!(matches!(box_view.kind, crate::node::NodeKindView::Box));
-        assert!(matches!(text_view.kind, crate::node::NodeKindView::Text { .. }));
+        assert!(matches!(
+            text_view.kind,
+            crate::node::NodeKindView::Text { .. }
+        ));
 
         assert!(doc.get_node(NodeId::new(999)).is_none());
     }
