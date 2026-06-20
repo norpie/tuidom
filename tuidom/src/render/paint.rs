@@ -89,3 +89,33 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
         paint_node(doc, grid, *child);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::LayoutRect;
+
+    fn row_text(grid: &Grid, row: usize) -> String {
+        grid.cells[row].iter().map(|cell| cell.ch).collect()
+    }
+
+    #[test]
+    fn text_node_paints_multiline_content_clipped_to_layout() {
+        let doc = Document::new();
+        let text = doc.create_text("abcd\nefgh");
+        doc.set_root(text);
+
+        if let Some(mut data) = doc.inner.nodes.get_mut(&text) {
+            data.layout = Some(LayoutRect { x: 1, y: 1, width: 2, height: 1 });
+        } else {
+            assert!(false, "text node should exist");
+        }
+
+        let mut grid = Grid::new(5, 3);
+        paint(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "     ");
+        assert_eq!(row_text(&grid, 1), " ab  ");
+        assert_eq!(row_text(&grid, 2), "     ");
+    }
+}

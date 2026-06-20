@@ -148,7 +148,8 @@ impl Grid {
         }
 
         let max_width = self.width - x;
-        self.write_text_line_clipped(x, y, max_width, text, fg, alpha);
+        let line = text.lines().next().unwrap_or("");
+        self.write_text_line_clipped(x, y, max_width, line, fg, alpha);
     }
 
     /// Write multiline text clipped to a rectangular region.
@@ -202,5 +203,80 @@ impl Grid {
             };
             self.cells[row][col] = cell;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rgb(r: u8, g: u8, b: u8) -> Rgb {
+        Rgb { r, g, b, a: 255 }
+    }
+
+    fn row_text(grid: &Grid, row: usize) -> String {
+        grid.cells[row].iter().map(|cell| cell.ch).collect()
+    }
+
+    #[test]
+    fn fill_rect_ignores_offscreen_and_handles_overflow() {
+        let blue = rgb(0, 0, 255);
+        let cell = Cell { ch: ' ', fg: None, bg: Some(blue) };
+        let mut grid = Grid::new(2, 2);
+
+        grid.fill_rect(5, 0, 1, 1, cell, 1.0);
+        assert_eq!(grid.cells, vec![vec![Cell::empty(); 2]; 2]);
+
+        grid.fill_rect(1, 1, u16::MAX, u16::MAX, cell, 1.0);
+        assert_eq!(grid.cells[1][1].bg, Some(blue));
+        assert_eq!(grid.cells[0][0], Cell::empty());
+    }
+
+    #[test]
+    fn fill_rect_clamps_alpha() {
+        let red = rgb(255, 0, 0);
+        let cell = Cell { ch: ' ', fg: None, bg: Some(red) };
+        let mut grid = Grid::new(1, 1);
+
+        grid.fill_rect(0, 0, 1, 1, cell, f64::NAN);
+        assert_eq!(grid.cells[0][0], Cell::empty());
+
+        grid.fill_rect(0, 0, 1, 1, cell, 2.0);
+        assert_eq!(grid.cells[0][0].bg, Some(red));
+    }
+
+    #[test]
+    fn write_text_ignores_offscreen_y() {
+        let mut grid = Grid::new(3, 1);
+        let before = grid.clone();
+
+        grid.write_text(0, 1, "abc", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(grid.cells, before.cells);
+    }
+
+    #[test]
+    fn write_text_stops_at_newline() {
+        let mut grid = Grid::new(5, 1);
+
+        grid.write_text(0, 0, "ab\ncd", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(row_text(&grid, 0), "ab   ");
+    }
+
+    #[test]
+    fn write_text_clipped_respects_width() {
+        let mut grid = Grid::new(5, 1);
+
+        grid.write_text_clipped(1, 0, 2, 1, "abcd", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(row_text(&grid, 0), " ab  ");
+    }
+
+    #[test]
+    fn write_text_clipped_respects_height_and_newlines() {
+        let mut grid = Grid::new(4, 3);
+
+        grid.write_text_clipped(0, 0, 4, 2, "ab\ncd\nef", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(row_text(&grid, 0), "ab  ");
+        assert_eq!(row_text(&grid, 1), "cd  ");
+        assert_eq!(row_text(&grid, 2), "    ");
     }
 }
