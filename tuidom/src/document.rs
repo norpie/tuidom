@@ -142,11 +142,10 @@ impl Document {
         &self,
         frame: std::time::Duration,
         layout: std::time::Duration,
-        render: std::time::Duration,
-        cells: usize,
+        stats: crate::render::RenderStats,
     ) {
         let mut overlay = self.inner.debug_overlay.lock().unwrap();
-        overlay.record(frame, layout, render, cells);
+        overlay.record(frame, layout, stats);
     }
 
     /// Run the render + event loop until [`quit`](Self::quit) is called.

@@ -1,7 +1,7 @@
 //! Render + event loop — the main `Document::run()` implementation.
 
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEventKind;
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode};
@@ -44,7 +44,12 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                         screen_h = h;
                         renderer.resize(w, h);
                         doc.compute_layout(w, h);
-                        let _ = renderer.render_full(&doc);
+                        let stats = renderer.render_full(&doc).unwrap_or_default();
+                        doc.record_frame_metrics(
+                            std::time::Instant::now().elapsed(),
+                            Duration::ZERO,
+                            stats,
+                        );
                     }
                     Some(Ok(CrosstermEvent::Key(key))) => {
                         if key.kind == KeyEventKind::Press {
@@ -77,12 +82,10 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
     doc.compute_layout(sw, sh);
     let layout_time = layout_start.elapsed();
 
-    let render_start = Instant::now();
-    let cells = renderer.render_frame(doc).unwrap_or(0);
-    let render_time = render_start.elapsed();
+    let stats = renderer.render_frame(doc).unwrap_or_default();
 
     let frame_time = frame_start.elapsed();
-    doc.record_frame_metrics(frame_time, layout_time, render_time, cells);
+    doc.record_frame_metrics(frame_time, layout_time, stats);
 }
 
 /// Convert a crossterm key event to a tuidom [`Event`].

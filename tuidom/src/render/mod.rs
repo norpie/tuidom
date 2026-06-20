@@ -6,10 +6,24 @@ mod paint;
 mod terminal;
 
 use std::io;
+use std::time::Duration;
 
 use terminal::Terminal;
 
 use crate::document::Document;
+
+/// Breakdown of time spent in each render phase.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RenderStats {
+    /// Number of cells that changed.
+    pub cells_changed: usize,
+    /// Time spent painting (DOM → grid + debug overlay).
+    pub paint_time: Duration,
+    /// Time spent diffing (old vs new).
+    pub diff_time: Duration,
+    /// Time spent flushing to terminal.
+    pub flush_time: Duration,
+}
 
 /// Orchestrates the render pipeline: paint, diff, and flush to terminal.
 pub(crate) struct Renderer {
@@ -20,8 +34,6 @@ pub(crate) struct Renderer {
 
 impl Renderer {
     /// Create a new renderer with screen-sized grids.
-    ///
-    /// Initializes the terminal (alternate screen, raw mode, hidden cursor).
     pub fn new(width: u16, height: u16) -> io::Result<Self> {
         Ok(Self {
             terminal: Terminal::new()?,
@@ -31,32 +43,38 @@ impl Renderer {
     }
 
     /// Render a single frame: layout (already done), paint, diff, flush.
-    ///
-    /// Returns the number of cells that changed (for debug metrics).
-    pub fn render_frame(&mut self, doc: &Document) -> io::Result<usize> {
-        // 1. Paint current DOM state into new grid
+    pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderStats> {
+        // 1. Paint
+        let paint_start = std::time::Instant::now();
         self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
         paint::paint(doc, &mut self.new_grid);
-
-        // 2. Paint debug overlay on top if enabled
         {
             let overlay = doc.inner.debug_overlay.lock().unwrap();
             if overlay.enabled {
                 overlay.render(&mut self.new_grid);
             }
         }
+        let paint_time = paint_start.elapsed();
 
-        // 3. Diff against previous frame
+        // 2. Diff
+        let diff_start = std::time::Instant::now();
         let changes = diff::diff(&self.old_grid, &self.new_grid);
-        let cells_changed = changes.len();
+        let diff_time = diff_start.elapsed();
 
-        // 4. Send only changes to terminal
+        // 3. Flush
+        let flush_start = std::time::Instant::now();
         self.terminal.flush_changes(&changes)?;
+        let flush_time = flush_start.elapsed();
 
-        // 5. Swap grids for next frame
+        // 4. Swap grids for next frame
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
 
-        Ok(cells_changed)
+        Ok(RenderStats {
+            cells_changed: changes.len(),
+            paint_time,
+            diff_time,
+            flush_time,
+        })
     }
 
     /// Handle terminal resize — clears and full-redraws the screen.
@@ -66,20 +84,30 @@ impl Renderer {
     }
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
-    pub fn render_full(&mut self, doc: &Document) -> io::Result<usize> {
+    pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderStats> {
+        let paint_start = std::time::Instant::now();
         self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
         paint::paint(doc, &mut self.new_grid);
-
         {
             let overlay = doc.inner.debug_overlay.lock().unwrap();
             if overlay.enabled {
                 overlay.render(&mut self.new_grid);
             }
         }
+        let paint_time = paint_start.elapsed();
+
+        let flush_start = std::time::Instant::now();
+        self.terminal.flush_full(&self.new_grid)?;
+        let flush_time = flush_start.elapsed();
 
         let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);
-        self.terminal.flush_full(&self.new_grid)?;
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
-        Ok(cells)
+
+        Ok(RenderStats {
+            cells_changed: cells,
+            paint_time,
+            diff_time: Duration::ZERO,
+            flush_time,
+        })
     }
 }
