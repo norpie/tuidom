@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
 use crate::node::{NodeData, NodeView};
+use crate::style::resolution::ResolvedStyle;
 use crate::style::Style;
 
 /// The root container and public API surface for tuidom.
@@ -86,10 +87,70 @@ impl Document {
 
     /// Set the inline style for a node.
     ///
-    /// This replaces any previously set style.
+    /// This replaces any previously set style and invalidates the resolved
+    /// style cache for this node and all descendants.
     pub fn set_style(&self, id: NodeId, style: Style) {
         if let Some(mut data) = self.inner.nodes.get_mut(&id) {
             data.style = style;
+        }
+        self.invalidate_resolved_style(id);
+    }
+
+    /// Update a node's style in-place via a closure.
+    ///
+    /// Invalidates the resolved style cache for this node and all descendants
+    /// after the closure runs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the node does not exist.
+    pub fn update_style(&self, id: NodeId, f: impl FnOnce(&mut Style)) {
+        if let Some(mut data) = self.inner.nodes.get_mut(&id) {
+            f(&mut data.style);
+        } else {
+            panic!("update_style: node {id:?} does not exist");
+        }
+        self.invalidate_resolved_style(id);
+    }
+
+    /// Get the fully resolved style for a node.
+    ///
+    /// Returns the cached value if available, otherwise computes it by
+    /// walking the parent chain. The resolved style has all [`StyleValue::Inherit`]
+    /// values replaced with concrete values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the node does not exist.
+    pub fn resolved_style(&self, id: NodeId) -> ResolvedStyle {
+        // Check cache
+        {
+            let node = self.inner.nodes.get(&id).expect("node not found");
+            if let Some(resolved) = &*node.resolved_style.read().expect("lock poisoned") {
+                return resolved.clone();
+            }
+        }
+
+        // Cache miss — compute
+        let parent = self.get_parent(id);
+        let parent_resolved = parent.map(|pid| self.resolved_style(pid));
+
+        let node = self.inner.nodes.get(&id).expect("node not found");
+        let resolved = ResolvedStyle::compute(&node, parent_resolved.as_ref());
+
+        *node.resolved_style.write().expect("lock poisoned") = Some(resolved.clone());
+        resolved
+    }
+
+    /// Invalidate the resolved style cache for a node and all descendants.
+    pub(crate) fn invalidate_resolved_style(&self, id: NodeId) {
+        if let Some(node) = self.inner.nodes.get(&id) {
+            *node.resolved_style.write().expect("lock poisoned") = None;
+            let children = node.children.clone();
+            drop(node); // release lock before recursing
+            for child in children {
+                self.invalidate_resolved_style(child);
+            }
         }
     }
 
@@ -111,12 +172,14 @@ impl Document {
         }
 
         // Update child's parent reference
-        // (but don't remove from old parent — that's move_child's job)
         if let Some(mut child_data) = self.inner.nodes.get_mut(&child) {
             child_data.parent = Some(parent);
         } else {
             panic!("append_child: child node {child:?} does not exist");
         }
+
+        // New parent — recompute resolved style for subtree
+        self.invalidate_resolved_style(child);
     }
 
     /// Insert `child` into `parent`'s children list before `before_sibling`.
@@ -143,6 +206,9 @@ impl Document {
         } else {
             panic!("insert_before: child node {child:?} does not exist");
         }
+
+        // New parent — recompute resolved style for subtree
+        self.invalidate_resolved_style(child);
     }
 
     /// Remove `child` from `parent` and delete the entire subtree rooted at
@@ -188,6 +254,9 @@ impl Document {
                 parent_data.children.push(child);
             }
         }
+
+        // New parent — recompute resolved style for subtree
+        self.invalidate_resolved_style(child);
     }
 
     // ------------------------------------------------------------------
@@ -256,6 +325,7 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{Color, Length};
 
     #[test]
     fn create_nodes() {
@@ -369,5 +439,103 @@ mod tests {
         let new_root = doc.create_box();
         doc.set_root(new_root);
         assert_eq!(doc.root(), Some(new_root));
+    }
+
+    // -- Style resolution tests ---------------------------------------
+
+    #[test]
+    fn set_style_gets_resolved() {
+        let doc = Document::new();
+        let node = doc.create_box();
+
+        let mut style = Style::new();
+        style.width(Length::Pixels(42));
+        doc.set_style(node, style);
+
+        let resolved = doc.resolved_style(node);
+        assert_eq!(resolved.width, Length::Pixels(42));
+        assert_eq!(resolved.opacity, 1.0); // Inherit → default
+        assert_eq!(resolved.color, Color::white()); // Inherit → default
+    }
+
+    #[test]
+    fn update_style_invalidates_cache() {
+        let doc = Document::new();
+        let node = doc.create_box();
+
+        let mut style = Style::new();
+        style.width(Length::Pixels(10));
+        doc.set_style(node, style);
+
+        assert_eq!(doc.resolved_style(node).width, Length::Pixels(10));
+
+        doc.update_style(node, |s| {
+            s.width(Length::Pixels(20));
+        });
+
+        assert_eq!(doc.resolved_style(node).width, Length::Pixels(20));
+    }
+
+    #[test]
+    fn inherits_from_parent() {
+        let doc = Document::new();
+
+        let parent = doc.create_box();
+        let mut parent_style = Style::new();
+        parent_style.color(Color::red());
+        doc.set_style(parent, parent_style);
+
+        let child = doc.create_text("hi");
+        // child uses default style — all Inherit
+        doc.append_child(parent, child);
+
+        let child_resolved = doc.resolved_style(child);
+        // Inherits color from parent
+        assert_eq!(child_resolved.color, Color::red());
+        // Own width is Inherit → default
+        assert_eq!(child_resolved.width, Length::Auto);
+    }
+
+    #[test]
+    fn override_breaks_inheritance() {
+        let doc = Document::new();
+
+        let parent = doc.create_box();
+        let mut parent_style = Style::new();
+        parent_style.color(Color::red());
+        doc.set_style(parent, parent_style);
+
+        let child = doc.create_text("hi");
+        let mut child_style = Style::new();
+        child_style.color(Color::blue()); // Explicit override
+        doc.set_style(child, child_style);
+        doc.append_child(parent, child);
+
+        let child_resolved = doc.resolved_style(child);
+        assert_eq!(child_resolved.color, Color::blue()); // Override wins
+    }
+
+    #[test]
+    fn move_child_triggers_re_resolve() {
+        let doc = Document::new();
+
+        let parent_red = doc.create_box();
+        let mut red_style = Style::new();
+        red_style.color(Color::red());
+        doc.set_style(parent_red, red_style);
+
+        let parent_blue = doc.create_box();
+        let mut blue_style = Style::new();
+        blue_style.color(Color::blue());
+        doc.set_style(parent_blue, blue_style);
+
+        let child = doc.create_text("movable");
+        doc.append_child(parent_red, child);
+
+        assert_eq!(doc.resolved_style(child).color, Color::red());
+
+        // Move to blue parent
+        doc.move_child(parent_blue, child, child);
+        assert_eq!(doc.resolved_style(child).color, Color::blue());
     }
 }

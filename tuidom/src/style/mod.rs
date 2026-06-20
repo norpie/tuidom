@@ -1,5 +1,7 @@
 /// Color types and OKLCH → RGB conversion.
 pub mod color;
+/// Resolved style computation and caching.
+pub(crate) mod resolution;
 
 use std::collections::HashMap;
 

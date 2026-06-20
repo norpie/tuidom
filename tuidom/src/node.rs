@@ -1,8 +1,10 @@
 //! Node data storage and public view types.
 
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 use crate::id::NodeId;
+use crate::style::resolution::ResolvedStyle;
 use crate::style::Style;
 
 // ---------------------------------------------------------------------------
@@ -20,7 +22,7 @@ pub(crate) enum NodeKind {
 }
 
 /// Internal representation of a DOM node, stored in the arena.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct NodeData {
     /// The node kind.
     pub kind: NodeKind,
@@ -30,6 +32,8 @@ pub(crate) struct NodeData {
     pub children: Vec<NodeId>,
     /// Inline style.
     pub style: Style,
+    /// Cached resolved style. Set to `None` to mark as dirty.
+    pub resolved_style: RwLock<Option<ResolvedStyle>>,
     /// Arbitrary string attributes.
     pub attrs: HashMap<String, String>,
 }
@@ -42,6 +46,7 @@ impl NodeData {
             parent: None,
             children: Vec::new(),
             style: Style::default(),
+            resolved_style: RwLock::new(None),
             attrs: HashMap::new(),
         }
     }
@@ -53,6 +58,7 @@ impl NodeData {
             parent: None,
             children: Vec::new(),
             style: Style::default(),
+            resolved_style: RwLock::new(None),
             attrs: HashMap::new(),
         }
     }
