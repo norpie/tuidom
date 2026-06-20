@@ -9,5 +9,7 @@ description = "A DOM-based terminal UI library for Rust"
 [dependencies]
 dashmap = "6.2.1"
 palette = "0.7.6"
+taffy = "0.11.0"
 # Re-export macro
 tuidom-derive = { path = "../tuidom-derive" }
+unicode-width = "0.2.2"
