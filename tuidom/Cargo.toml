@@ -7,5 +7,6 @@ repository.workspace = true
 description = "A DOM-based terminal UI library for Rust"
 
 [dependencies]
+palette = "0.7.6"
 # Re-export macro
 tuidom-derive = { path = "../tuidom-derive" }
