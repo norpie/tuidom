@@ -23,7 +23,9 @@ pub(crate) struct DebugOverlay {
     // Running averages
     avg_frame_time: Duration,
     avg_layout_time: Duration,
-    avg_paint_time: Duration,
+    avg_grid_time: Duration,
+    avg_dom_paint_time: Duration,
+    avg_overlay_paint_time: Duration,
     avg_diff_time: Duration,
     avg_flush_time: Duration,
     avg_cells_changed: f64,
@@ -32,7 +34,9 @@ pub(crate) struct DebugOverlay {
     frame_count: u64,
     total_frame: Duration,
     total_layout: Duration,
-    total_paint: Duration,
+    total_grid: Duration,
+    total_dom_paint: Duration,
+    total_overlay_paint: Duration,
     total_diff: Duration,
     total_flush: Duration,
     total_cells: usize,
@@ -52,7 +56,9 @@ impl DebugOverlay {
 
             avg_frame_time: Duration::ZERO,
             avg_layout_time: Duration::ZERO,
-            avg_paint_time: Duration::ZERO,
+            avg_grid_time: Duration::ZERO,
+            avg_dom_paint_time: Duration::ZERO,
+            avg_overlay_paint_time: Duration::ZERO,
             avg_diff_time: Duration::ZERO,
             avg_flush_time: Duration::ZERO,
             avg_cells_changed: 0.0,
@@ -60,7 +66,9 @@ impl DebugOverlay {
             frame_count: 0,
             total_frame: Duration::ZERO,
             total_layout: Duration::ZERO,
-            total_paint: Duration::ZERO,
+            total_grid: Duration::ZERO,
+            total_dom_paint: Duration::ZERO,
+            total_overlay_paint: Duration::ZERO,
             total_diff: Duration::ZERO,
             total_flush: Duration::ZERO,
             total_cells: 0,
@@ -79,7 +87,9 @@ impl DebugOverlay {
         self.frame_count += 1;
         self.total_frame += frame;
         self.total_layout += layout;
-        self.total_paint += stats.paint_time;
+        self.total_grid += stats.grid_time;
+        self.total_dom_paint += stats.dom_paint_time;
+        self.total_overlay_paint += stats.overlay_paint_time;
         self.total_diff += stats.diff_time;
         self.total_flush += stats.flush_time;
         self.total_cells += stats.cells_changed;
@@ -88,7 +98,9 @@ impl DebugOverlay {
         let n = self.frame_count as f64;
         self.avg_frame_time = avg(self.total_frame, n);
         self.avg_layout_time = avg(self.total_layout, n);
-        self.avg_paint_time = avg(self.total_paint, n);
+        self.avg_grid_time = avg(self.total_grid, n);
+        self.avg_dom_paint_time = avg(self.total_dom_paint, n);
+        self.avg_overlay_paint_time = avg(self.total_overlay_paint, n);
         self.avg_diff_time = avg(self.total_diff, n);
         self.avg_flush_time = avg(self.total_flush, n);
         self.avg_cells_changed = self.total_cells as f64 / n;
@@ -139,6 +151,13 @@ impl DebugOverlay {
     }
 
     fn format_lines(&self) -> Vec<String> {
+        let avg_render_time = self.avg_grid_time
+            + self.avg_dom_paint_time
+            + self.avg_overlay_paint_time
+            + self.avg_diff_time
+            + self.avg_flush_time;
+        let cells_label = if self.stats.full_redraw { "full" } else { "changed" };
+
         vec![
             format!("FPS:        {:.0}", self.fps),
             format!(
@@ -153,13 +172,23 @@ impl DebugOverlay {
             ),
             format!(
                 "  Render:   {:.3}ms (avg: {:.3}ms)",
-                ms(self.stats.paint_time + self.stats.diff_time + self.stats.flush_time),
-                ms(self.avg_paint_time + self.avg_diff_time + self.avg_flush_time),
+                ms(self.stats.render_time()),
+                ms(avg_render_time),
             ),
             format!(
-                "    Paint:  {:.3}ms (avg: {:.3}ms)",
-                ms(self.stats.paint_time),
-                ms(self.avg_paint_time)
+                "    Grid:   {:.3}ms (avg: {:.3}ms)",
+                ms(self.stats.grid_time),
+                ms(self.avg_grid_time)
+            ),
+            format!(
+                "    DOM:    {:.3}ms (avg: {:.3}ms)",
+                ms(self.stats.dom_paint_time),
+                ms(self.avg_dom_paint_time)
+            ),
+            format!(
+                "    Debug:  {:.3}ms (avg: {:.3}ms)",
+                ms(self.stats.overlay_paint_time),
+                ms(self.avg_overlay_paint_time)
             ),
             format!(
                 "    Diff:   {:.3}ms (avg: {:.3}ms)",
@@ -172,8 +201,8 @@ impl DebugOverlay {
                 ms(self.avg_flush_time)
             ),
             format!(
-                "    Cells:  {} (avg: {:.0})",
-                self.stats.cells_changed, self.avg_cells_changed
+                "    Cells:  {} {} (avg: {:.0})",
+                self.stats.cells_changed, cells_label, self.avg_cells_changed
             ),
         ]
     }
