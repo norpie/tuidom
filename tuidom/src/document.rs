@@ -6,6 +6,7 @@ use tokio::sync::Notify;
 
 use crate::animation::driver::{spawn_tick_task, AnimationDriver};
 use crate::animation::TransitionConfig;
+use crate::debug::DebugOverlay;
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
 use crate::node::{NodeData, NodeView};
@@ -51,6 +52,8 @@ impl Document {
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
                 anim_tick: Arc::new(Notify::new()),
+                debug_overlay: Mutex::new(DebugOverlay::new()),
+                listeners: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -97,6 +100,44 @@ impl Document {
         self.inner.notify.notify_one();
     }
 
+    /// Toggle the debug overlay on/off.
+    pub fn toggle_debug_overlay(&self) {
+        let mut overlay = self.inner.debug_overlay.lock().unwrap();
+        overlay.enabled = !overlay.enabled;
+        self.inner.notify.notify_one();
+    }
+
+    /// Register a global event listener.
+    ///
+    /// The handler is called synchronously for each terminal event. For async
+    /// work, spawn a task inside the handler.
+    pub fn on<F>(&self, handler: F)
+    where
+        F: Fn(&crate::event::Event) + Send + Sync + 'static,
+    {
+        self.inner.listeners.lock().unwrap().push(Box::new(handler));
+    }
+
+    /// Dispatch an event to all registered listeners.
+    pub(crate) fn dispatch_event(&self, event: crate::event::Event) {
+        let listeners = self.inner.listeners.lock().unwrap();
+        for handler in listeners.iter() {
+            (handler)(&event);
+        }
+    }
+
+    /// Record rendering metrics for the debug overlay.
+    pub(crate) fn record_frame_metrics(
+        &self,
+        frame: std::time::Duration,
+        layout: std::time::Duration,
+        render: std::time::Duration,
+        cells: usize,
+    ) {
+        let mut overlay = self.inner.debug_overlay.lock().unwrap();
+        overlay.record(frame, layout, render, cells);
+    }
+
     /// Run the render + event loop until [`quit`](Self::quit) is called.
     ///
     /// Consumes the document. Clone it first if you need to keep a handle
@@ -128,11 +169,11 @@ impl Document {
     /// This replaces any previously set style, invalidates the resolved
     /// style cache, and signals the animation driver if any transitionable
     /// properties changed.
-    pub fn set_style(&self, id: NodeId, style: Style) {
+    pub fn set_style(&self, id: NodeId, style: &Style) {
         let old_resolved = self.resolved_base_style(id);
 
         if let Some(mut data) = self.inner.nodes.get_mut(&id) {
-            data.style = style;
+            data.style = style.clone();
         }
         self.invalidate_resolved_style(id);
         self.inner.notify.notify_one();
@@ -567,7 +608,7 @@ mod tests {
 
         let mut style = Style::new();
         style.width(Length::Pixels(42));
-        doc.set_style(node, style);
+        doc.set_style(node, &style);
 
         let resolved = doc.resolved_style(node);
         assert_eq!(resolved.width, Length::Pixels(42));
@@ -582,7 +623,7 @@ mod tests {
 
         let mut style = Style::new();
         style.width(Length::Pixels(10));
-        doc.set_style(node, style);
+        doc.set_style(node, &style);
 
         assert_eq!(doc.resolved_style(node).width, Length::Pixels(10));
 
@@ -600,7 +641,7 @@ mod tests {
         let parent = doc.create_box();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
-        doc.set_style(parent, parent_style);
+        doc.set_style(parent, &parent_style);
 
         let child = doc.create_text("hi");
         // child uses default style — all Inherit
@@ -620,12 +661,12 @@ mod tests {
         let parent = doc.create_box();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
-        doc.set_style(parent, parent_style);
+        doc.set_style(parent, &parent_style);
 
         let child = doc.create_text("hi");
         let mut child_style = Style::new();
         child_style.color(Color::blue()); // Explicit override
-        doc.set_style(child, child_style);
+        doc.set_style(child, &child_style);
         doc.append_child(parent, child);
 
         let child_resolved = doc.resolved_style(child);
@@ -639,12 +680,12 @@ mod tests {
         let parent_red = doc.create_box();
         let mut red_style = Style::new();
         red_style.color(Color::red());
-        doc.set_style(parent_red, red_style);
+        doc.set_style(parent_red, &red_style);
 
         let parent_blue = doc.create_box();
         let mut blue_style = Style::new();
         blue_style.color(Color::blue());
-        doc.set_style(parent_blue, blue_style);
+        doc.set_style(parent_blue, &blue_style);
 
         let child = doc.create_text("movable");
         doc.append_child(parent_red, child);

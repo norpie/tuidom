@@ -31,21 +31,32 @@ impl Renderer {
     }
 
     /// Render a single frame: layout (already done), paint, diff, flush.
-    pub fn render_frame(&mut self, doc: &Document) -> io::Result<()> {
+    ///
+    /// Returns the number of cells that changed (for debug metrics).
+    pub fn render_frame(&mut self, doc: &Document) -> io::Result<usize> {
         // 1. Paint current DOM state into new grid
         self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
         paint::paint(doc, &mut self.new_grid);
 
-        // 2. Diff against previous frame
-        let changes = diff::diff(&self.old_grid, &self.new_grid);
+        // 2. Paint debug overlay on top if enabled
+        {
+            let overlay = doc.inner.debug_overlay.lock().unwrap();
+            if overlay.enabled {
+                overlay.render(&mut self.new_grid);
+            }
+        }
 
-        // 3. Send only changes to terminal
+        // 3. Diff against previous frame
+        let changes = diff::diff(&self.old_grid, &self.new_grid);
+        let cells_changed = changes.len();
+
+        // 4. Send only changes to terminal
         self.terminal.flush_changes(&changes)?;
 
-        // 4. Swap grids for next frame
+        // 5. Swap grids for next frame
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
 
-        Ok(())
+        Ok(cells_changed)
     }
 
     /// Handle terminal resize.

@@ -1,8 +1,10 @@
 //! Render + event loop — the main `Document::run()` implementation.
 
 use std::io;
+use std::time::Instant;
 
-use crossterm::event::{Event, EventStream, KeyEventKind};
+use crossterm::event::KeyEventKind;
+use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
@@ -18,8 +20,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     let inner = doc.inner.clone();
 
     // Initial render
-    doc.compute_layout(screen_w, screen_h);
-    renderer.render_frame(&doc)?;
+    render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
 
     loop {
         if *inner.shutdown.read().expect("lock poisoned") {
@@ -32,21 +33,20 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                 if *inner.shutdown.read().expect("lock poisoned") {
                     break;
                 }
-                doc.compute_layout(screen_w, screen_h);
-                renderer.render_frame(&doc)?;
+                render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
             }
 
             // Terminal events (resize, keyboard)
             maybe_event = event_stream.next() => {
                 match maybe_event {
-                    Some(Ok(Event::Resize(w, h))) => {
+                    Some(Ok(CrosstermEvent::Resize(w, h))) => {
                         renderer.resize(w, h);
                         inner.notify.notify_one();
                     }
-                    Some(Ok(Event::Key(key))) => {
+                    Some(Ok(CrosstermEvent::Key(key))) => {
                         if key.kind == KeyEventKind::Press {
-                            // TODO: event dispatch (phase 8 — debug overlay, smoke test)
-                            let _ = key;
+                            let event = convert_key_event(key);
+                            doc.dispatch_event(event);
                         }
                     }
                     _ => {}
@@ -54,17 +54,44 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
             }
 
             // Animation tick → re-render
-            // Fires only while animations are active (tick task periodically
-            // calls notify_one). When idle, this branch never fires.
             _ = inner.anim_tick.notified() => {
                 if *inner.shutdown.read().expect("lock poisoned") {
                     break;
                 }
-                doc.compute_layout(screen_w, screen_h);
-                renderer.render_frame(&doc)?;
+                render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
             }
         }
     }
 
     Ok(())
+}
+
+/// Render a frame with timing for the debug overlay.
+fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) {
+    let frame_start = Instant::now();
+
+    let layout_start = Instant::now();
+    doc.compute_layout(sw, sh);
+    let layout_time = layout_start.elapsed();
+
+    let render_start = Instant::now();
+    let cells = renderer.render_frame(doc).unwrap_or(0);
+    let render_time = render_start.elapsed();
+
+    let frame_time = frame_start.elapsed();
+    doc.record_frame_metrics(frame_time, layout_time, render_time, cells);
+}
+
+/// Convert a crossterm key event to a tuidom [`Event`].
+fn convert_key_event(key: crossterm::event::KeyEvent) -> crate::event::Event {
+    use crate::event::{Event, KeyCode, KeyEvent};
+
+    let code = match key.code {
+        CrosstermKeyCode::Char(c) => KeyCode::Char(c),
+        CrosstermKeyCode::Esc => KeyCode::Esc,
+        CrosstermKeyCode::F(n) => KeyCode::F(n),
+        _ => KeyCode::Char('?'), // unhandled keys → '?'
+    };
+
+    Event::KeyPress(KeyEvent { code })
 }

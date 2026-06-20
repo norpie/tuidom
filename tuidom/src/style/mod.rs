@@ -160,65 +160,57 @@ impl Style {
     // -- Width ----------------------------------------------------------
 
     /// Set the width.
-    pub fn width(&mut self, value: Length) -> &mut Self {
+    pub fn width(&mut self, value: Length) {
         self.width = StyleValue::Set(value);
-        self
     }
 
     // -- Height ---------------------------------------------------------
 
     /// Set the height.
-    pub fn height(&mut self, value: Length) -> &mut Self {
+    pub fn height(&mut self, value: Length) {
         self.height = StyleValue::Set(value);
-        self
     }
 
     // -- Display --------------------------------------------------------
 
     /// Set the display mode.
-    pub fn display(&mut self, value: Display) -> &mut Self {
+    pub fn display(&mut self, value: Display) {
         self.display = StyleValue::Set(value);
-        self
     }
 
     // -- Opacity --------------------------------------------------------
 
     /// Set the opacity (0–1).
-    pub fn opacity(&mut self, value: f64) -> &mut Self {
+    pub fn opacity(&mut self, value: f64) {
         self.opacity = StyleValue::Set(value);
-        self
     }
 
     // -- Color ----------------------------------------------------------
 
     /// Set the foreground text color.
-    pub fn color(&mut self, value: Color) -> &mut Self {
+    pub fn color(&mut self, value: Color) {
         self.color = StyleValue::Set(value);
-        self
     }
 
     // -- Background -----------------------------------------------------
 
     /// Set the background color.
-    pub fn background(&mut self, value: Color) -> &mut Self {
+    pub fn background(&mut self, value: Color) {
         self.background = StyleValue::Set(value);
-        self
     }
 
     // -- Align Items ----------------------------------------------------
 
     /// Set the cross-axis alignment.
-    pub fn align_items(&mut self, value: AlignItems) -> &mut Self {
+    pub fn align_items(&mut self, value: AlignItems) {
         self.align_items = StyleValue::Set(value);
-        self
     }
 
     // -- Justify Content -------------------------------------------------
 
     /// Set the main-axis alignment.
-    pub fn justify_content(&mut self, value: JustifyContent) -> &mut Self {
+    pub fn justify_content(&mut self, value: JustifyContent) {
         self.justify_content = StyleValue::Set(value);
-        self
     }
 }
 
@@ -229,12 +221,11 @@ mod tests {
     #[test]
     fn builder_chain() {
         let mut style = Style::new();
-        style
-            .width(Length::Percent(100.0))
-            .height(Length::Pixels(20))
-            .color(Color::white())
-            .background(Color::blue())
-            .opacity(0.5);
+        style.width(Length::Percent(100.0));
+        style.height(Length::Pixels(20));
+        style.color(Color::white());
+        style.background(Color::blue());
+        style.opacity(0.5);
 
         assert_eq!(style.width, StyleValue::Set(Length::Percent(100.0)));
         assert_eq!(style.height, StyleValue::Set(Length::Pixels(20)));

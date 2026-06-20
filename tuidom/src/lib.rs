@@ -7,6 +7,8 @@
 
 #![warn(missing_docs)]
 
+/// Debug overlay.
+mod debug;
 /// Node handle types.
 mod id;
 /// Internal document state.
@@ -15,6 +17,8 @@ mod inner;
 mod event_loop;
 /// Animation driver and types.
 pub mod animation;
+/// Event types and dispatch.
+pub mod event;
 /// Taffy-based flexbox layout.
 pub(crate) mod layout;
 /// Node data storage and views.

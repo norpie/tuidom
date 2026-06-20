@@ -7,6 +7,8 @@ use dashmap::DashMap;
 use tokio::sync::Notify;
 
 use crate::animation::driver::AnimationDriver;
+use crate::debug::DebugOverlay;
+use crate::event::Event;
 use crate::id::NodeId;
 use crate::node::NodeData;
 
@@ -40,6 +42,12 @@ pub(crate) struct DocumentInner {
     /// Woken by the tick task each frame. When no tick task runs,
     /// this never fires (passive idle).
     pub anim_tick: Arc<Notify>,
+
+    /// Debug overlay — toggled via F1, renders performance stats.
+    pub debug_overlay: Mutex<DebugOverlay>,
+
+    /// Global event listeners.
+    pub listeners: Mutex<Vec<Box<dyn Fn(&Event) + Send + Sync>>>,
 }
 
 impl DocumentInner {
