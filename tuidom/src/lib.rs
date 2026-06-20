@@ -11,6 +11,8 @@
 pub mod animation;
 /// Debug overlay.
 mod debug;
+/// Error types returned by tuidom APIs.
+mod error;
 /// Event types and dispatch.
 pub mod event;
 /// Render + event loop.
@@ -19,9 +21,9 @@ mod event_loop;
 mod id;
 /// Internal document state.
 mod inner;
-mod lock;
 /// Taffy-based flexbox layout.
 pub(crate) mod layout;
+mod lock;
 /// Node data storage and views.
 mod node;
 /// Screen buffer and rendering.
@@ -33,6 +35,7 @@ pub mod document;
 pub mod style;
 
 pub use document::Document;
+pub use error::{Result, TuidomError};
 pub use id::NodeId;
 
 // Re-export the macro
