@@ -156,7 +156,11 @@ impl DebugOverlay {
             + self.avg_overlay_paint_time
             + self.avg_diff_time
             + self.avg_flush_time;
-        let cells_label = if self.stats.full_redraw { "full" } else { "changed" };
+        let cells_label = if self.stats.full_redraw {
+            "full"
+        } else {
+            "changed"
+        };
 
         vec![
             format!("FPS:        {:.0}", self.fps),

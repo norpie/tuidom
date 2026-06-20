@@ -14,5 +14,6 @@ pub(crate) fn rw_read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 
 /// Acquire a write lock, recovering the inner value if the lock was poisoned.
 pub(crate) fn rw_write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
-    lock.write().unwrap_or_else(|poisoned| poisoned.into_inner())
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

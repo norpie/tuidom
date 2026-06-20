@@ -50,7 +50,8 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
             height: AvailableSpace::Definite(screen_height as f32),
         };
 
-        if let Err(err) = taffy_tree.compute_layout_with_measure(taffy_root, available, measure_fn) {
+        if let Err(err) = taffy_tree.compute_layout_with_measure(taffy_root, available, measure_fn)
+        {
             log::error!("taffy compute_layout failed: {err:?}");
             return;
         }
