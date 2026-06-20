@@ -86,7 +86,11 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Rendering
 
-**Cell** — Single terminal character position. Contains char, fg/bg colors, text attributes (bold, italic, underline).
+**Cell** — Single terminal cell position. Contains display content plus fg/bg colors.
+
+**CellContent** — The display content stored in a cell: empty space, a grapheme glyph, or a wide-glyph continuation marker.
+
+**WideContinuation** — Marker for the second terminal cell occupied by a width-2 glyph. It is not printed directly; the glyph head prints the visible character.
 
 **Grid** — 2D buffer of Cells representing screen state (width × height).
 
