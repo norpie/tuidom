@@ -14,7 +14,7 @@ use tuidom::event::{Event, KeyCode};
 use tuidom::style::{AlignItems, Color, JustifyContent, Length, Style};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let doc = tuidom::Document::new();
 
     // --- Styles -------------------------------------------------------
@@ -40,7 +40,7 @@ async fn main() {
     let text = doc.create_text("Hello, tuidom!");
     doc.set_style(text, &text_style);
 
-    doc.append_child(container, text);
+    doc.append_child(container, text)?;
     doc.set_root(container);
 
     // Always show debug overlay
@@ -82,5 +82,6 @@ async fn main() {
 
     // --- Run ----------------------------------------------------------
 
-    let _ = doc.run().await;
+    doc.run().await?;
+    Ok(())
 }

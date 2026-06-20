@@ -26,6 +26,9 @@ pub(crate) struct DocumentInner {
     /// The root node for rendering.
     pub root: RwLock<Option<NodeId>>,
 
+    /// Serializes multi-node tree mutations so parent/child links stay consistent.
+    pub tree_mutation: Mutex<()>,
+
     /// Notification signal — woken when DOM mutations require a re-render.
     pub notify: Notify,
 

@@ -1,5 +1,6 @@
 //! The [`Document`] type — the public API surface for tuidom.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use tokio::sync::Notify;
 use crate::animation::TransitionConfig;
 use crate::animation::driver::{AnimationDriver, spawn_tick_task};
 use crate::debug::DebugOverlay;
+use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
 use crate::lock;
@@ -59,6 +61,7 @@ impl Document {
                 nodes: dashmap::DashMap::new(),
                 next_id: std::sync::atomic::AtomicU64::new(0),
                 root: std::sync::RwLock::new(None),
+                tree_mutation: Mutex::new(()),
                 notify: tokio::sync::Notify::new(),
                 shutdown: std::sync::RwLock::new(false),
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
@@ -321,115 +324,174 @@ impl Document {
 
     /// Append a child to the end of `parent`'s children list.
     ///
-    /// # Panics
+    /// If `child` already has a parent, it is detached from that parent first.
     ///
-    /// Panics if `parent` or `child` does not exist.
-    pub fn append_child(&self, parent: NodeId, child: NodeId) {
-        // Update parent's children list
-        if let Some(mut parent_data) = self.inner.nodes.get_mut(&parent) {
-            parent_data.children.push(child);
-        } else {
-            panic!("append_child: parent node {parent:?} does not exist");
-        }
-
-        // Update child's parent reference
-        if let Some(mut child_data) = self.inner.nodes.get_mut(&child) {
-            child_data.parent = Some(parent);
-        } else {
-            panic!("append_child: child node {child:?} does not exist");
-        }
-
-        // New parent — recompute resolved style for subtree
-        self.invalidate_resolved_style(child);
-        self.inner.notify.notify_one();
+    /// # Errors
+    ///
+    /// Returns an error if `parent` or `child` does not exist, or if the
+    /// operation would create a cycle.
+    pub fn append_child(&self, parent: NodeId, child: NodeId) -> Result<()> {
+        self.insert_child(parent, child, None)
     }
 
     /// Insert `child` into `parent`'s children list before `before_sibling`.
     ///
+    /// If `child` already has a parent, it is detached from that parent first.
     /// If `before_sibling` is not found in `parent`'s children, the child is
     /// appended at the end.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `parent` or `child` does not exist.
-    pub fn insert_before(&self, parent: NodeId, child: NodeId, before_sibling: NodeId) {
-        if let Some(mut parent_data) = self.inner.nodes.get_mut(&parent) {
-            if let Some(pos) = parent_data
-                .children
-                .iter()
-                .position(|&c| c == before_sibling)
-            {
-                parent_data.children.insert(pos, child);
-            } else {
-                parent_data.children.push(child);
-            }
-        } else {
-            panic!("insert_before: parent node {parent:?} does not exist");
-        }
-
-        if let Some(mut child_data) = self.inner.nodes.get_mut(&child) {
-            child_data.parent = Some(parent);
-        } else {
-            panic!("insert_before: child node {child:?} does not exist");
-        }
-
-        // New parent — recompute resolved style for subtree
-        self.invalidate_resolved_style(child);
-        self.inner.notify.notify_one();
+    /// Returns an error if `parent` or `child` does not exist, or if the
+    /// operation would create a cycle.
+    pub fn insert_before(
+        &self,
+        parent: NodeId,
+        child: NodeId,
+        before_sibling: NodeId,
+    ) -> Result<()> {
+        self.insert_child(parent, child, Some(before_sibling))
     }
 
     /// Remove `child` from `parent` and delete the entire subtree rooted at
     /// `child` from the arena.
     ///
     /// Does nothing if `child` is not actually a child of `parent`.
-    pub fn remove_child(&self, parent: NodeId, child: NodeId) {
-        // Remove child from parent's children list
-        if let Some(mut parent_data) = self.inner.nodes.get_mut(&parent) {
-            parent_data.children.retain(|&c| c != child);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `parent` or `child` does not exist.
+    pub fn remove_child(&self, parent: NodeId, child: NodeId) -> Result<()> {
+        let tree_guard = lock::mutex(&self.inner.tree_mutation);
+        self.ensure_node_exists(parent)?;
+        self.ensure_node_exists(child)?;
+
+        let parent_contains_child = self
+            .inner
+            .nodes
+            .get(&parent)
+            .is_some_and(|node| node.children.contains(&child));
+        let child_points_to_parent = self
+            .inner
+            .nodes
+            .get(&child)
+            .is_some_and(|node| node.parent == Some(parent));
+
+        if !(parent_contains_child && child_points_to_parent) {
+            return Ok(());
         }
 
-        // Remove the entire subtree
+        if let Some(mut parent_data) = self.inner.nodes.get_mut(&parent) {
+            parent_data.children.retain(|&c| c != child);
+        } else {
+            return Err(TuidomError::NodeNotFound { id: parent });
+        }
+
         self.remove_subtree(child);
+        drop(tree_guard);
         self.inner.notify.notify_one();
+        Ok(())
     }
 
     /// Move `child` from its current parent to `new_parent`, inserting it
     /// before `before_sibling` in the new parent's children list.
     ///
-    /// This is more efficient than calling [`remove_child`] followed by
-    /// [`insert_before`] (it avoids removing the subtree and recreating it).
+    /// If `before_sibling` is not found in `new_parent`'s children, the child
+    /// is appended at the end.
     ///
-    /// If `child` has no parent, this behaves the same as [`insert_before`].
-    pub fn move_child(&self, new_parent: NodeId, child: NodeId, before_sibling: NodeId) {
-        // Remove from old parent's children list (if any)
+    /// # Errors
+    ///
+    /// Returns an error if `new_parent` or `child` does not exist, or if the
+    /// operation would create a cycle.
+    pub fn move_child(
+        &self,
+        new_parent: NodeId,
+        child: NodeId,
+        before_sibling: NodeId,
+    ) -> Result<()> {
+        self.insert_child(new_parent, child, Some(before_sibling))
+    }
+
+    fn insert_child(
+        &self,
+        parent: NodeId,
+        child: NodeId,
+        before_sibling: Option<NodeId>,
+    ) -> Result<()> {
+        let tree_guard = lock::mutex(&self.inner.tree_mutation);
+        self.validate_reparent(parent, child)?;
+
+        self.detach_from_current_parent(child);
+        self.insert_child_reference(parent, child, before_sibling)?;
+        self.set_parent(child, parent)?;
+
+        drop(tree_guard);
+        self.invalidate_resolved_style(child);
+        self.inner.notify.notify_one();
+        Ok(())
+    }
+
+    fn validate_reparent(&self, parent: NodeId, child: NodeId) -> Result<()> {
+        self.ensure_node_exists(parent)?;
+        self.ensure_node_exists(child)?;
+
+        if parent == child || self.is_descendant_of(parent, child) {
+            return Err(TuidomError::TreeCycle { parent, child });
+        }
+
+        Ok(())
+    }
+
+    fn ensure_node_exists(&self, id: NodeId) -> Result<()> {
+        if self.inner.nodes.contains_key(&id) {
+            Ok(())
+        } else {
+            Err(TuidomError::NodeNotFound { id })
+        }
+    }
+
+    fn detach_from_current_parent(&self, child: NodeId) {
         let old_parent = self.get_parent(child);
-        if let Some(old_p) = old_parent {
-            if let Some(mut old_parent_data) = self.inner.nodes.get_mut(&old_p) {
-                old_parent_data.children.retain(|&c| c != child);
-            }
+        if let Some(old_parent) = old_parent
+            && let Some(mut old_parent_data) = self.inner.nodes.get_mut(&old_parent)
+        {
+            old_parent_data.children.retain(|&c| c != child);
         }
+    }
 
-        // Update child's parent
-        if let Some(mut child_data) = self.inner.nodes.get_mut(&child) {
-            child_data.parent = Some(new_parent);
-        }
+    fn insert_child_reference(
+        &self,
+        parent: NodeId,
+        child: NodeId,
+        before_sibling: Option<NodeId>,
+    ) -> Result<()> {
+        let Some(mut parent_data) = self.inner.nodes.get_mut(&parent) else {
+            return Err(TuidomError::NodeNotFound { id: parent });
+        };
 
-        // Insert into new parent
-        if let Some(mut parent_data) = self.inner.nodes.get_mut(&new_parent) {
-            if let Some(pos) = parent_data
+        parent_data.children.retain(|&c| c != child);
+
+        if let Some(before_sibling) = before_sibling
+            && let Some(pos) = parent_data
                 .children
                 .iter()
                 .position(|&c| c == before_sibling)
-            {
-                parent_data.children.insert(pos, child);
-            } else {
-                parent_data.children.push(child);
-            }
+        {
+            parent_data.children.insert(pos, child);
+        } else {
+            parent_data.children.push(child);
         }
 
-        // New parent — recompute resolved style for subtree
-        self.invalidate_resolved_style(child);
-        self.inner.notify.notify_one();
+        Ok(())
+    }
+
+    fn set_parent(&self, child: NodeId, parent: NodeId) -> Result<()> {
+        let Some(mut child_data) = self.inner.nodes.get_mut(&child) else {
+            return Err(TuidomError::NodeNotFound { id: child });
+        };
+
+        child_data.parent = Some(parent);
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -454,14 +516,23 @@ impl Document {
 
     /// Check whether `id` is a descendant of `ancestor`.
     pub fn is_descendant_of(&self, id: NodeId, ancestor: NodeId) -> bool {
-        let mut current = id;
-        loop {
-            match self.get_parent(current) {
-                Some(parent) if parent == ancestor => return true,
-                Some(parent) => current = parent,
-                None => return false,
-            }
+        if id == ancestor {
+            return false;
         }
+
+        let mut seen = HashSet::new();
+        let mut current = id;
+        while let Some(parent) = self.get_parent(current) {
+            if parent == ancestor {
+                return true;
+            }
+            if !seen.insert(parent) {
+                return false;
+            }
+            current = parent;
+        }
+
+        false
     }
 
     // ------------------------------------------------------------------
@@ -501,6 +572,13 @@ impl Document {
 
     /// Remove a node and its entire subtree from the arena.
     fn remove_subtree(&self, id: NodeId) {
+        {
+            let mut root = lock::rw_write(&self.inner.root);
+            if *root == Some(id) {
+                *root = None;
+            }
+        }
+
         if let Some((_, data)) = self.inner.nodes.remove(&id) {
             for child in &data.children {
                 self.remove_subtree(*child);
@@ -542,21 +620,165 @@ mod tests {
         let child3 = doc.create_text("three");
 
         // append
-        doc.append_child(root, child1);
-        doc.append_child(root, child2);
+        doc.append_child(root, child1).unwrap();
+        doc.append_child(root, child2).unwrap();
         assert_eq!(doc.get_children(root), vec![child1, child2]);
 
         // insert_before
-        doc.insert_before(root, child3, child2);
+        doc.insert_before(root, child3, child2).unwrap();
         assert_eq!(doc.get_children(root), vec![child1, child3, child2]);
 
         // move_child
         let other = doc.create_box();
-        doc.move_child(other, child3, child2); // inserts at end since child2 isn't in other
+        doc.move_child(other, child3, child2).unwrap(); // inserts at end since child2 isn't in other
         assert_eq!(doc.get_children(root), vec![child1, child2]);
         assert_eq!(doc.get_children(other), vec![child3]);
 
         assert_eq!(doc.get_parent(child3), Some(other));
+    }
+
+    #[test]
+    fn append_child_reparents_without_stale_reference() {
+        let doc = Document::new();
+        let first_parent = doc.create_box();
+        let second_parent = doc.create_box();
+        let child = doc.create_text("child");
+
+        doc.append_child(first_parent, child).unwrap();
+        doc.append_child(second_parent, child).unwrap();
+
+        assert!(doc.get_children(first_parent).is_empty());
+        assert_eq!(doc.get_children(second_parent), vec![child]);
+        assert_eq!(doc.get_parent(child), Some(second_parent));
+    }
+
+    #[test]
+    fn append_child_does_not_duplicate_existing_child() {
+        let doc = Document::new();
+        let parent = doc.create_box();
+        let child = doc.create_text("child");
+
+        doc.append_child(parent, child).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        assert_eq!(doc.get_children(parent), vec![child]);
+        assert_eq!(doc.get_parent(child), Some(parent));
+    }
+
+    #[test]
+    fn insert_before_reorders_existing_child_without_duplicate() {
+        let doc = Document::new();
+        let parent = doc.create_box();
+        let first = doc.create_text("first");
+        let second = doc.create_text("second");
+        let third = doc.create_text("third");
+
+        doc.append_child(parent, first).unwrap();
+        doc.append_child(parent, second).unwrap();
+        doc.append_child(parent, third).unwrap();
+        doc.insert_before(parent, third, first).unwrap();
+
+        assert_eq!(doc.get_children(parent), vec![third, first, second]);
+        assert_eq!(doc.get_parent(third), Some(parent));
+    }
+
+    #[test]
+    fn cycle_attempt_returns_error_and_does_not_mutate() {
+        let doc = Document::new();
+        let ancestor = doc.create_box();
+        let child = doc.create_box();
+
+        doc.append_child(ancestor, child).unwrap();
+
+        let err = doc.append_child(child, ancestor).unwrap_err();
+        assert_eq!(
+            err,
+            TuidomError::TreeCycle {
+                parent: child,
+                child: ancestor,
+            }
+        );
+        assert_eq!(doc.get_children(ancestor), vec![child]);
+        assert!(doc.get_children(child).is_empty());
+        assert_eq!(doc.get_parent(ancestor), None);
+        assert_eq!(doc.get_parent(child), Some(ancestor));
+    }
+
+    #[test]
+    fn invalid_node_error_does_not_partially_mutate_tree() {
+        let doc = Document::new();
+        let parent = doc.create_box();
+        let child = doc.create_text("child");
+        let missing = NodeId::new(999);
+
+        assert_eq!(
+            doc.append_child(parent, missing),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+        assert!(doc.get_children(parent).is_empty());
+
+        assert_eq!(
+            doc.append_child(missing, child),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+        assert_eq!(doc.get_parent(child), None);
+    }
+
+    #[test]
+    fn move_child_invalid_parent_does_not_detach_child() {
+        let doc = Document::new();
+        let parent = doc.create_box();
+        let child = doc.create_text("child");
+        let missing = NodeId::new(999);
+
+        doc.append_child(parent, child).unwrap();
+
+        assert_eq!(
+            doc.move_child(missing, child, child),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+        assert_eq!(doc.get_children(parent), vec![child]);
+        assert_eq!(doc.get_parent(child), Some(parent));
+    }
+
+    #[test]
+    fn remove_child_noops_when_child_belongs_to_another_parent() {
+        let doc = Document::new();
+        let unrelated_parent = doc.create_box();
+        let actual_parent = doc.create_box();
+        let child = doc.create_text("child");
+
+        doc.append_child(actual_parent, child).unwrap();
+        doc.remove_child(unrelated_parent, child).unwrap();
+
+        assert!(doc.get_children(unrelated_parent).is_empty());
+        assert_eq!(doc.get_children(actual_parent), vec![child]);
+        assert!(doc.get_node(child).is_some());
+        assert_eq!(doc.get_parent(child), Some(actual_parent));
+    }
+
+    #[test]
+    fn remove_child_missing_node_returns_error_without_mutation() {
+        let doc = Document::new();
+        let parent = doc.create_box();
+        let child = doc.create_text("child");
+        let missing = NodeId::new(999);
+
+        doc.append_child(parent, child).unwrap();
+
+        assert_eq!(
+            doc.remove_child(parent, missing),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+        assert_eq!(doc.get_children(parent), vec![child]);
+        assert!(doc.get_node(child).is_some());
+
+        assert_eq!(
+            doc.remove_child(missing, child),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+        assert_eq!(doc.get_children(parent), vec![child]);
+        assert_eq!(doc.get_parent(child), Some(parent));
     }
 
     #[test]
@@ -567,15 +789,30 @@ mod tests {
         let child = doc.create_box();
         let grandchild = doc.create_text("deep");
 
-        doc.append_child(root, child);
-        doc.append_child(child, grandchild);
+        doc.append_child(root, child).unwrap();
+        doc.append_child(child, grandchild).unwrap();
 
-        doc.remove_child(root, child);
+        doc.remove_child(root, child).unwrap();
 
         // grandchild is also gone
         assert!(doc.get_node(child).is_none());
         assert!(doc.get_node(grandchild).is_none());
         assert!(doc.get_children(root).is_empty());
+    }
+
+    #[test]
+    fn remove_subtree_clears_root_if_root_was_removed() {
+        let doc = Document::new();
+
+        let parent = doc.create_box();
+        let child = doc.create_box();
+
+        doc.append_child(parent, child).unwrap();
+        doc.set_root(child);
+
+        doc.remove_child(parent, child).unwrap();
+
+        assert_eq!(doc.root(), None);
     }
 
     #[test]
@@ -586,8 +823,8 @@ mod tests {
         let b = doc.create_box();
         let c = doc.create_text("deep");
 
-        doc.append_child(a, b);
-        doc.append_child(b, c);
+        doc.append_child(a, b).unwrap();
+        doc.append_child(b, c).unwrap();
 
         assert!(doc.is_descendant_of(c, a));
         assert!(doc.is_descendant_of(c, b));
@@ -605,11 +842,11 @@ mod tests {
         let child = doc.create_box();
         let grandchild = doc.create_text("deep");
 
-        doc.append_child(a, child);
-        doc.append_child(child, grandchild);
+        doc.append_child(a, child).unwrap();
+        doc.append_child(child, grandchild).unwrap();
 
         // Move child (with grandchild) from a to b
-        doc.move_child(b, child, b); // before_sibling doesn't exist → append
+        doc.move_child(b, child, b).unwrap(); // before_sibling doesn't exist → append
 
         assert_eq!(doc.get_parent(child), Some(b));
         assert_eq!(doc.get_parent(grandchild), Some(child));
@@ -677,7 +914,7 @@ mod tests {
 
         let child = doc.create_text("hi");
         // child uses default style — all Inherit
-        doc.append_child(parent, child);
+        doc.append_child(parent, child).unwrap();
 
         let child_resolved = doc.resolved_style(child);
         // Inherits color from parent
@@ -699,7 +936,7 @@ mod tests {
         let mut child_style = Style::new();
         child_style.color(Color::blue()); // Explicit override
         doc.set_style(child, &child_style);
-        doc.append_child(parent, child);
+        doc.append_child(parent, child).unwrap();
 
         let child_resolved = doc.resolved_style(child);
         assert_eq!(child_resolved.color, Color::blue()); // Override wins
@@ -720,12 +957,12 @@ mod tests {
         doc.set_style(parent_blue, &blue_style);
 
         let child = doc.create_text("movable");
-        doc.append_child(parent_red, child);
+        doc.append_child(parent_red, child).unwrap();
 
         assert_eq!(doc.resolved_style(child).color, Color::red());
 
         // Move to blue parent
-        doc.move_child(parent_blue, child, child);
+        doc.move_child(parent_blue, child, child).unwrap();
         assert_eq!(doc.resolved_style(child).color, Color::blue());
     }
 }
