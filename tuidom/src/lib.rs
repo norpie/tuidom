@@ -11,6 +11,8 @@
 mod id;
 /// Internal document state.
 mod inner;
+/// Taffy-based flexbox layout.
+pub(crate) mod layout;
 /// Node data storage and views.
 mod node;
 

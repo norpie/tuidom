@@ -9,7 +9,7 @@ use crate::style::{AlignItems, Color, Display, JustifyContent, Length, StyleValu
 
 /// Fully resolved style — no [`StyleValue::Inherit`] placeholders remain.
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedStyle {
+pub struct ResolvedStyle {
     /// Resolved width.
     pub width: Length,
     /// Resolved height.
@@ -49,7 +49,7 @@ impl ResolvedStyle {
     /// For each property, uses the node's value if `Set`, falls back to the
     /// parent's resolved value if `Inherit`, and falls back to [`Default`]
     /// if the node is the root.
-    pub fn compute(data: &NodeData, parent: Option<&ResolvedStyle>) -> Self {
+    pub(crate) fn compute(data: &NodeData, parent: Option<&ResolvedStyle>) -> Self {
         let defaults = ResolvedStyle::default();
 
         Self {

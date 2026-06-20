@@ -25,7 +25,7 @@ use crate::style::Style;
 /// ```
 #[derive(Clone)]
 pub struct Document {
-    inner: Arc<DocumentInner>,
+    pub(crate) inner: Arc<DocumentInner>,
 }
 
 impl Default for Document {
@@ -292,6 +292,19 @@ impl Document {
     }
 
     // ------------------------------------------------------------------
+    // Layout
+    // ------------------------------------------------------------------
+
+    /// Compute layout for all nodes in the DOM tree.
+    ///
+    /// Resolves styles, builds a taffy layout tree, computes positions and
+    /// sizes, and stores the results on each node. Nodes with `display: None`
+    /// are skipped.
+    pub fn compute_layout(&self, screen_width: u16, screen_height: u16) {
+        crate::layout::compute_layout(self, screen_width, screen_height);
+    }
+
+    // ------------------------------------------------------------------
     // Node inspection
     // ------------------------------------------------------------------
 
@@ -304,6 +317,7 @@ impl Document {
             kind: r.kind.to_view(),
             parent: r.parent,
             children: r.children.clone(),
+            layout: r.layout,
             attrs: r.attrs.clone(),
         })
     }

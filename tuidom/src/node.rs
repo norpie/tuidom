@@ -8,6 +8,23 @@ use crate::style::resolution::ResolvedStyle;
 use crate::style::Style;
 
 // ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+/// Computed layout for a node — position and size in terminal cells.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayoutRect {
+    /// X position in terminal cells.
+    pub x: u16,
+    /// Y position in terminal cells.
+    pub y: u16,
+    /// Width in terminal cells.
+    pub width: u16,
+    /// Height in terminal cells.
+    pub height: u16,
+}
+
+// ---------------------------------------------------------------------------
 // Internal node storage
 // ---------------------------------------------------------------------------
 
@@ -34,6 +51,8 @@ pub(crate) struct NodeData {
     pub style: Style,
     /// Cached resolved style. Set to `None` to mark as dirty.
     pub resolved_style: RwLock<Option<ResolvedStyle>>,
+    /// Computed layout (set by [`crate::layout::compute_layout`]).
+    pub layout: Option<LayoutRect>,
     /// Arbitrary string attributes.
     pub attrs: HashMap<String, String>,
 }
@@ -47,6 +66,7 @@ impl NodeData {
             children: Vec::new(),
             style: Style::default(),
             resolved_style: RwLock::new(None),
+            layout: None,
             attrs: HashMap::new(),
         }
     }
@@ -59,6 +79,7 @@ impl NodeData {
             children: Vec::new(),
             style: Style::default(),
             resolved_style: RwLock::new(None),
+            layout: None,
             attrs: HashMap::new(),
         }
     }
@@ -79,6 +100,8 @@ pub struct NodeView {
     pub parent: Option<NodeId>,
     /// Ordered list of child node IDs.
     pub children: Vec<NodeId>,
+    /// Computed layout, if layout has been run.
+    pub layout: Option<LayoutRect>,
     /// Arbitrary string attributes.
     pub attrs: HashMap<String, String>,
 }
