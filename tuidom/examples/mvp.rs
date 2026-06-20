@@ -24,8 +24,11 @@ async fn main() {
     container_style.height(Length::Percent(100.0));
     container_style.justify_content(JustifyContent::Center);
     container_style.align_items(AlignItems::Center);
+    container_style.background(Color::oklch(0.3, 0.1, 50.0)); // dark red
 
     let mut text_style = Style::new();
+    text_style.width(Length::Auto);
+    text_style.height(Length::Auto);
     text_style.color(Color::white());
     text_style.background(Color::blue());
 
@@ -40,11 +43,14 @@ async fn main() {
     doc.append_child(container, text);
     doc.set_root(container);
 
+    // Always show debug overlay
+    doc.toggle_debug_overlay();
+
     // --- Transition config — opacity changes animate over 400ms -------
 
     doc.set_transition(
         text,
-        TransitionConfig::opacity(Duration::from_millis(400), Easing::EaseInOut),
+        TransitionConfig::opacity(Duration::from_millis(2000), Easing::EaseInOut),
     );
 
     // --- Shared state -------------------------------------------------
@@ -64,8 +70,6 @@ async fn main() {
                 let target = if !was_visible { 1.0 } else { 0.0 };
                 d.update_style(text, |s| s.opacity(target));
             }
-            // Toggle debug overlay
-            KeyCode::F(1) => d.toggle_debug_overlay(),
             // Quit
             KeyCode::Char('q') | KeyCode::Esc => d.quit(),
             _ => {}
