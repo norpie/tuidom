@@ -40,11 +40,7 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
     match &view.kind {
         NodeKindView::Box => {
             if let Some(bg) = bg_rgb {
-                let bg_cell = Cell {
-                    ch: ' ',
-                    fg: None,
-                    bg: Some(bg),
-                };
+                let bg_cell = Cell::empty_with_bg(bg);
                 grid.fill_rect(
                     layout.x,
                     layout.y,
@@ -58,11 +54,7 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
 
         NodeKindView::Text { content } => {
             if let Some(bg) = bg_rgb {
-                let bg_cell = Cell {
-                    ch: ' ',
-                    fg: None,
-                    bg: Some(bg),
-                };
+                let bg_cell = Cell::empty_with_bg(bg);
                 grid.fill_rect(
                     layout.x,
                     layout.y,
@@ -96,7 +88,11 @@ mod tests {
     use crate::node::LayoutRect;
 
     fn row_text(grid: &Grid, row: usize) -> String {
-        grid.cells[row].iter().map(|cell| cell.ch).collect()
+        grid.cells[row]
+            .iter()
+            .filter(|cell| !cell.is_wide_continuation())
+            .map(Cell::terminal_text)
+            .collect()
     }
 
     #[test]
@@ -106,7 +102,12 @@ mod tests {
         doc.set_root(text);
 
         if let Some(mut data) = doc.inner.nodes.get_mut(&text) {
-            data.layout = Some(LayoutRect { x: 1, y: 1, width: 2, height: 1 });
+            data.layout = Some(LayoutRect {
+                x: 1,
+                y: 1,
+                width: 2,
+                height: 1,
+            });
         } else {
             assert!(false, "text node should exist");
         }

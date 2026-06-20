@@ -1,9 +1,10 @@
 //! Frame diffing — compare old vs. new grid to find changed cells.
 //!
-//! Uses a color distance threshold to avoid sending near-identical colors
-//! (e.g. from alpha blending on intermediate animation frames).
+//! Wide glyphs occupy multiple terminal cells, so dirty cells are expanded
+//! through both the old and new wide spans before flushing.
 
 use crate::render::grid::Cell;
+use crate::render::grid::CellContent;
 use crate::render::grid::Grid;
 use crate::style::color::Rgb;
 
@@ -24,52 +25,74 @@ const COLOR_THRESHOLD: i32 = 0;
 
 /// Compare old and new grids, returning only the cells that changed.
 pub(crate) fn diff(old: &Grid, new: &Grid) -> Vec<CellChange> {
-    let mut changes = Vec::new();
-
-    let height = old.height.min(new.height) as usize;
-    let width = old.width.min(new.width) as usize;
+    let width = new.width as usize;
+    let height = new.height as usize;
+    let mut dirty = vec![vec![false; width]; height];
 
     for y in 0..height {
-        let old_row = &old.cells[y];
-        let new_row = &new.cells[y];
         for x in 0..width {
-            let o = &old_row[x];
-            let n = &new_row[x];
+            let changed = if y >= old.height as usize || x >= old.width as usize {
+                true
+            } else {
+                let o = &old.cells[y][x];
+                let n = &new.cells[y][x];
+                cells_differ(o, n)
+            };
 
-            if o.ch != n.ch
-                || color_diff(o.fg, n.fg) > COLOR_THRESHOLD
-                || color_diff(o.bg, n.bg) > COLOR_THRESHOLD
-            {
+            if changed {
+                mark_span(&mut dirty, old, x, y);
+                mark_span(&mut dirty, new, x, y);
+            }
+        }
+    }
+
+    let mut changes = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            if dirty[y][x] {
                 changes.push(CellChange {
                     x: x as u16,
                     y: y as u16,
-                    cell: *n,
+                    cell: new.cells[y][x].clone(),
                 });
             }
         }
     }
 
-    // Handle newly visible areas (grid grew)
-    for y in height..new.height as usize {
-        for x in 0..new.width as usize {
-            changes.push(CellChange {
-                x: x as u16,
-                y: y as u16,
-                cell: new.cells[y][x],
-            });
-        }
-    }
-    for y in 0..height {
-        for x in width..new.width as usize {
-            changes.push(CellChange {
-                x: x as u16,
-                y: y as u16,
-                cell: new.cells[y][x],
-            });
-        }
+    changes
+}
+
+fn cells_differ(old: &Cell, new: &Cell) -> bool {
+    old.content != new.content
+        || color_diff(old.fg, new.fg) > COLOR_THRESHOLD
+        || color_diff(old.bg, new.bg) > COLOR_THRESHOLD
+}
+
+fn mark_span(dirty: &mut [Vec<bool>], grid: &Grid, x: usize, y: usize) {
+    if y >= grid.height as usize || x >= grid.width as usize {
+        mark(dirty, x, y);
+        return;
     }
 
-    changes
+    match &grid.cells[y][x].content {
+        CellContent::Glyph { width: 2, .. } => {
+            mark(dirty, x, y);
+            mark(dirty, x + 1, y);
+        }
+        CellContent::WideContinuation => {
+            if x > 0 {
+                mark(dirty, x - 1, y);
+            }
+            mark(dirty, x, y);
+        }
+        _ => mark(dirty, x, y),
+    }
+}
+
+fn mark(dirty: &mut [Vec<bool>], x: usize, y: usize) {
+    if y < dirty.len() && x < dirty[y].len() {
+        dirty[y][x] = true;
+    }
 }
 
 /// Squared Euclidean distance between two optional colors.
@@ -83,5 +106,38 @@ fn color_diff(a: Option<Rgb>, b: Option<Rgb>) -> i32 {
             let db = a.b as i32 - b.b as i32;
             dr * dr + dg * dg + db * db
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rgb(r: u8, g: u8, b: u8) -> Rgb {
+        Rgb { r, g, b, a: 255 }
+    }
+
+    #[test]
+    fn diff_marks_both_cells_when_wide_glyph_is_added() {
+        let old = Grid::new(3, 1);
+        let mut new = Grid::new(3, 1);
+        new.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+
+        let changes = diff(&old, &new);
+        let coords: Vec<(u16, u16)> = changes.iter().map(|c| (c.x, c.y)).collect();
+
+        assert_eq!(coords, vec![(0, 0), (1, 0)]);
+    }
+
+    #[test]
+    fn diff_marks_both_cells_when_wide_glyph_is_removed() {
+        let mut old = Grid::new(3, 1);
+        old.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        let new = Grid::new(3, 1);
+
+        let changes = diff(&old, &new);
+        let coords: Vec<(u16, u16)> = changes.iter().map(|c| (c.x, c.y)).collect();
+
+        assert_eq!(coords, vec![(0, 0), (1, 0)]);
     }
 }

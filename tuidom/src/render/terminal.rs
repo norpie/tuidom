@@ -10,6 +10,7 @@ use crossterm::terminal::{
 };
 
 use crate::render::diff::CellChange;
+use crate::render::grid::Cell;
 use crate::render::grid::Grid;
 use crate::style::color::Rgb;
 
@@ -48,6 +49,11 @@ impl Terminal {
             let mut x = 0u16;
             while x < grid.width {
                 let cell = &row[x as usize];
+                if cell.is_wide_continuation() {
+                    x += 1;
+                    continue;
+                }
+
                 queue!(
                     self.stdout,
                     MoveTo(x, y),
@@ -55,15 +61,23 @@ impl Terminal {
                     SetBackgroundColor(to_crossterm_color(cell.bg)),
                 )?;
 
-                // Find run of same-style cells
-                let run_start = x;
-                while x < grid.width
-                    && row[x as usize].fg == cell.fg
-                    && row[x as usize].bg == cell.bg
-                {
-                    x += 1;
+                let fg = cell.fg;
+                let bg = cell.bg;
+                let mut run_text = String::new();
+                while x < grid.width {
+                    let cell = &row[x as usize];
+                    if cell.is_wide_continuation() {
+                        x += 1;
+                        continue;
+                    }
+                    if cell.fg != fg || cell.bg != bg {
+                        break;
+                    }
+
+                    run_text.push_str(cell.terminal_text());
+                    x = x.saturating_add(cell.content_width() as u16);
                 }
-                let run_text: String = (run_start..x).map(|i| row[i as usize].ch).collect();
+
                 queue!(self.stdout, Print(run_text))?;
             }
         }
@@ -80,18 +94,17 @@ impl Drop for Terminal {
 }
 
 /// Queue a single cell to stdout (no flush).
-fn queue_cell(
-    stdout: &mut Stdout,
-    x: u16,
-    y: u16,
-    cell: &crate::render::grid::Cell,
-) -> io::Result<()> {
+fn queue_cell(stdout: &mut Stdout, x: u16, y: u16, cell: &Cell) -> io::Result<()> {
+    if cell.is_wide_continuation() {
+        return Ok(());
+    }
+
     queue!(
         stdout,
         MoveTo(x, y),
         SetForegroundColor(to_crossterm_color(cell.fg)),
         SetBackgroundColor(to_crossterm_color(cell.bg)),
-        Print(cell.ch),
+        Print(cell.terminal_text()),
     )
 }
 

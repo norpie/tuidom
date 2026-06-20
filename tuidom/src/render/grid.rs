@@ -1,12 +1,48 @@
 //! Cell buffer — the 2D grid representing the virtual screen.
 
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
 use crate::style::color::Rgb;
 
+/// Text content stored in a single terminal cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CellContent {
+    /// Empty cell content. Rendered as a space.
+    Empty,
+    /// A grapheme cluster starting at this cell.
+    Glyph {
+        /// Grapheme cluster text.
+        text: String,
+        /// Terminal cell width. Currently 1 or 2.
+        width: u8,
+    },
+    /// Second cell occupied by a width-2 glyph.
+    WideContinuation,
+}
+
+impl CellContent {
+    fn terminal_text(&self) -> &str {
+        match self {
+            Self::Empty => " ",
+            Self::Glyph { text, .. } => text,
+            Self::WideContinuation => "",
+        }
+    }
+
+    fn width(&self) -> u8 {
+        match self {
+            Self::Glyph { width, .. } => *width,
+            _ => 1,
+        }
+    }
+}
+
 /// A single terminal character position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cell {
-    /// The displayed character.
-    pub ch: char,
+    /// Display content occupying this terminal cell.
+    pub content: CellContent,
     /// Foreground color. `None` means terminal default.
     pub fg: Option<Rgb>,
     /// Background color. `None` means terminal default.
@@ -17,17 +53,41 @@ impl Cell {
     /// Create an empty cell (space, no colors).
     pub fn empty() -> Self {
         Self {
-            ch: ' ',
+            content: CellContent::Empty,
             fg: None,
             bg: None,
         }
+    }
+
+    /// Create an empty cell with a background color.
+    pub fn empty_with_bg(bg: Rgb) -> Self {
+        Self {
+            content: CellContent::Empty,
+            fg: None,
+            bg: Some(bg),
+        }
+    }
+
+    /// Text to print for this cell when flushing to the terminal.
+    pub fn terminal_text(&self) -> &str {
+        self.content.terminal_text()
+    }
+
+    /// Whether this cell is the continuation of a wide glyph.
+    pub fn is_wide_continuation(&self) -> bool {
+        matches!(self.content, CellContent::WideContinuation)
+    }
+
+    /// Width occupied by this cell's terminal text.
+    pub fn content_width(&self) -> u8 {
+        self.content.width()
     }
 }
 
 /// Blend `src` over `dst` using `alpha` for both fg and bg colors.
 fn blend_cell(dst: &Cell, src: &Cell, alpha: f64) -> Cell {
     Cell {
-        ch: src.ch,
+        content: src.content.clone(),
         fg: blend_fg(dst.fg, src.fg, alpha, dst.bg),
         bg: blend_color(dst.bg, src.bg, alpha),
     }
@@ -41,7 +101,6 @@ fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, alpha: f64, cell_bg: Option<Rgb>
     match (dst, src) {
         (None, None) => None,
         (None, Some(s)) => {
-            // Fade toward the background color behind us
             let target = cell_bg.unwrap_or(Rgb {
                 r: 0,
                 g: 0,
@@ -134,6 +193,7 @@ impl Grid {
         let y_end = y.saturating_add(h).min(self.height);
         for row in y..y_end {
             for col in x..x_end {
+                self.clear_text_span_at(row as usize, col as usize);
                 let dst = &self.cells[row as usize][col as usize];
                 self.cells[row as usize][col as usize] = blend_cell(dst, &cell, alpha);
             }
@@ -190,19 +250,79 @@ impl Grid {
         }
 
         let row = y as usize;
-        let start = x as usize;
-        let end = start + max_width as usize;
+        let mut col = x as usize;
+        let end = col + max_width as usize;
 
-        for (offset, ch) in text.chars().take(end - start).enumerate() {
-            let col = start + offset;
-            let dst = &self.cells[row][col];
-            let cell = Cell {
-                ch,
-                fg: blend_fg(dst.fg, fg, alpha, dst.bg),
-                bg: dst.bg,
-            };
-            self.cells[row][col] = cell;
+        for grapheme in text.graphemes(true) {
+            let width = UnicodeWidthStr::width(grapheme).min(2);
+            if width == 0 {
+                continue;
+            }
+            if col + width > end {
+                break;
+            }
+
+            self.write_glyph(row, col, grapheme, width as u8, fg, alpha);
+            col += width;
         }
+    }
+
+    fn write_glyph(
+        &mut self,
+        row: usize,
+        col: usize,
+        text: &str,
+        width: u8,
+        fg: Option<Rgb>,
+        alpha: f64,
+    ) {
+        self.clear_text_span_at(row, col);
+        if width == 2 {
+            self.clear_text_span_at(row, col + 1);
+        }
+
+        let dst = &self.cells[row][col];
+        let glyph_cell = Cell {
+            content: CellContent::Glyph {
+                text: text.to_string(),
+                width,
+            },
+            fg: blend_fg(dst.fg, fg, alpha, dst.bg),
+            bg: dst.bg,
+        };
+        self.cells[row][col] = glyph_cell;
+
+        if width == 2 {
+            self.cells[row][col + 1].content = CellContent::WideContinuation;
+            self.cells[row][col + 1].fg = None;
+        }
+    }
+
+    fn clear_text_span_at(&mut self, row: usize, col: usize) {
+        if row >= self.height as usize || col >= self.width as usize {
+            return;
+        }
+
+        match self.cells[row][col].content.clone() {
+            CellContent::Glyph { width: 2, .. } => {
+                self.clear_one_cell_text(row, col);
+                if col + 1 < self.width as usize {
+                    self.clear_one_cell_text(row, col + 1);
+                }
+            }
+            CellContent::WideContinuation => {
+                if col > 0 {
+                    self.clear_one_cell_text(row, col - 1);
+                }
+                self.clear_one_cell_text(row, col);
+            }
+            _ => self.clear_one_cell_text(row, col),
+        }
+    }
+
+    fn clear_one_cell_text(&mut self, row: usize, col: usize) {
+        self.cells[row][col].content = CellContent::Empty;
+        self.cells[row][col].fg = None;
     }
 }
 
@@ -215,16 +335,20 @@ mod tests {
     }
 
     fn row_text(grid: &Grid, row: usize) -> String {
-        grid.cells[row].iter().map(|cell| cell.ch).collect()
+        grid.cells[row]
+            .iter()
+            .filter(|cell| !cell.is_wide_continuation())
+            .map(Cell::terminal_text)
+            .collect()
     }
 
     #[test]
     fn fill_rect_ignores_offscreen_and_handles_overflow() {
         let blue = rgb(0, 0, 255);
-        let cell = Cell { ch: ' ', fg: None, bg: Some(blue) };
+        let cell = Cell::empty_with_bg(blue);
         let mut grid = Grid::new(2, 2);
 
-        grid.fill_rect(5, 0, 1, 1, cell, 1.0);
+        grid.fill_rect(5, 0, 1, 1, cell.clone(), 1.0);
         assert_eq!(grid.cells, vec![vec![Cell::empty(); 2]; 2]);
 
         grid.fill_rect(1, 1, u16::MAX, u16::MAX, cell, 1.0);
@@ -235,10 +359,10 @@ mod tests {
     #[test]
     fn fill_rect_clamps_alpha() {
         let red = rgb(255, 0, 0);
-        let cell = Cell { ch: ' ', fg: None, bg: Some(red) };
+        let cell = Cell::empty_with_bg(red);
         let mut grid = Grid::new(1, 1);
 
-        grid.fill_rect(0, 0, 1, 1, cell, f64::NAN);
+        grid.fill_rect(0, 0, 1, 1, cell.clone(), f64::NAN);
         assert_eq!(grid.cells[0][0], Cell::empty());
 
         grid.fill_rect(0, 0, 1, 1, cell, 2.0);
@@ -278,5 +402,109 @@ mod tests {
         assert_eq!(row_text(&grid, 0), "ab  ");
         assert_eq!(row_text(&grid, 1), "cd  ");
         assert_eq!(row_text(&grid, 2), "    ");
+    }
+
+    #[test]
+    fn ascii_glyphs_are_width_one() {
+        let mut grid = Grid::new(3, 1);
+
+        grid.write_text(0, 0, "abc", Some(rgb(255, 255, 255)), 1.0);
+
+        assert!(matches!(
+            grid.cells[0][0].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+        assert!(matches!(
+            grid.cells[0][1].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+        assert!(matches!(
+            grid.cells[0][2].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn wide_glyph_occupies_two_cells() {
+        let mut grid = Grid::new(4, 1);
+
+        grid.write_text(0, 0, "a界b", Some(rgb(255, 255, 255)), 1.0);
+
+        assert_eq!(row_text(&grid, 0), "a界b");
+        assert!(matches!(
+            grid.cells[0][0].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+        assert!(matches!(
+            grid.cells[0][1].content,
+            CellContent::Glyph { width: 2, .. }
+        ));
+        assert!(matches!(
+            grid.cells[0][2].content,
+            CellContent::WideContinuation
+        ));
+        assert!(matches!(
+            grid.cells[0][3].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn wide_glyph_is_skipped_at_clip_boundary() {
+        let mut grid = Grid::new(2, 1);
+
+        grid.write_text_clipped(0, 0, 2, 1, "a界", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(row_text(&grid, 0), "a ");
+    }
+
+    #[test]
+    fn combining_grapheme_occupies_one_cell() {
+        let mut grid = Grid::new(2, 1);
+
+        grid.write_text(0, 0, "e\u{301}x", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(row_text(&grid, 0), "e\u{301}x");
+        assert!(matches!(
+            grid.cells[0][0].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+        assert!(matches!(
+            grid.cells[0][1].content,
+            CellContent::Glyph { width: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn overwriting_wide_head_clears_continuation() {
+        let mut grid = Grid::new(3, 1);
+
+        grid.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(0, 0, "a", Some(rgb(255, 255, 255)), 1.0);
+
+        assert_eq!(row_text(&grid, 0), "a  ");
+        assert!(matches!(grid.cells[0][1].content, CellContent::Empty));
+    }
+
+    #[test]
+    fn overwriting_wide_continuation_clears_head() {
+        let mut grid = Grid::new(3, 1);
+
+        grid.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(1, 0, "a", Some(rgb(255, 255, 255)), 1.0);
+
+        assert_eq!(row_text(&grid, 0), " a ");
+        assert!(matches!(grid.cells[0][0].content, CellContent::Empty));
+    }
+
+    #[test]
+    fn fill_rect_clears_wide_span_it_overlaps() {
+        let blue = rgb(0, 0, 255);
+        let mut grid = Grid::new(3, 1);
+
+        grid.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        grid.fill_rect(1, 0, 1, 1, Cell::empty_with_bg(blue), 1.0);
+
+        assert_eq!(row_text(&grid, 0), "   ");
+        assert!(matches!(grid.cells[0][0].content, CellContent::Empty));
+        assert_eq!(grid.cells[0][1].bg, Some(blue));
     }
 }

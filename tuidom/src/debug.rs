@@ -121,20 +121,16 @@ impl DebugOverlay {
             b: 255,
             a: 255,
         });
-        let bg = Some(Rgb {
+        let bg = Rgb {
             r: 30,
             g: 30,
             b: 30,
             a: 200,
-        });
+        };
 
         // Background strip
         for y in 0..height {
-            let cell = crate::render::grid::Cell {
-                ch: ' ',
-                fg: None,
-                bg,
-            };
+            let cell = crate::render::grid::Cell::empty_with_bg(bg);
             grid.fill_rect(x, y, max_width as u16, 1, cell, 1.0);
         }
         for (i, line) in lines.iter().enumerate() {
