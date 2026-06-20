@@ -9,7 +9,6 @@
 ## Module Organization
 
 - Nest modules as needed for proper organization
-- **Soft limit: 500 lines per file** — suggest refactoring and splitting when reached
 - Split pure models into dedicated files (e.g., `style/models/*.rs`)
 - Keep logic-heavy code in single files when splitting doesn't improve clarity
 
