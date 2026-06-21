@@ -10,11 +10,11 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Document** — The root container and public API surface. Wraps `Arc<DocumentInner>` for cheap cloning.
 
-**DocumentInner** — Internal state holding arena, caches, event queue, renderer, etc. Behind Arc for thread-safe sharing.
+**DocumentInner** — Internal state holding the arena, caches, event/listener state, animation state, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
 
 **Arena** — Internal storage using DashMap. Maps `NodeId` to `NodeData`. Single source of truth for all nodes.
 
-**NodeData** — Internal node representation. Enum with variants: Box, Text, Input, Frames, Canvas. Contains parent/children, attributes, styles.
+**NodeData** — Internal node representation. Contains the node kind, parent/children, attributes, style, cached resolved style, computed layout, and animation/transition metadata.
 
 ## Layout & Positioning
 
@@ -30,7 +30,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Style** — User-provided style with unresolved values. Contains `StyleValue<T>` which can be `Set(T)` or `Inherit`.
 
-**ResolvedStyle** — Computed style with all values resolved. Variables replaced, inheritance computed, colors in OKLCH.
+**ResolvedStyle** — Computed style with all values resolved. Inheritance is computed and defaults are applied; colors remain in OKLCH until render-time RGB conversion.
 
 **PseudoState** — Visual state affecting style: `Normal`, `Focused`, `Active`, `Disabled`.
 
@@ -50,15 +50,15 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Events
 
-**Event** — Input or system notification (keyboard, mouse, focus, animation completion). Carries data and propagation state.
+**Event** — Input or system notification dispatched to handlers. Carries event-specific data and, for targeted events, propagation state.
 
-**Listener** — User-provided handler function. Wrapped in `Box<dyn Fn(&Event) + Send>`.
+**Listener** — User-provided handler function. Internally stored with a stable id and shared callback so dispatch can snapshot listeners before invocation.
 
-**ListenerHandle** — Opaque handle for removing a registered listener. Contains unique `ListenerId`.
+**ListenerHandle** — Opaque handle for removing a registered listener. Contains a unique listener id.
 
 **Propagation** — Event flow through DOM tree. Target phase (fires on target node) → Bubble phase (fires on ancestors, root-ward).
 
-**Event Loop** — Async task that dequeues events, builds propagation path, fires handlers sequentially.
+**Event Loop** — Async loop that waits for document notifications, terminal events, animation ticks, and shutdown. It dispatches terminal events to global listeners and renders when needed.
 
 ## Focus & Selection
 
@@ -74,13 +74,13 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Animation
 
-**Transition** — Property animation triggered by value change. One per (NodeId, PropertyName).
+**Transition** — Property animation triggered by value change. One per node/property pair.
 
 **Keyframe Animation** — Multi-step animation with defined frames at percentages (0%, 50%, 100%, etc.).
 
 **Frames Node** — Node type that cycles through text content on a timer (for spinners, ASCII animations).
 
-**AnimatableProperty** — Type-safe enum of properties that can interpolate (numeric, colors). Non-animatable properties (e.g., border style) cause compile errors.
+**AnimatableProperty** — Type-safe enum of properties that can interpolate. Non-animatable properties (e.g., border style) cause compile errors.
 
 **Easing** — Interpolation curve (Linear, EaseIn, EaseOut, EaseInOut, CubicBezier).
 
