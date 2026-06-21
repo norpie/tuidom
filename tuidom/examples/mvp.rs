@@ -35,10 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- DOM ----------------------------------------------------------
 
     let container = doc.create_box();
-    doc.set_style(container, &container_style);
+    doc.set_style(container, &container_style)?;
 
     let text = doc.create_text("Hello, tuidom!");
-    doc.set_style(text, &text_style);
+    doc.set_style(text, &text_style)?;
 
     doc.append_child(container, text)?;
     doc.set_root(container);
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KeyCode::Char(' ') => {
                 let was_visible = ov.fetch_not(Ordering::Relaxed);
                 let target = if !was_visible { 1.0 } else { 0.0 };
-                d.update_style(text, |s| s.opacity(target));
+                let _ = d.update_style(text, |s| s.opacity(target));
             }
             // Quit
             KeyCode::Char('q') | KeyCode::Esc => d.quit(),

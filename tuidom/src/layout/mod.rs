@@ -126,7 +126,9 @@ fn build_node(
     node_id: NodeId,
     mapping: &mut HashMap<NodeId, taffy::NodeId>,
 ) -> Option<taffy::NodeId> {
-    let resolved = doc.resolved_style(node_id);
+    let Ok(resolved) = doc.resolved_style(node_id) else {
+        return None;
+    };
 
     // Skip hidden nodes
     if resolved.display == Display::None {
@@ -155,7 +157,7 @@ fn build_leaf(
     node_id: NodeId,
 ) -> Option<taffy::NodeId> {
     let node_view = doc.get_node(node_id)?;
-    let resolved = doc.resolved_style(node_id);
+    let resolved = doc.resolved_style(node_id).ok()?;
     let style = to_taffy_leaf_style(&resolved);
 
     let context = match &node_view.kind {
@@ -182,7 +184,7 @@ fn build_container(
     children_ids: &[NodeId],
     mapping: &mut HashMap<NodeId, taffy::NodeId>,
 ) -> Option<taffy::NodeId> {
-    let resolved = doc.resolved_style(_node_id);
+    let resolved = doc.resolved_style(_node_id).ok()?;
     let style = to_taffy_container_style(&resolved);
 
     let child_taffy_nodes: Vec<taffy::NodeId> = children_ids
@@ -305,13 +307,14 @@ mod tests {
         let parent = doc.create_box();
         let child = doc.create_box();
 
-        doc.set_style(root, &fixed_centered_style(100, 40));
-        doc.set_style(parent, &fixed_centered_style(50, 20));
+        doc.set_style(root, &fixed_centered_style(100, 40)).unwrap();
+        doc.set_style(parent, &fixed_centered_style(50, 20))
+            .unwrap();
 
         let mut child_style = DomStyle::new();
         child_style.width(Length::Pixels(10));
         child_style.height(Length::Pixels(5));
-        doc.set_style(child, &child_style);
+        doc.set_style(child, &child_style).unwrap();
 
         doc.append_child(root, parent).unwrap();
         doc.append_child(parent, child).unwrap();

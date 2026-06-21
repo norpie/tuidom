@@ -106,7 +106,7 @@ pub enum JustifyContent {
 /// ```ignore
 /// doc.update_style(id, |s| {
 ///     s.opacity(0.5);
-/// });
+/// })?;
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Style {

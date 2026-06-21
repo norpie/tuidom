@@ -23,7 +23,9 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
         None => return,
     };
 
-    let resolved = doc.resolved_style(node_id);
+    let Ok(resolved) = doc.resolved_style(node_id) else {
+        return;
+    };
     if resolved.display == Display::None {
         return;
     }
@@ -112,7 +114,7 @@ mod tests {
         let mut root_style = Style::new();
         root_style.width(Length::Pixels(5));
         root_style.height(Length::Pixels(1));
-        doc.set_style(root, &root_style);
+        doc.set_style(root, &root_style).unwrap();
 
         doc.append_child(root, text).unwrap();
         doc.set_root(root);
@@ -124,7 +126,7 @@ mod tests {
 
         let mut hidden_style = Style::new();
         hidden_style.display(Display::None);
-        doc.set_style(text, &hidden_style);
+        doc.set_style(text, &hidden_style).unwrap();
         doc.compute_layout(5, 1);
         assert!(doc.get_node(text).unwrap().layout.is_none());
 

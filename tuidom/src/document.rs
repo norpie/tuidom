@@ -224,16 +224,21 @@ impl Document {
     /// This replaces any previously set style, invalidates the resolved
     /// style cache, and signals the animation driver if any transitionable
     /// properties changed.
-    pub fn set_style(&self, id: NodeId, style: &Style) {
-        let old_resolved = self.resolved_base_style(id);
+    ///
+    /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
+    pub fn set_style(&self, id: NodeId, style: &Style) -> Result<()> {
+        let old_resolved = self.resolved_base_style(id)?;
 
-        if let Some(mut data) = self.inner.nodes.get_mut(&id) {
-            data.style = style.clone();
-        }
+        let Some(mut data) = self.inner.nodes.get_mut(&id) else {
+            return Err(TuidomError::NodeNotFound { id });
+        };
+        data.style = style.clone();
+        drop(data);
+
         self.invalidate_resolved_style(id);
         self.inner.notify.notify_one();
 
-        self.signal_animation(id, &old_resolved);
+        self.signal_animation(id, &old_resolved)
     }
 
     /// Update a node's style in-place via a closure.
@@ -241,22 +246,21 @@ impl Document {
     /// Invalidates the resolved style cache, triggers a re-render, and signals
     /// the animation driver if any transitionable properties changed.
     ///
-    /// # Panics
-    ///
-    /// Panics if the node does not exist.
-    pub fn update_style(&self, id: NodeId, f: impl FnOnce(&mut Style)) {
+    /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
+    pub fn update_style(&self, id: NodeId, f: impl FnOnce(&mut Style)) -> Result<()> {
         // Capture old resolved values before the mutation
-        let old_resolved = self.resolved_base_style(id);
+        let old_resolved = self.resolved_base_style(id)?;
 
-        if let Some(mut data) = self.inner.nodes.get_mut(&id) {
-            f(&mut data.style);
-        } else {
-            panic!("update_style: node {id:?} does not exist");
-        }
+        let Some(mut data) = self.inner.nodes.get_mut(&id) else {
+            return Err(TuidomError::NodeNotFound { id });
+        };
+        f(&mut data.style);
+        drop(data);
+
         self.invalidate_resolved_style(id);
         self.inner.notify.notify_one();
 
-        self.signal_animation(id, &old_resolved);
+        self.signal_animation(id, &old_resolved)
     }
 
     /// Get the fully resolved style for a node, including animation overrides.
@@ -268,11 +272,9 @@ impl Document {
     /// During active animations, property values are overridden with the
     /// interpolated animation value.
     ///
-    /// # Panics
-    ///
-    /// Panics if the node does not exist.
-    pub fn resolved_style(&self, id: NodeId) -> ResolvedStyle {
-        let mut resolved = self.resolved_base_style(id);
+    /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
+    pub fn resolved_style(&self, id: NodeId) -> Result<ResolvedStyle> {
+        let mut resolved = self.resolved_base_style(id)?;
 
         // Apply animation overrides
         {
@@ -284,43 +286,50 @@ impl Document {
             }
         }
 
-        resolved
+        Ok(resolved)
     }
 
     /// Get the base resolved style without animation overrides.
     ///
     /// Used internally by the animation driver to read target values.
-    pub(crate) fn resolved_base_style(&self, id: NodeId) -> ResolvedStyle {
+    pub(crate) fn resolved_base_style(&self, id: NodeId) -> Result<ResolvedStyle> {
         // Check cache
         {
-            let node = self.inner.nodes.get(&id).expect("node not found");
+            let Some(node) = self.inner.nodes.get(&id) else {
+                return Err(TuidomError::NodeNotFound { id });
+            };
             if let Some(resolved) = &*lock::rw_read(&node.resolved_style) {
-                return resolved.clone();
+                return Ok(resolved.clone());
             }
         }
 
         // Cache miss — compute
         let parent = self.get_parent(id);
-        let parent_resolved = parent.map(|pid| self.resolved_base_style(pid));
+        let parent_resolved = parent
+            .map(|pid| self.resolved_base_style(pid))
+            .transpose()?;
 
-        let node = self.inner.nodes.get(&id).expect("node not found");
+        let Some(node) = self.inner.nodes.get(&id) else {
+            return Err(TuidomError::NodeNotFound { id });
+        };
         let resolved = ResolvedStyle::compute(&node, parent_resolved.as_ref());
 
         *lock::rw_write(&node.resolved_style) = Some(resolved.clone());
-        resolved
+        Ok(resolved)
     }
 
     /// Signal the animation driver about a style change and spawn tick task if needed.
-    fn signal_animation(&self, id: NodeId, old_resolved: &ResolvedStyle) {
+    fn signal_animation(&self, id: NodeId, old_resolved: &ResolvedStyle) -> Result<()> {
         // Read transition configs before locking the driver
         let configs = {
-            let node = self.inner.nodes.get(&id);
-            node.map(|n| n.transition_configs.clone())
-                .unwrap_or_default()
+            let Some(node) = self.inner.nodes.get(&id) else {
+                return Err(TuidomError::NodeNotFound { id });
+            };
+            node.transition_configs.clone()
         };
 
         // Compute the new resolved value BEFORE locking the driver
-        let new_resolved = self.resolved_base_style(id);
+        let new_resolved = self.resolved_base_style(id)?;
 
         let mut driver = lock::mutex(&self.inner.animation);
         let started = driver.style_changed(id, old_resolved, &new_resolved, &configs);
@@ -337,6 +346,8 @@ impl Document {
         } else {
             self.inner.anim_config_changed.notify_one();
         }
+
+        Ok(())
     }
 
     /// Invalidate the resolved style cache for a node and all descendants.
@@ -977,12 +988,23 @@ mod tests {
 
         let mut style = Style::new();
         style.width(Length::Pixels(42));
-        doc.set_style(node, &style);
+        doc.set_style(node, &style).unwrap();
 
-        let resolved = doc.resolved_style(node);
+        let resolved = doc.resolved_style(node).unwrap();
         assert_eq!(resolved.width, Length::Pixels(42));
         assert_eq!(resolved.opacity, 1.0); // Inherit → default
         assert_eq!(resolved.color, Color::white()); // Inherit → default
+    }
+
+    #[test]
+    fn set_style_missing_node_returns_error() {
+        let doc = Document::new();
+        let missing = NodeId::new(999);
+
+        assert_eq!(
+            doc.set_style(missing, &Style::new()),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
     }
 
     #[test]
@@ -992,15 +1014,38 @@ mod tests {
 
         let mut style = Style::new();
         style.width(Length::Pixels(10));
-        doc.set_style(node, &style);
+        doc.set_style(node, &style).unwrap();
 
-        assert_eq!(doc.resolved_style(node).width, Length::Pixels(10));
+        assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(10));
 
         doc.update_style(node, |s| {
             s.width(Length::Pixels(20));
-        });
+        })
+        .unwrap();
 
-        assert_eq!(doc.resolved_style(node).width, Length::Pixels(20));
+        assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(20));
+    }
+
+    #[test]
+    fn update_style_missing_node_returns_error() {
+        let doc = Document::new();
+        let missing = NodeId::new(999);
+
+        assert_eq!(
+            doc.update_style(missing, |s| s.opacity(0.5)),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+    }
+
+    #[test]
+    fn resolved_style_missing_node_returns_error() {
+        let doc = Document::new();
+        let missing = NodeId::new(999);
+
+        assert!(matches!(
+            doc.resolved_style(missing),
+            Err(TuidomError::NodeNotFound { id }) if id == missing
+        ));
     }
 
     #[test]
@@ -1010,13 +1055,13 @@ mod tests {
         let parent = doc.create_box();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
-        doc.set_style(parent, &parent_style);
+        doc.set_style(parent, &parent_style).unwrap();
 
         let child = doc.create_text("hi");
         // child uses default style — all Inherit
         doc.append_child(parent, child).unwrap();
 
-        let child_resolved = doc.resolved_style(child);
+        let child_resolved = doc.resolved_style(child).unwrap();
         // Inherits color from parent
         assert_eq!(child_resolved.color, Color::red());
         // Own width is Inherit → default
@@ -1030,15 +1075,15 @@ mod tests {
         let parent = doc.create_box();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
-        doc.set_style(parent, &parent_style);
+        doc.set_style(parent, &parent_style).unwrap();
 
         let child = doc.create_text("hi");
         let mut child_style = Style::new();
         child_style.color(Color::blue()); // Explicit override
-        doc.set_style(child, &child_style);
+        doc.set_style(child, &child_style).unwrap();
         doc.append_child(parent, child).unwrap();
 
-        let child_resolved = doc.resolved_style(child);
+        let child_resolved = doc.resolved_style(child).unwrap();
         assert_eq!(child_resolved.color, Color::blue()); // Override wins
     }
 
@@ -1049,20 +1094,20 @@ mod tests {
         let parent_red = doc.create_box();
         let mut red_style = Style::new();
         red_style.color(Color::red());
-        doc.set_style(parent_red, &red_style);
+        doc.set_style(parent_red, &red_style).unwrap();
 
         let parent_blue = doc.create_box();
         let mut blue_style = Style::new();
         blue_style.color(Color::blue());
-        doc.set_style(parent_blue, &blue_style);
+        doc.set_style(parent_blue, &blue_style).unwrap();
 
         let child = doc.create_text("movable");
         doc.append_child(parent_red, child).unwrap();
 
-        assert_eq!(doc.resolved_style(child).color, Color::red());
+        assert_eq!(doc.resolved_style(child).unwrap().color, Color::red());
 
         // Move to blue parent
         doc.move_child(parent_blue, child, child).unwrap();
-        assert_eq!(doc.resolved_style(child).color, Color::blue());
+        assert_eq!(doc.resolved_style(child).unwrap().color, Color::blue());
     }
 }
