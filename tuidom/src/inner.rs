@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
-use crate::event::Event;
+use crate::event::Listener;
 use crate::id::NodeId;
 use crate::node::NodeData;
 
@@ -22,6 +22,9 @@ pub(crate) struct DocumentInner {
 
     /// Monotonically increasing counter for the next `NodeId::index`.
     pub next_id: AtomicU64,
+
+    /// Monotonically increasing counter for event listener ids.
+    pub next_listener_id: AtomicU64,
 
     /// The root node for rendering.
     pub root: RwLock<Option<NodeId>>,
@@ -54,7 +57,7 @@ pub(crate) struct DocumentInner {
     pub debug_overlay: Mutex<DebugOverlay>,
 
     /// Global event listeners.
-    pub listeners: Mutex<Vec<Box<dyn Fn(&Event) + Send + Sync>>>,
+    pub listeners: Mutex<Vec<Listener>>,
 }
 
 impl DocumentInner {

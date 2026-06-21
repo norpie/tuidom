@@ -1,6 +1,7 @@
 //! The [`Document`] type — the public API surface for tuidom.
 
 use std::collections::HashSet;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use crate::animation::TransitionConfig;
 use crate::animation::driver::{AnimationDriver, spawn_tick_task};
 use crate::debug::DebugOverlay;
 use crate::error::{Result, TuidomError};
+use crate::event::{Event, Listener, ListenerHandle};
 use crate::id::NodeId;
 use crate::inner::DocumentInner;
 use crate::lock;
@@ -60,6 +62,7 @@ impl Document {
             inner: Arc::new(DocumentInner {
                 nodes: dashmap::DashMap::new(),
                 next_id: std::sync::atomic::AtomicU64::new(0),
+                next_listener_id: std::sync::atomic::AtomicU64::new(0),
                 root: std::sync::RwLock::new(None),
                 tree_mutation: Mutex::new(()),
                 notify: tokio::sync::Notify::new(),
@@ -127,18 +130,48 @@ impl Document {
     ///
     /// The handler is called synchronously for each terminal event. For async
     /// work, spawn a task inside the handler.
-    pub fn on<F>(&self, handler: F)
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on<F>(&self, handler: F) -> ListenerHandle
     where
-        F: Fn(&crate::event::Event) + Send + Sync + 'static,
+        F: Fn(&Event) + Send + Sync + 'static,
     {
-        lock::mutex(&self.inner.listeners).push(Box::new(handler));
+        let id = self
+            .inner
+            .next_listener_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let listener = Listener {
+            id,
+            handler: Arc::new(handler),
+        };
+
+        lock::mutex(&self.inner.listeners).push(listener);
+        ListenerHandle::new(id)
+    }
+
+    /// Remove a global event listener.
+    ///
+    /// Returns `true` if a listener was removed, or `false` if the handle was
+    /// unknown or had already been removed.
+    pub fn remove_listener(&self, handle: ListenerHandle) -> bool {
+        let mut listeners = lock::mutex(&self.inner.listeners);
+        let old_len = listeners.len();
+        listeners.retain(|listener| listener.id != handle.id);
+        listeners.len() != old_len
     }
 
     /// Dispatch an event to all registered listeners.
-    pub(crate) fn dispatch_event(&self, event: crate::event::Event) {
-        let listeners = lock::mutex(&self.inner.listeners);
-        for handler in listeners.iter() {
-            (handler)(&event);
+    pub(crate) fn dispatch_event(&self, event: Event) {
+        let listeners = lock::mutex(&self.inner.listeners).clone();
+
+        for listener in listeners {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                (listener.handler)(&event);
+            }));
+
+            if result.is_err() {
+                log::error!("event listener {} panicked", listener.id);
+            }
         }
     }
 
@@ -589,7 +622,11 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+    use crate::event::{Event, KeyCode, KeyEvent};
     use crate::style::{Color, Length};
 
     #[test]
@@ -608,6 +645,69 @@ mod tests {
         ));
 
         assert!(doc.get_node(NodeId::new(999)).is_none());
+    }
+
+    fn key_event() -> Event {
+        Event::KeyPress(KeyEvent {
+            code: KeyCode::Char('x'),
+        })
+    }
+
+    #[test]
+    fn listener_handle_removes_registered_listener() {
+        let doc = Document::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_handler = calls.clone();
+
+        let handle = doc.on(move |_| {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        });
+
+        doc.dispatch_event(key_event());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        assert!(doc.remove_listener(handle));
+        assert!(!doc.remove_listener(handle));
+
+        doc.dispatch_event(key_event());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn listener_can_register_listener_during_dispatch() {
+        let doc = Document::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let doc_for_handler = doc.clone();
+        let calls_for_handler = calls.clone();
+
+        doc.on(move |_| {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+            let calls_for_new_handler = calls_for_handler.clone();
+            doc_for_handler.on(move |_| {
+                calls_for_new_handler.fetch_add(10, Ordering::Relaxed);
+            });
+        });
+
+        doc.dispatch_event(key_event());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        doc.dispatch_event(key_event());
+        assert_eq!(calls.load(Ordering::Relaxed), 12);
+    }
+
+    #[test]
+    fn listener_panic_is_caught_and_later_listeners_still_run() {
+        let doc = Document::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_handler = calls.clone();
+
+        doc.on(|_| panic!("listener boom"));
+        doc.on(move |_| {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        });
+
+        doc.dispatch_event(key_event());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]

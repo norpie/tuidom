@@ -2,6 +2,32 @@
 //!
 //! Events flow from the terminal through the render loop to registered handlers.
 
+use std::sync::Arc;
+
+/// Opaque handle returned when registering an event listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ListenerHandle {
+    pub(crate) id: u64,
+}
+
+impl ListenerHandle {
+    pub(crate) fn new(id: u64) -> Self {
+        Self { id }
+    }
+}
+
+/// Shared event callback type used internally for snapshot dispatch.
+pub(crate) type EventHandler = Arc<dyn Fn(&Event) + Send + Sync + 'static>;
+
+/// Registered event listener.
+#[derive(Clone)]
+pub(crate) struct Listener {
+    /// Stable listener id used for removal.
+    pub id: u64,
+    /// Callback invoked for matching events.
+    pub handler: EventHandler,
+}
+
 /// A terminal event dispatched to user handlers.
 #[derive(Debug, Clone)]
 pub enum Event {
