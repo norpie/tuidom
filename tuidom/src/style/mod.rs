@@ -11,16 +11,19 @@ pub use color::Color;
 // StyleValue — explicit inheritance control
 // ---------------------------------------------------------------------------
 
-/// Wraps a style property value. Either explicitly `Set` or `Inherit` from parent.
+/// Wraps a style property value: unset/default, explicit inheritance, or explicitly set.
 ///
-/// By default, nothing inherits — you must explicitly use `Inherit` to opt in.
+/// By default, properties are [`Unset`](Self::Unset), which means they use the document
+/// default style. Use [`Inherit`](Self::Inherit) to opt into inheriting from the parent.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum StyleValue<T> {
+    /// Use the document/default style value.
+    #[default]
+    Unset,
+    /// Inherit the resolved value from the parent node.
+    Inherit,
     /// An explicitly set value.
     Set(T),
-    /// Inherit the resolved value from the parent node.
-    #[default]
-    Inherit,
 }
 
 // ---------------------------------------------------------------------------
@@ -137,17 +140,19 @@ impl Default for Style {
 }
 
 impl Style {
-    /// Create a new [`Style`] with all properties set to [`StyleValue::Inherit`].
+    /// Create a new [`Style`] with all properties unset.
+    ///
+    /// Unset properties use the document/default style instead of inheriting from the parent.
     pub fn new() -> Self {
         Self {
-            width: StyleValue::Inherit,
-            height: StyleValue::Inherit,
-            display: StyleValue::Inherit,
-            opacity: StyleValue::Inherit,
-            color: StyleValue::Inherit,
-            background: StyleValue::Inherit,
-            align_items: StyleValue::Inherit,
-            justify_content: StyleValue::Inherit,
+            width: StyleValue::Unset,
+            height: StyleValue::Unset,
+            display: StyleValue::Unset,
+            opacity: StyleValue::Unset,
+            color: StyleValue::Unset,
+            background: StyleValue::Unset,
+            align_items: StyleValue::Unset,
+            justify_content: StyleValue::Unset,
             extra: HashMap::new(),
         }
     }
@@ -159,11 +164,31 @@ impl Style {
         self.width = StyleValue::Set(value);
     }
 
+    /// Explicitly inherit width from the parent node.
+    pub fn inherit_width(&mut self) {
+        self.width = StyleValue::Inherit;
+    }
+
+    /// Reset width to the document/default style.
+    pub fn unset_width(&mut self) {
+        self.width = StyleValue::Unset;
+    }
+
     // -- Height ---------------------------------------------------------
 
     /// Set the height.
     pub fn height(&mut self, value: Length) {
         self.height = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit height from the parent node.
+    pub fn inherit_height(&mut self) {
+        self.height = StyleValue::Inherit;
+    }
+
+    /// Reset height to the document/default style.
+    pub fn unset_height(&mut self) {
+        self.height = StyleValue::Unset;
     }
 
     // -- Display --------------------------------------------------------
@@ -173,11 +198,31 @@ impl Style {
         self.display = StyleValue::Set(value);
     }
 
+    /// Explicitly inherit display mode from the parent node.
+    pub fn inherit_display(&mut self) {
+        self.display = StyleValue::Inherit;
+    }
+
+    /// Reset display mode to the document/default style.
+    pub fn unset_display(&mut self) {
+        self.display = StyleValue::Unset;
+    }
+
     // -- Opacity --------------------------------------------------------
 
     /// Set the opacity (0–1).
     pub fn opacity(&mut self, value: f64) {
         self.opacity = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit opacity from the parent node.
+    pub fn inherit_opacity(&mut self) {
+        self.opacity = StyleValue::Inherit;
+    }
+
+    /// Reset opacity to the document/default style.
+    pub fn unset_opacity(&mut self) {
+        self.opacity = StyleValue::Unset;
     }
 
     // -- Color ----------------------------------------------------------
@@ -187,11 +232,31 @@ impl Style {
         self.color = StyleValue::Set(value);
     }
 
+    /// Explicitly inherit foreground text color from the parent node.
+    pub fn inherit_color(&mut self) {
+        self.color = StyleValue::Inherit;
+    }
+
+    /// Reset foreground text color to the document/default style.
+    pub fn unset_color(&mut self) {
+        self.color = StyleValue::Unset;
+    }
+
     // -- Background -----------------------------------------------------
 
     /// Set the background color.
     pub fn background(&mut self, value: Color) {
         self.background = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit background color from the parent node.
+    pub fn inherit_background(&mut self) {
+        self.background = StyleValue::Inherit;
+    }
+
+    /// Reset background color to the document/default style.
+    pub fn unset_background(&mut self) {
+        self.background = StyleValue::Unset;
     }
 
     // -- Align Items ----------------------------------------------------
@@ -201,11 +266,31 @@ impl Style {
         self.align_items = StyleValue::Set(value);
     }
 
+    /// Explicitly inherit cross-axis alignment from the parent node.
+    pub fn inherit_align_items(&mut self) {
+        self.align_items = StyleValue::Inherit;
+    }
+
+    /// Reset cross-axis alignment to the document/default style.
+    pub fn unset_align_items(&mut self) {
+        self.align_items = StyleValue::Unset;
+    }
+
     // -- Justify Content -------------------------------------------------
 
     /// Set the main-axis alignment.
     pub fn justify_content(&mut self, value: JustifyContent) {
         self.justify_content = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit main-axis alignment from the parent node.
+    pub fn inherit_justify_content(&mut self) {
+        self.justify_content = StyleValue::Inherit;
+    }
+
+    /// Reset main-axis alignment to the document/default style.
+    pub fn unset_justify_content(&mut self) {
+        self.justify_content = StyleValue::Unset;
     }
 }
 
@@ -228,8 +313,21 @@ mod tests {
     }
 
     #[test]
-    fn default_is_all_inherit() {
+    fn default_is_all_unset() {
         let style = Style::new();
+        assert_eq!(style.width, StyleValue::Unset);
+        assert_eq!(style.opacity, StyleValue::Unset);
+        assert_eq!(style.color, StyleValue::Unset);
+    }
+
+    #[test]
+    fn inheritance_is_explicit() {
+        let mut style = Style::new();
+
+        style.inherit_width();
+        style.inherit_opacity();
+        style.inherit_color();
+
         assert_eq!(style.width, StyleValue::Inherit);
         assert_eq!(style.opacity, StyleValue::Inherit);
         assert_eq!(style.color, StyleValue::Inherit);

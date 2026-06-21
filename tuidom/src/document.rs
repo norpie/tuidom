@@ -266,8 +266,7 @@ impl Document {
     /// Get the fully resolved style for a node, including animation overrides.
     ///
     /// Returns the cached value if available, otherwise computes it by
-    /// walking the parent chain. The resolved style has all [`StyleValue::Inherit`]
-    /// values replaced with concrete values.
+    /// applying explicit values, explicit inheritance, and document defaults.
     ///
     /// During active animations, property values are overridden with the
     /// interpolated animation value.
@@ -1049,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn inherits_from_parent() {
+    fn unset_properties_use_defaults_not_parent_values() {
         let doc = Document::new();
 
         let parent = doc.create_box();
@@ -1058,13 +1057,30 @@ mod tests {
         doc.set_style(parent, &parent_style).unwrap();
 
         let child = doc.create_text("hi");
-        // child uses default style — all Inherit
         doc.append_child(parent, child).unwrap();
 
         let child_resolved = doc.resolved_style(child).unwrap();
-        // Inherits color from parent
+        assert_eq!(child_resolved.color, Color::white());
+        assert_eq!(child_resolved.width, Length::Auto);
+    }
+
+    #[test]
+    fn explicitly_inherits_from_parent() {
+        let doc = Document::new();
+
+        let parent = doc.create_box();
+        let mut parent_style = Style::new();
+        parent_style.color(Color::red());
+        doc.set_style(parent, &parent_style).unwrap();
+
+        let child = doc.create_text("hi");
+        let mut child_style = Style::new();
+        child_style.inherit_color();
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        let child_resolved = doc.resolved_style(child).unwrap();
         assert_eq!(child_resolved.color, Color::red());
-        // Own width is Inherit → default
         assert_eq!(child_resolved.width, Length::Auto);
     }
 
@@ -1102,6 +1118,9 @@ mod tests {
         doc.set_style(parent_blue, &blue_style).unwrap();
 
         let child = doc.create_text("movable");
+        let mut child_style = Style::new();
+        child_style.inherit_color();
+        doc.set_style(child, &child_style).unwrap();
         doc.append_child(parent_red, child).unwrap();
 
         assert_eq!(doc.resolved_style(child).unwrap().color, Color::red());

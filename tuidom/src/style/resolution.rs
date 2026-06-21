@@ -1,13 +1,12 @@
 //! Resolved style computation and caching.
 //!
-//! `ResolvedStyle` is the fully concrete style — all `Inherit` values have
-//! been resolved by walking the parent chain. It is computed once on change
-//! and cached per-node.
+//! `ResolvedStyle` is the fully concrete style — all unresolved style values have
+//! been resolved from explicit values, explicit parent inheritance, or document defaults.
 
 use crate::node::NodeData;
 use crate::style::{AlignItems, Color, Display, JustifyContent, Length, StyleValue};
 
-/// Fully resolved style — no [`StyleValue::Inherit`] placeholders remain.
+/// Fully resolved style — no [`StyleValue`] placeholders remain.
 #[derive(Debug, Clone)]
 pub struct ResolvedStyle {
     /// Resolved width.
@@ -30,6 +29,25 @@ pub struct ResolvedStyle {
 
 impl Default for ResolvedStyle {
     fn default() -> Self {
+        StyleDefaults::default().to_resolved_style()
+    }
+}
+
+/// Default style values used for unset properties.
+#[derive(Debug, Clone)]
+pub(crate) struct StyleDefaults {
+    width: Length,
+    height: Length,
+    display: Display,
+    opacity: f64,
+    color: Color,
+    background: Option<Color>,
+    align_items: AlignItems,
+    justify_content: JustifyContent,
+}
+
+impl Default for StyleDefaults {
+    fn default() -> Self {
         Self {
             width: Length::Auto,
             height: Length::Auto,
@@ -43,15 +61,35 @@ impl Default for ResolvedStyle {
     }
 }
 
+impl StyleDefaults {
+    fn to_resolved_style(&self) -> ResolvedStyle {
+        ResolvedStyle {
+            width: self.width,
+            height: self.height,
+            display: self.display,
+            opacity: self.opacity,
+            color: self.color,
+            background: self.background,
+            align_items: self.align_items,
+            justify_content: self.justify_content,
+        }
+    }
+}
+
 impl ResolvedStyle {
     /// Compute the resolved style for a node given its parent's resolved style.
     ///
-    /// For each property, uses the node's value if `Set`, falls back to the
-    /// parent's resolved value if `Inherit`, and falls back to [`Default`]
-    /// if the node is the root.
+    /// For each property, uses the node's value if `Set`, uses the parent's
+    /// resolved value if `Inherit`, and uses the document/default style if `Unset`.
     pub(crate) fn compute(data: &NodeData, parent: Option<&ResolvedStyle>) -> Self {
-        let defaults = ResolvedStyle::default();
+        Self::compute_with_defaults(data, parent, &StyleDefaults::default())
+    }
 
+    pub(crate) fn compute_with_defaults(
+        data: &NodeData,
+        parent: Option<&ResolvedStyle>,
+        defaults: &StyleDefaults,
+    ) -> Self {
         Self {
             width: resolve(&data.style.width, parent.map(|p| &p.width), &defaults.width),
             height: resolve(
@@ -89,27 +127,27 @@ impl ResolvedStyle {
     }
 }
 
-/// Resolve a single [`StyleValue`] given the parent's resolved value and a
-/// root default.
+/// Resolve a single [`StyleValue`] given the parent's resolved value and a default.
 fn resolve<T: Clone>(value: &StyleValue<T>, parent: Option<&T>, default: &T) -> T {
     match value {
-        StyleValue::Set(v) => v.clone(),
+        StyleValue::Unset => default.clone(),
         StyleValue::Inherit => parent.cloned().unwrap_or_else(|| default.clone()),
+        StyleValue::Set(v) => v.clone(),
     }
 }
 
 /// Resolve a [`StyleValue<Color>`] to `Option<Color>`.
 ///
-/// `Set(Color)` → `Some(Color)`. `Inherit` uses the parent's value or
-/// falls back to the default (which is `None` for the root, meaning
-/// transparent / terminal default background).
+/// `Set(Color)` → `Some(Color)`. `Inherit` uses the parent's value or the
+/// default if there is no parent. `Unset` always uses the default value.
 fn resolve_opt(
     value: &StyleValue<Color>,
     parent: Option<Color>,
     default: Option<Color>,
 ) -> Option<Color> {
     match value {
-        StyleValue::Set(v) => Some(*v),
+        StyleValue::Unset => default,
         StyleValue::Inherit => parent.or(default),
+        StyleValue::Set(v) => Some(*v),
     }
 }
