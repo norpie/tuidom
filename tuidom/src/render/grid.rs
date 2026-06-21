@@ -97,16 +97,17 @@ impl Cell {
     }
 }
 
-/// Blend `src` over `dst` using `alpha` for both fg and bg colors.
-fn blend_cell(dst: &Cell, src: &Cell, alpha: f64, replace_content: bool) -> Cell {
+/// Blend `src` over `dst` using node opacity combined with source color alpha.
+fn blend_cell(dst: &Cell, src: &Cell, opacity: f64, replace_content: bool) -> Cell {
+    let bg = blend_color(dst.bg, src.bg, opacity);
     Cell {
         content: if replace_content {
             src.content.clone()
         } else {
             dst.content.clone()
         },
-        fg: blend_fg(dst.fg, src.fg, alpha, dst.bg),
-        bg: blend_color(dst.bg, src.bg, alpha),
+        fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg)),
+        bg,
     }
 }
 
@@ -114,10 +115,12 @@ fn blend_cell(dst: &Cell, src: &Cell, alpha: f64, replace_content: bool) -> Cell
 ///
 /// When the destination is transparent (None), fades toward the cell's
 /// background color instead of black.
-fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, alpha: f64, cell_bg: Option<Rgb>) -> Option<Rgb> {
+fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64, cell_bg: Option<Rgb>) -> Option<Rgb> {
     match (dst, src) {
         (None, None) => None,
+        (_, Some(s)) if effective_alpha(s, opacity) <= 0.0 => dst,
         (None, Some(s)) => {
+            let alpha = effective_alpha(s, opacity);
             let target = cell_bg.unwrap_or(Rgb {
                 r: 0,
                 g: 0,
@@ -128,37 +131,51 @@ fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, alpha: f64, cell_bg: Option<Rgb>
                 r: lerp_u8(target.r, s.r, alpha),
                 g: lerp_u8(target.g, s.g, alpha),
                 b: lerp_u8(target.b, s.b, alpha),
-                a: s.a,
+                a: 255,
             })
         }
         (Some(d), None) => Some(d),
-        (Some(d), Some(s)) => Some(Rgb {
-            r: lerp_u8(d.r, s.r, alpha),
-            g: lerp_u8(d.g, s.g, alpha),
-            b: lerp_u8(d.b, s.b, alpha),
-            a: d.a.max(s.a),
-        }),
+        (Some(d), Some(s)) => {
+            let alpha = effective_alpha(s, opacity);
+            Some(Rgb {
+                r: lerp_u8(d.r, s.r, alpha),
+                g: lerp_u8(d.g, s.g, alpha),
+                b: lerp_u8(d.b, s.b, alpha),
+                a: 255,
+            })
+        }
     }
 }
 
 /// Blend a source color over a destination color (for backgrounds).
-fn blend_color(dst: Option<Rgb>, src: Option<Rgb>, alpha: f64) -> Option<Rgb> {
+fn blend_color(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64) -> Option<Rgb> {
     match (dst, src) {
         (None, None) => None,
-        (None, Some(s)) => Some(Rgb {
-            r: lerp_u8(0, s.r, alpha),
-            g: lerp_u8(0, s.g, alpha),
-            b: lerp_u8(0, s.b, alpha),
-            a: s.a,
-        }),
+        (_, Some(s)) if effective_alpha(s, opacity) <= 0.0 => dst,
+        (None, Some(s)) => {
+            let alpha = effective_alpha(s, opacity);
+            Some(Rgb {
+                r: lerp_u8(0, s.r, alpha),
+                g: lerp_u8(0, s.g, alpha),
+                b: lerp_u8(0, s.b, alpha),
+                a: 255,
+            })
+        }
         (Some(d), None) => Some(d),
-        (Some(d), Some(s)) => Some(Rgb {
-            r: lerp_u8(d.r, s.r, alpha),
-            g: lerp_u8(d.g, s.g, alpha),
-            b: lerp_u8(d.b, s.b, alpha),
-            a: d.a.max(s.a),
-        }),
+        (Some(d), Some(s)) => {
+            let alpha = effective_alpha(s, opacity);
+            Some(Rgb {
+                r: lerp_u8(d.r, s.r, alpha),
+                g: lerp_u8(d.g, s.g, alpha),
+                b: lerp_u8(d.b, s.b, alpha),
+                a: 255,
+            })
+        }
     }
+}
+
+fn effective_alpha(color: Rgb, opacity: f64) -> f64 {
+    clamp_alpha(opacity) * (color.a as f64 / 255.0)
 }
 
 fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {
@@ -206,7 +223,8 @@ impl Grid {
             return;
         }
 
-        let replaces_content = !matches!(cell.content, CellContent::Empty) || alpha >= 1.0;
+        let replaces_content = !matches!(cell.content, CellContent::Empty)
+            || cell.bg.is_some_and(|bg| effective_alpha(bg, alpha) >= 1.0);
         let x_end = x.saturating_add(w).min(self.width);
         let y_end = y.saturating_add(h).min(self.height);
         for row in y..y_end {

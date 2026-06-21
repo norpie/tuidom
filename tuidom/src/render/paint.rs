@@ -95,7 +95,8 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
 mod tests {
     use super::*;
     use crate::node::LayoutRect;
-    use crate::style::{Display, Length, Style};
+    use crate::style::color::Rgb;
+    use crate::style::{Color, Display, Length, Style};
 
     fn row_text(grid: &Grid, row: usize) -> String {
         grid.cells[row]
@@ -103,6 +104,16 @@ mod tests {
             .filter(|cell| !cell.is_wide_continuation())
             .map(Cell::terminal_text)
             .collect()
+    }
+
+    fn rgb(r: u8, g: u8, b: u8) -> Rgb {
+        Rgb { r, g, b, a: 255 }
+    }
+
+    fn set_layout(doc: &Document, node: NodeId, layout: LayoutRect) {
+        if let Some(mut data) = doc.inner.nodes.get_mut(&node) {
+            data.layout = Some(layout);
+        }
     }
 
     #[test]
@@ -142,6 +153,114 @@ mod tests {
         let mut hidden_grid = Grid::new(5, 1);
         paint(&doc, &mut hidden_grid);
         assert_eq!(row_text(&hidden_grid, 0), "     ");
+    }
+
+    #[test]
+    fn translucent_background_color_blends_without_node_opacity_and_preserves_text() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let text = doc.create_text("x");
+        let overlay = doc.create_box();
+
+        let mut root_style = Style::new();
+        root_style.background(Color::black());
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut text_style = Style::new();
+        text_style.color(Color::white());
+        doc.set_style(text, &text_style).unwrap();
+
+        let mut overlay_style = Style::new();
+        overlay_style.background(Color::oklcha(1.0, 0.0, 0.0, 0.5));
+        doc.set_style(overlay, &overlay_style).unwrap();
+
+        doc.append_child(root, text).unwrap();
+        doc.append_child(root, overlay).unwrap();
+        doc.set_root(root);
+
+        let layout = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        set_layout(&doc, root, layout);
+        set_layout(&doc, text, layout);
+        set_layout(&doc, overlay, layout);
+
+        let mut grid = Grid::new(1, 1);
+        paint(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "x");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(128, 128, 128)));
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(255, 255, 255)));
+    }
+
+    #[test]
+    fn color_alpha_and_node_opacity_multiply() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let overlay = doc.create_box();
+
+        let mut root_style = Style::new();
+        root_style.background(Color::black());
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut overlay_style = Style::new();
+        overlay_style.background(Color::oklcha(1.0, 0.0, 0.0, 0.5));
+        overlay_style.opacity(0.5);
+        doc.set_style(overlay, &overlay_style).unwrap();
+
+        doc.append_child(root, overlay).unwrap();
+        doc.set_root(root);
+
+        let layout = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        set_layout(&doc, root, layout);
+        set_layout(&doc, overlay, layout);
+
+        let mut grid = Grid::new(1, 1);
+        paint(&doc, &mut grid);
+
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(64, 64, 64)));
+    }
+
+    #[test]
+    fn translucent_foreground_color_blends_with_background() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let text = doc.create_text("x");
+
+        let mut root_style = Style::new();
+        root_style.background(Color::black());
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut text_style = Style::new();
+        text_style.color(Color::oklcha(1.0, 0.0, 0.0, 0.5));
+        doc.set_style(text, &text_style).unwrap();
+
+        doc.append_child(root, text).unwrap();
+        doc.set_root(root);
+
+        let layout = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        set_layout(&doc, root, layout);
+        set_layout(&doc, text, layout);
+
+        let mut grid = Grid::new(1, 1);
+        paint(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "x");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 0)));
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(128, 128, 128)));
     }
 
     #[test]
