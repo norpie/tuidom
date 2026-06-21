@@ -38,6 +38,19 @@ impl CellContent {
     }
 }
 
+/// A rectangular region in the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GridRect {
+    /// Left edge in terminal cells.
+    pub x: u16,
+    /// Top edge in terminal cells.
+    pub y: u16,
+    /// Width in terminal cells.
+    pub width: u16,
+    /// Height in terminal cells.
+    pub height: u16,
+}
+
 /// A single terminal character position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cell {
@@ -222,24 +235,22 @@ impl Grid {
 
     /// Write multiline text clipped to a rectangular region.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
-    pub fn write_text_clipped(
-        &mut self,
-        x: u16,
-        y: u16,
-        w: u16,
-        h: u16,
-        text: &str,
-        fg: Option<Rgb>,
-        alpha: f64,
-    ) {
-        if x >= self.width || y >= self.height || w == 0 || h == 0 {
+    pub fn write_text_clipped(&mut self, rect: GridRect, text: &str, fg: Option<Rgb>, alpha: f64) {
+        if rect.x >= self.width || rect.y >= self.height || rect.width == 0 || rect.height == 0 {
             return;
         }
 
-        let max_width = w.min(self.width - x);
-        let max_height = h.min(self.height - y);
+        let max_width = rect.width.min(self.width - rect.x);
+        let max_height = rect.height.min(self.height - rect.y);
         for (line_index, line) in text.lines().take(max_height as usize).enumerate() {
-            self.write_text_line_clipped(x, y + line_index as u16, max_width, line, fg, alpha);
+            self.write_text_line_clipped(
+                rect.x,
+                rect.y + line_index as u16,
+                max_width,
+                line,
+                fg,
+                alpha,
+            );
         }
     }
 
@@ -416,7 +427,17 @@ mod tests {
     fn write_text_clipped_respects_width() {
         let mut grid = Grid::new(5, 1);
 
-        grid.write_text_clipped(1, 0, 2, 1, "abcd", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text_clipped(
+            GridRect {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+            "abcd",
+            Some(rgb(255, 255, 255)),
+            1.0,
+        );
         assert_eq!(row_text(&grid, 0), " ab  ");
     }
 
@@ -424,7 +445,17 @@ mod tests {
     fn write_text_clipped_respects_height_and_newlines() {
         let mut grid = Grid::new(4, 3);
 
-        grid.write_text_clipped(0, 0, 4, 2, "ab\ncd\nef", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text_clipped(
+            GridRect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 2,
+            },
+            "ab\ncd\nef",
+            Some(rgb(255, 255, 255)),
+            1.0,
+        );
         assert_eq!(row_text(&grid, 0), "ab  ");
         assert_eq!(row_text(&grid, 1), "cd  ");
         assert_eq!(row_text(&grid, 2), "    ");
@@ -479,7 +510,17 @@ mod tests {
     fn wide_glyph_is_skipped_at_clip_boundary() {
         let mut grid = Grid::new(2, 1);
 
-        grid.write_text_clipped(0, 0, 2, 1, "a界", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text_clipped(
+            GridRect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+            "a界",
+            Some(rgb(255, 255, 255)),
+            1.0,
+        );
         assert_eq!(row_text(&grid, 0), "a ");
     }
 

@@ -3,7 +3,7 @@
 use crate::document::Document;
 use crate::id::NodeId;
 use crate::node::NodeKindView;
-use crate::render::grid::{Cell, Grid};
+use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::Display;
 
 /// Paint the visible portion of the DOM tree into the grid.
@@ -70,10 +70,12 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
                 );
             }
             grid.write_text_clipped(
-                layout.x,
-                layout.y,
-                layout.width,
-                layout.height,
+                GridRect {
+                    x: layout.x,
+                    y: layout.y,
+                    width: layout.width,
+                    height: layout.height,
+                },
                 content,
                 Some(fg_rgb),
                 alpha,
@@ -154,7 +156,7 @@ mod tests {
                 height: 1,
             });
         } else {
-            assert!(false, "text node should exist");
+            panic!("text node should exist");
         }
 
         let mut grid = Grid::new(5, 3);
