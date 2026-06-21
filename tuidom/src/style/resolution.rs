@@ -109,7 +109,7 @@ fn resolve_opt(
     default: Option<Color>,
 ) -> Option<Color> {
     match value {
-        StyleValue::Set(v) => Some(v.clone()),
+        StyleValue::Set(v) => Some(*v),
         StyleValue::Inherit => parent.or(default),
     }
 }

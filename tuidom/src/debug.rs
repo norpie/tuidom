@@ -126,7 +126,7 @@ impl DebugOverlay {
         let max_width = lines.iter().map(|l| l.len()).max().unwrap_or(0);
         let height = lines.len() as u16;
 
-        let x = grid.width.saturating_sub(max_width as u16 + 1).max(0);
+        let x = grid.width.saturating_sub(max_width as u16 + 1);
         let fg = Some(Rgb {
             r: 255,
             g: 255,

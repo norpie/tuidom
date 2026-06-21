@@ -132,7 +132,7 @@ impl TerminalSetup {
     fn stdout(&mut self) -> io::Result<&mut Stdout> {
         self.stdout
             .as_mut()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "terminal setup missing stdout"))
+            .ok_or_else(|| io::Error::other("terminal setup missing stdout"))
     }
 
     fn finish(mut self) -> io::Result<Stdout> {
@@ -141,7 +141,7 @@ impl TerminalSetup {
         self.cursor_hidden = false;
         self.stdout
             .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "terminal setup missing stdout"))
+            .ok_or_else(|| io::Error::other("terminal setup missing stdout"))
     }
 }
 

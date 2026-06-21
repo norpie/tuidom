@@ -29,14 +29,13 @@ pub(crate) fn diff(old: &Grid, new: &Grid) -> Vec<CellChange> {
     let height = new.height as usize;
     let mut dirty = vec![vec![false; width]; height];
 
-    for y in 0..height {
-        for x in 0..width {
+    for (y, new_row) in new.cells.iter().enumerate().take(height) {
+        for (x, new_cell) in new_row.iter().enumerate().take(width) {
             let changed = if y >= old.height as usize || x >= old.width as usize {
                 true
             } else {
-                let o = &old.cells[y][x];
-                let n = &new.cells[y][x];
-                cells_differ(o, n)
+                let old_cell = &old.cells[y][x];
+                cells_differ(old_cell, new_cell)
             };
 
             if changed {
@@ -47,9 +46,9 @@ pub(crate) fn diff(old: &Grid, new: &Grid) -> Vec<CellChange> {
     }
 
     let mut changes = Vec::new();
-    for y in 0..height {
-        for x in 0..width {
-            if dirty[y][x] {
+    for (y, dirty_row) in dirty.iter().enumerate().take(height) {
+        for (x, is_dirty) in dirty_row.iter().enumerate().take(width) {
+            if *is_dirty {
                 changes.push(CellChange {
                     x: x as u16,
                     y: y as u16,

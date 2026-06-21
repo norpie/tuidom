@@ -14,18 +14,13 @@ pub use color::Color;
 /// Wraps a style property value. Either explicitly `Set` or `Inherit` from parent.
 ///
 /// By default, nothing inherits — you must explicitly use `Inherit` to opt in.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum StyleValue<T> {
     /// An explicitly set value.
     Set(T),
     /// Inherit the resolved value from the parent node.
+    #[default]
     Inherit,
-}
-
-impl<T> Default for StyleValue<T> {
-    fn default() -> Self {
-        Self::Inherit
-    }
 }
 
 // ---------------------------------------------------------------------------
