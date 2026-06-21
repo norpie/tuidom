@@ -4,6 +4,7 @@ use crate::document::Document;
 use crate::id::NodeId;
 use crate::node::NodeKindView;
 use crate::render::grid::{Cell, Grid};
+use crate::style::Display;
 
 /// Paint the visible portion of the DOM tree into the grid.
 pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
@@ -22,12 +23,16 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
         None => return,
     };
 
+    let resolved = doc.resolved_style(node_id);
+    if resolved.display == Display::None {
+        return;
+    }
+
     let layout = match view.layout {
         Some(l) => l,
         None => return,
     };
 
-    let resolved = doc.resolved_style(node_id);
     let alpha = resolved.opacity;
 
     if alpha <= 0.0 {
@@ -86,6 +91,7 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
 mod tests {
     use super::*;
     use crate::node::LayoutRect;
+    use crate::style::{Display, Length, Style};
 
     fn row_text(grid: &Grid, row: usize) -> String {
         grid.cells[row]
@@ -93,6 +99,45 @@ mod tests {
             .filter(|cell| !cell.is_wide_continuation())
             .map(Cell::terminal_text)
             .collect()
+    }
+
+    #[test]
+    fn child_changed_to_display_none_does_not_paint_from_stale_layout() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let text = doc.create_text("hi");
+
+        let mut root_style = Style::new();
+        root_style.width(Length::Pixels(5));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style);
+
+        doc.append_child(root, text).unwrap();
+        doc.set_root(root);
+        doc.compute_layout(5, 1);
+
+        let mut visible_grid = Grid::new(5, 1);
+        paint(&doc, &mut visible_grid);
+        assert_eq!(row_text(&visible_grid, 0), "hi   ");
+
+        let mut hidden_style = Style::new();
+        hidden_style.display(Display::None);
+        doc.set_style(text, &hidden_style);
+        doc.compute_layout(5, 1);
+        assert!(doc.get_node(text).unwrap().layout.is_none());
+
+        if let Some(mut data) = doc.inner.nodes.get_mut(&text) {
+            data.layout = Some(LayoutRect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            });
+        }
+
+        let mut hidden_grid = Grid::new(5, 1);
+        paint(&doc, &mut hidden_grid);
+        assert_eq!(row_text(&hidden_grid, 0), "     ");
     }
 
     #[test]

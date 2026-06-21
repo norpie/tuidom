@@ -41,6 +41,8 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
         None => return,
     };
 
+    clear_layouts(doc, root);
+
     let mut taffy_tree = TaffyTree::<MeasureContext>::new();
     let mut mapping = HashMap::new();
 
@@ -62,6 +64,16 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
         // locations relative to each node's parent, while the renderer paints
         // from screen-space coordinates.
         store_layouts(doc, &taffy_tree, root, &mapping, 0.0, 0.0);
+    }
+}
+
+fn clear_layouts(doc: &Document, node_id: NodeId) {
+    if let Some(mut data) = doc.inner.nodes.get_mut(&node_id) {
+        data.layout = None;
+    }
+
+    for child in doc.get_children(node_id) {
+        clear_layouts(doc, child);
     }
 }
 
