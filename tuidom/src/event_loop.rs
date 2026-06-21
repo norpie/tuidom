@@ -21,7 +21,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     let inner = doc.inner.clone();
 
     // Initial render
-    render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
+    render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
 
     loop {
         if *lock::rw_read(&inner.shutdown) {
@@ -34,7 +34,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                 if *lock::rw_read(&inner.shutdown) {
                     break;
                 }
-                render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
+                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
             }
 
             // Terminal events (resize, keyboard)
@@ -50,7 +50,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                             height: h,
                         }));
 
-                        render_full_timed(&doc, &mut renderer, screen_w, screen_h);
+                        render_full_timed(&doc, &mut renderer, screen_w, screen_h)?;
                     }
                     Some(Ok(CrosstermEvent::Key(key))) => {
                         if key.kind == KeyEventKind::Press {
@@ -67,7 +67,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
                 if *lock::rw_read(&inner.shutdown) {
                     break;
                 }
-                render_frame_timed(&doc, &mut renderer, screen_w, screen_h);
+                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
             }
         }
     }
@@ -76,31 +76,33 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
 }
 
 /// Render a diffed frame with timing for the debug overlay.
-fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) {
+fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
     doc.compute_layout(sw, sh);
     let layout_time = layout_start.elapsed();
 
-    let stats = renderer.render_frame(doc).unwrap_or_default();
+    let stats = renderer.render_frame(doc)?;
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
+    Ok(())
 }
 
 /// Render a full redraw with timing for the debug overlay.
-fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) {
+fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
     doc.compute_layout(sw, sh);
     let layout_time = layout_start.elapsed();
 
-    let stats = renderer.render_full(doc).unwrap_or_default();
+    let stats = renderer.render_full(doc)?;
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
+    Ok(())
 }
 
 /// Convert a crossterm key event to a tuidom [`Event`].
