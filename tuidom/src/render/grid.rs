@@ -85,9 +85,13 @@ impl Cell {
 }
 
 /// Blend `src` over `dst` using `alpha` for both fg and bg colors.
-fn blend_cell(dst: &Cell, src: &Cell, alpha: f64) -> Cell {
+fn blend_cell(dst: &Cell, src: &Cell, alpha: f64, replace_content: bool) -> Cell {
     Cell {
-        content: src.content.clone(),
+        content: if replace_content {
+            src.content.clone()
+        } else {
+            dst.content.clone()
+        },
         fg: blend_fg(dst.fg, src.fg, alpha, dst.bg),
         bg: blend_color(dst.bg, src.bg, alpha),
     }
@@ -189,13 +193,17 @@ impl Grid {
             return;
         }
 
+        let replaces_content = !matches!(cell.content, CellContent::Empty) || alpha >= 1.0;
         let x_end = x.saturating_add(w).min(self.width);
         let y_end = y.saturating_add(h).min(self.height);
         for row in y..y_end {
             for col in x..x_end {
-                self.clear_text_span_at(row as usize, col as usize);
+                if replaces_content {
+                    self.clear_text_span_at(row as usize, col as usize);
+                }
                 let dst = &self.cells[row as usize][col as usize];
-                self.cells[row as usize][col as usize] = blend_cell(dst, &cell, alpha);
+                self.cells[row as usize][col as usize] =
+                    blend_cell(dst, &cell, alpha, replaces_content);
             }
         }
     }
@@ -354,6 +362,24 @@ mod tests {
         grid.fill_rect(1, 1, u16::MAX, u16::MAX, cell, 1.0);
         assert_eq!(grid.cells[1][1].bg, Some(blue));
         assert_eq!(grid.cells[0][0], Cell::empty());
+    }
+
+    #[test]
+    fn translucent_empty_fill_blends_background_without_erasing_text() {
+        let white = rgb(255, 255, 255);
+        let blue = rgb(0, 0, 255);
+        let red = rgb(255, 0, 0);
+        let mut grid = Grid::new(2, 1);
+
+        grid.fill_rect(0, 0, 2, 1, Cell::empty_with_bg(blue), 1.0);
+        grid.write_text(0, 0, "hi", Some(white), 1.0);
+        grid.fill_rect(0, 0, 2, 1, Cell::empty_with_bg(red), 0.5);
+
+        assert_eq!(row_text(&grid, 0), "hi");
+        assert_eq!(grid.cells[0][0].fg, Some(white));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(128, 0, 128)));
+        assert_eq!(grid.cells[0][1].fg, Some(white));
+        assert_eq!(grid.cells[0][1].bg, Some(rgb(128, 0, 128)));
     }
 
     #[test]
