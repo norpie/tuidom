@@ -22,11 +22,14 @@ pub(crate) struct Terminal {
 impl Terminal {
     /// Initialize the terminal: raw mode, alternate screen, hide cursor.
     pub fn new() -> io::Result<Self> {
-        let mut stdout = io::stdout();
-        enable_raw_mode()?;
-        queue!(stdout, EnterAlternateScreen, Hide)?;
-        stdout.flush()?;
-        Ok(Self { stdout })
+        let mut setup = TerminalSetup::new(io::stdout());
+        setup.enable_raw_mode()?;
+        setup.enter_alternate_screen()?;
+        setup.hide_cursor()?;
+
+        Ok(Self {
+            stdout: setup.finish()?,
+        })
     }
 
     /// Flush only the changed cells to the terminal.
@@ -87,8 +90,88 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = queue!(self.stdout, Show, LeaveAlternateScreen);
-        let _ = self.stdout.flush();
+        restore_terminal(&mut self.stdout, true, true, true);
+    }
+}
+
+struct TerminalSetup {
+    stdout: Option<Stdout>,
+    raw_mode_enabled: bool,
+    alternate_screen_entered: bool,
+    cursor_hidden: bool,
+}
+
+impl TerminalSetup {
+    fn new(stdout: Stdout) -> Self {
+        Self {
+            stdout: Some(stdout),
+            raw_mode_enabled: false,
+            alternate_screen_entered: false,
+            cursor_hidden: false,
+        }
+    }
+
+    fn enable_raw_mode(&mut self) -> io::Result<()> {
+        enable_raw_mode()?;
+        self.raw_mode_enabled = true;
+        Ok(())
+    }
+
+    fn enter_alternate_screen(&mut self) -> io::Result<()> {
+        queue!(self.stdout()?, EnterAlternateScreen)?;
+        self.alternate_screen_entered = true;
+        self.stdout()?.flush()
+    }
+
+    fn hide_cursor(&mut self) -> io::Result<()> {
+        queue!(self.stdout()?, Hide)?;
+        self.cursor_hidden = true;
+        self.stdout()?.flush()
+    }
+
+    fn stdout(&mut self) -> io::Result<&mut Stdout> {
+        self.stdout
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "terminal setup missing stdout"))
+    }
+
+    fn finish(mut self) -> io::Result<Stdout> {
+        self.raw_mode_enabled = false;
+        self.alternate_screen_entered = false;
+        self.cursor_hidden = false;
+        self.stdout
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "terminal setup missing stdout"))
+    }
+}
+
+impl Drop for TerminalSetup {
+    fn drop(&mut self) {
+        if let Some(stdout) = self.stdout.as_mut() {
+            restore_terminal(
+                stdout,
+                self.cursor_hidden,
+                self.alternate_screen_entered,
+                self.raw_mode_enabled,
+            );
+        }
+    }
+}
+
+fn restore_terminal(
+    stdout: &mut Stdout,
+    cursor_hidden: bool,
+    alternate_screen_entered: bool,
+    raw_mode_enabled: bool,
+) {
+    if cursor_hidden {
+        let _ = queue!(stdout, Show);
+    }
+    if alternate_screen_entered {
+        let _ = queue!(stdout, LeaveAlternateScreen);
+    }
+    let _ = stdout.flush();
+    if raw_mode_enabled {
         let _ = disable_raw_mode();
     }
 }
