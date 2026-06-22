@@ -32,7 +32,7 @@ Think of it as the relationship between a browser engine (Chromium, WebKit) and 
 - Completely passive when idle, active during animations
 - Crossterm backend with terminal capability detection
 
-**Layering & Focus:**
+**Stacking & Focus:**
 - Stacking contexts prevent z-index bleed-through
 - Spatial arrow navigation and focus trapping
 - Screen-wide text selection with boundary respect

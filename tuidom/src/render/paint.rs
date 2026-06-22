@@ -1,10 +1,11 @@
-//! Tree → grid painting. Walks the DOM depth-first and fills cells.
+//! Tree → grid painting using z-index sorted stacking contexts.
 
 use crate::document::Document;
 use crate::id::NodeId;
-use crate::node::NodeKindView;
+use crate::node::{LayoutRect, NodeKindView};
 use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::Display;
+use crate::style::resolution::ResolvedStyle;
 
 /// Paint the visible portion of the DOM tree into the grid.
 pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
@@ -13,46 +14,150 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
         None => return,
     };
 
-    paint_node(doc, grid, root);
+    let mut sequence = 0;
+    if let Some(context) = collect_context(doc, root, &mut sequence) {
+        paint_context(grid, &context);
+    }
 }
 
-/// Recursively paint a node and its children.
-fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
-    let view = match doc.get_node(node_id) {
-        Some(v) => v,
-        None => return,
-    };
+#[derive(Debug)]
+struct PaintNode {
+    kind: NodeKindView,
+    layout: LayoutRect,
+    resolved: ResolvedStyle,
+}
 
-    let Ok(resolved) = doc.resolved_style(node_id) else {
-        return;
-    };
-    if resolved.display == Display::None {
-        return;
+#[derive(Debug)]
+struct PaintContext {
+    root: PaintNode,
+    items: Vec<PaintItem>,
+}
+
+#[derive(Debug)]
+enum PaintItem {
+    Node {
+        node: PaintNode,
+        z_index: i32,
+        sequence: u64,
+    },
+    Context {
+        context: PaintContext,
+        z_index: i32,
+        sequence: u64,
+    },
+}
+
+impl PaintItem {
+    fn z_index(&self) -> i32 {
+        match self {
+            Self::Node { z_index, .. } | Self::Context { z_index, .. } => *z_index,
+        }
     }
 
-    let layout = match view.layout {
-        Some(l) => l,
-        None => return,
+    fn sequence(&self) -> u64 {
+        match self {
+            Self::Node { sequence, .. } | Self::Context { sequence, .. } => *sequence,
+        }
+    }
+}
+
+fn collect_context(doc: &Document, root: NodeId, sequence: &mut u64) -> Option<PaintContext> {
+    let root_node = collect_node(doc, root)?;
+    let mut context = PaintContext {
+        root: root_node,
+        items: Vec::new(),
     };
 
-    let alpha = resolved.opacity;
-
-    if alpha <= 0.0 {
-        return;
+    for child in doc.get_children(root) {
+        collect_into_context(doc, child, sequence, &mut context.items);
     }
 
-    let bg_rgb = resolved.background.map(|c| c.to_rgb());
-    let fg_rgb = resolved.color.to_rgb();
+    Some(context)
+}
 
-    match &view.kind {
+fn collect_into_context(
+    doc: &Document,
+    node_id: NodeId,
+    sequence: &mut u64,
+    items: &mut Vec<PaintItem>,
+) {
+    let Some(node) = collect_node(doc, node_id) else {
+        return;
+    };
+
+    *sequence += 1;
+    let node_sequence = *sequence;
+    let z_index = node.resolved.z_index;
+    let creates_context = node.resolved.stacking_context;
+
+    if creates_context {
+        let mut nested_context = PaintContext {
+            root: node,
+            items: Vec::new(),
+        };
+        for child in doc.get_children(node_id) {
+            collect_into_context(doc, child, sequence, &mut nested_context.items);
+        }
+        items.push(PaintItem::Context {
+            context: nested_context,
+            z_index,
+            sequence: node_sequence,
+        });
+    } else {
+        items.push(PaintItem::Node {
+            node,
+            z_index,
+            sequence: node_sequence,
+        });
+        for child in doc.get_children(node_id) {
+            collect_into_context(doc, child, sequence, items);
+        }
+    }
+}
+
+fn collect_node(doc: &Document, node_id: NodeId) -> Option<PaintNode> {
+    let view = doc.get_node(node_id)?;
+    let resolved = doc.resolved_style(node_id).ok()?;
+    if resolved.display == Display::None || resolved.opacity <= 0.0 {
+        return None;
+    }
+    let layout = view.layout?;
+
+    Some(PaintNode {
+        kind: view.kind,
+        layout,
+        resolved,
+    })
+}
+
+fn paint_context(grid: &mut Grid, context: &PaintContext) {
+    paint_node_self(grid, &context.root);
+
+    let mut items = context.items.iter().collect::<Vec<_>>();
+    items.sort_by_key(|item| (item.z_index(), item.sequence()));
+
+    for item in items {
+        match item {
+            PaintItem::Node { node, .. } => paint_node_self(grid, node),
+            PaintItem::Context { context, .. } => paint_context(grid, context),
+        }
+    }
+}
+
+fn paint_node_self(grid: &mut Grid, node: &PaintNode) {
+    let alpha = node.resolved.opacity;
+    let bg_rgb = node.resolved.background.map(|c| c.to_rgb());
+    let fg_rgb = node.resolved.color.to_rgb();
+
+    match &node.kind {
         NodeKindView::Box => {
             if let Some(bg) = bg_rgb {
                 let bg_cell = Cell::empty_with_bg(bg);
                 grid.fill_rect(
-                    layout.x,
-                    layout.y,
-                    layout.width,
-                    layout.height,
+                    node.layout.x,
+                    node.layout.y,
+                    node.layout.width,
+                    node.layout.height,
                     bg_cell,
                     alpha,
                 );
@@ -63,31 +168,26 @@ fn paint_node(doc: &Document, grid: &mut Grid, node_id: NodeId) {
             if let Some(bg) = bg_rgb {
                 let bg_cell = Cell::empty_with_bg(bg);
                 grid.fill_rect(
-                    layout.x,
-                    layout.y,
-                    layout.width,
-                    layout.height,
+                    node.layout.x,
+                    node.layout.y,
+                    node.layout.width,
+                    node.layout.height,
                     bg_cell,
                     alpha,
                 );
             }
             grid.write_text_clipped(
                 GridRect {
-                    x: layout.x,
-                    y: layout.y,
-                    width: layout.width,
-                    height: layout.height,
+                    x: node.layout.x,
+                    y: node.layout.y,
+                    width: node.layout.width,
+                    height: node.layout.height,
                 },
                 content,
                 Some(fg_rgb),
                 alpha,
             );
         }
-    }
-
-    // Paint children on top
-    for child in &view.children {
-        paint_node(doc, grid, *child);
     }
 }
 
@@ -114,6 +214,171 @@ mod tests {
         if let Some(mut data) = doc.inner.nodes.get_mut(&node) {
             data.layout = Some(layout);
         }
+    }
+
+    fn one_cell() -> LayoutRect {
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        }
+    }
+
+    fn set_one_cell_layouts(doc: &Document, nodes: &[NodeId]) {
+        for node in nodes {
+            set_layout(doc, *node, one_cell());
+        }
+    }
+
+    fn set_background(doc: &Document, node: NodeId, color: Color) {
+        let mut style = Style::new();
+        style.background(color);
+        doc.set_style(node, &style).unwrap();
+    }
+
+    fn set_background_z(doc: &Document, node: NodeId, color: Color, z_index: i32) {
+        let mut style = Style::new();
+        style.background(color);
+        style.z_index(z_index);
+        doc.set_style(node, &style).unwrap();
+    }
+
+    fn set_background_z_context(doc: &Document, node: NodeId, color: Color, z_index: i32) {
+        let mut style = Style::new();
+        style.background(color);
+        style.z_index(z_index);
+        style.stacking_context(true);
+        doc.set_style(node, &style).unwrap();
+    }
+
+    fn painted_bg(doc: &Document) -> Option<Rgb> {
+        let mut grid = Grid::new(1, 1);
+        paint(doc, &mut grid);
+        grid.cells[0][0].bg
+    }
+
+    #[test]
+    fn default_paint_order_matches_dom_order() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let first = doc.create_box();
+        let second = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background(&doc, first, Color::red());
+        set_background(&doc, second, Color::blue());
+
+        doc.append_child(root, first).unwrap();
+        doc.append_child(root, second).unwrap();
+        doc.set_root(root);
+        set_one_cell_layouts(&doc, &[root, first, second]);
+
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn higher_z_index_paints_above_later_dom_sibling() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let high = doc.create_box();
+        let low = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background_z(&doc, high, Color::blue(), 10);
+        set_background_z(&doc, low, Color::red(), 0);
+
+        doc.append_child(root, high).unwrap();
+        doc.append_child(root, low).unwrap();
+        doc.set_root(root);
+        set_one_cell_layouts(&doc, &[root, high, low]);
+
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn lower_z_index_paints_below_earlier_dom_sibling() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let normal = doc.create_box();
+        let low = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background_z(&doc, normal, Color::blue(), 0);
+        set_background_z(&doc, low, Color::red(), -1);
+
+        doc.append_child(root, normal).unwrap();
+        doc.append_child(root, low).unwrap();
+        doc.set_root(root);
+        set_one_cell_layouts(&doc, &[root, normal, low]);
+
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn descendant_z_index_can_participate_in_nearest_stacking_context() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let parent = doc.create_box();
+        let child = doc.create_box();
+        let sibling = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background_z(&doc, parent, Color::red(), 0);
+        set_background_z(&doc, child, Color::green(), 999);
+        set_background_z(&doc, sibling, Color::blue(), 1);
+
+        doc.append_child(root, parent).unwrap();
+        doc.append_child(parent, child).unwrap();
+        doc.append_child(root, sibling).unwrap();
+        doc.set_root(root);
+        set_one_cell_layouts(&doc, &[root, parent, child, sibling]);
+
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 255, 0)));
+    }
+
+    #[test]
+    fn stacking_context_prevents_descendant_z_index_bleed() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let context_root = doc.create_box();
+        let child = doc.create_box();
+        let sibling = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background_z_context(&doc, context_root, Color::red(), 0);
+        set_background_z(&doc, child, Color::green(), 999);
+        set_background_z(&doc, sibling, Color::blue(), 1);
+
+        doc.append_child(root, context_root).unwrap();
+        doc.append_child(context_root, child).unwrap();
+        doc.append_child(root, sibling).unwrap();
+        doc.set_root(root);
+        set_one_cell_layouts(&doc, &[root, context_root, child, sibling]);
+
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn descendants_sort_inside_their_stacking_context() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let context_root = doc.create_box();
+        let high = doc.create_box();
+        let low = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background_z_context(&doc, context_root, Color::red(), 0);
+        set_background_z(&doc, high, Color::green(), 10);
+        set_background_z(&doc, low, Color::blue(), 0);
+
+        doc.append_child(root, context_root).unwrap();
+        doc.append_child(context_root, high).unwrap();
+        doc.append_child(context_root, low).unwrap();
+        doc.set_root(root);
+        set_one_cell_layouts(&doc, &[root, context_root, high, low]);
+
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 255, 0)));
     }
 
     #[test]

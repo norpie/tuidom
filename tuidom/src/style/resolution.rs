@@ -25,6 +25,10 @@ pub struct ResolvedStyle {
     pub align_items: AlignItems,
     /// Resolved main-axis alignment.
     pub justify_content: JustifyContent,
+    /// Resolved paint order within the current stacking context.
+    pub z_index: i32,
+    /// Whether this node creates an isolated stacking context.
+    pub stacking_context: bool,
 }
 
 impl Default for ResolvedStyle {
@@ -44,6 +48,8 @@ pub(crate) struct StyleDefaults {
     background: Option<Color>,
     align_items: AlignItems,
     justify_content: JustifyContent,
+    z_index: i32,
+    stacking_context: bool,
 }
 
 impl Default for StyleDefaults {
@@ -57,6 +63,8 @@ impl Default for StyleDefaults {
             background: None,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::FlexStart,
+            z_index: 0,
+            stacking_context: false,
         }
     }
 }
@@ -72,6 +80,8 @@ impl StyleDefaults {
             background: self.background,
             align_items: self.align_items,
             justify_content: self.justify_content,
+            z_index: self.z_index,
+            stacking_context: self.stacking_context,
         }
     }
 }
@@ -122,6 +132,16 @@ impl ResolvedStyle {
                 &data.style.justify_content,
                 parent.map(|p| &p.justify_content),
                 &defaults.justify_content,
+            ),
+            z_index: resolve(
+                &data.style.z_index,
+                parent.map(|p| &p.z_index),
+                &defaults.z_index,
+            ),
+            stacking_context: resolve(
+                &data.style.stacking_context,
+                parent.map(|p| &p.stacking_context),
+                &defaults.stacking_context,
             ),
         }
     }

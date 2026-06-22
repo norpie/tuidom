@@ -57,31 +57,27 @@
 - [ ] Escape key behavior:
   - [ ] First press: blur current node (focus → None)
   - [ ] Second press (when already None): propagates to handlers (e.g., close modal)
-- [ ] Focus stack for modal nesting (see Layering)
+- [ ] Focus stack for modal nesting (see Stacking Contexts)
 
-## Layering & Stacking Contexts
+## Stacking Contexts & z-index
 
-Solves the "dropdown in modal" problem: a dropdown in App1 shouldn't appear above a modal in App2. 
-Each stacking context is an isolated layering environment — nodes can't visually escape their context.
+Solves the "dropdown in modal" problem: a dropdown in App1 shouldn't appear above a modal in App2.
+Each stacking context is an isolated paint-order environment — descendant `z_index` values can't visually escape their context.
 
-- [ ] Stacking contexts: created explicitly (`stacking_context: true`) or implicitly by modals
-  - [ ] Children are stacked relative to their context, not globally
-  - [ ] Prevents z-index bleed-through between unrelated UI sections
-- [ ] Local layers within each stacking context (ordered lowest to highest):
-  - [ ] `content` — default layer for normal nodes
-  - [ ] `overlay` — dropdowns, tooltips (above content, below modals)
-  - [ ] `modal` — modals (creates a new nested stacking context)
-- [ ] Global escape hatch: `top` layer at root level, bypasses all contexts (for toasts, drag visuals, etc.)
-- [ ] Focus integration with layering:
-  - [ ] Modal layer traps focus — Tab/arrows cycle within, can't escape
-  - [ ] Overlay layer (dropdowns): focus moves in, but not hard-trapped (Tab out or Escape closes it, returns focus to trigger)
-  - [ ] Content behind active modal is inert (not focusable)
-  - [ ] Nested modals: inner modal traps focus, outer modal is inert until inner closes
-- [ ] Focus stack for modals:
-  - [ ] On modal open: push current focus to stack, auto-focus first focusable in modal
-  - [ ] On modal close: pop stack, restore focus to previous node
+- [x] `z_index: i32` controls paint order within the nearest stacking context
+  - [x] Lower values paint first, higher values paint later
+  - [x] DOM order is the stable tiebreaker for equal values
+- [x] Stacking contexts: created explicitly (`stacking_context: true`)
+  - [x] Children are stacked relative to their context, not globally
+  - [x] Prevents z-index bleed-through between unrelated UI sections
+- [ ] Focus integration with stacking contexts:
+  - [ ] Modal-like downstream components can trap focus within a chosen stacking context
+  - [ ] Content behind an active modal-like context can be made inert by downstream policy
+  - [ ] Nested modal-like contexts restore focus via a focus stack
+- [ ] Focus stack for modal-like contexts:
+  - [ ] On open: push current focus to stack, auto-focus first focusable in context
+  - [ ] On close: pop stack, restore focus to previous node
   - [ ] If stored node no longer exists, fall back to first focusable in context
-- [ ] `top` layer nodes: not focusable by default, optionally focusable if they have actions (e.g., dismissable toasts)
 
 ## Scrolling & Virtualization
 

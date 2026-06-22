@@ -129,6 +129,10 @@ pub struct Style {
     pub(crate) align_items: StyleValue<AlignItems>,
     /// Main-axis alignment (flex container).
     pub(crate) justify_content: StyleValue<JustifyContent>,
+    /// Paint order within the current stacking context.
+    pub(crate) z_index: StyleValue<i32>,
+    /// Whether this node creates an isolated stacking context for descendants.
+    pub(crate) stacking_context: StyleValue<bool>,
     /// Catch-all for unknown / future properties.
     pub(crate) extra: HashMap<String, String>,
 }
@@ -153,6 +157,8 @@ impl Style {
             background: StyleValue::Unset,
             align_items: StyleValue::Unset,
             justify_content: StyleValue::Unset,
+            z_index: StyleValue::Unset,
+            stacking_context: StyleValue::Unset,
             extra: HashMap::new(),
         }
     }
@@ -292,6 +298,40 @@ impl Style {
     pub fn unset_justify_content(&mut self) {
         self.justify_content = StyleValue::Unset;
     }
+
+    // -- Z Index --------------------------------------------------------
+
+    /// Set the paint order within the current stacking context.
+    pub fn z_index(&mut self, value: i32) {
+        self.z_index = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit z-index from the parent node.
+    pub fn inherit_z_index(&mut self) {
+        self.z_index = StyleValue::Inherit;
+    }
+
+    /// Reset z-index to the document/default style.
+    pub fn unset_z_index(&mut self) {
+        self.z_index = StyleValue::Unset;
+    }
+
+    // -- Stacking Context ----------------------------------------------
+
+    /// Set whether this node creates an isolated stacking context.
+    pub fn stacking_context(&mut self, value: bool) {
+        self.stacking_context = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit stacking context behavior from the parent node.
+    pub fn inherit_stacking_context(&mut self) {
+        self.stacking_context = StyleValue::Inherit;
+    }
+
+    /// Reset stacking context behavior to the document/default style.
+    pub fn unset_stacking_context(&mut self) {
+        self.stacking_context = StyleValue::Unset;
+    }
 }
 
 #[cfg(test)]
@@ -307,9 +347,14 @@ mod tests {
         style.background(Color::blue());
         style.opacity(0.5);
 
+        style.z_index(10);
+        style.stacking_context(true);
+
         assert_eq!(style.width, StyleValue::Set(Length::Percent(100.0)));
         assert_eq!(style.height, StyleValue::Set(Length::Pixels(20)));
         assert_eq!(style.opacity, StyleValue::Set(0.5));
+        assert_eq!(style.z_index, StyleValue::Set(10));
+        assert_eq!(style.stacking_context, StyleValue::Set(true));
     }
 
     #[test]
@@ -318,6 +363,8 @@ mod tests {
         assert_eq!(style.width, StyleValue::Unset);
         assert_eq!(style.opacity, StyleValue::Unset);
         assert_eq!(style.color, StyleValue::Unset);
+        assert_eq!(style.z_index, StyleValue::Unset);
+        assert_eq!(style.stacking_context, StyleValue::Unset);
     }
 
     #[test]
@@ -327,9 +374,13 @@ mod tests {
         style.inherit_width();
         style.inherit_opacity();
         style.inherit_color();
+        style.inherit_z_index();
+        style.inherit_stacking_context();
 
         assert_eq!(style.width, StyleValue::Inherit);
         assert_eq!(style.opacity, StyleValue::Inherit);
         assert_eq!(style.color, StyleValue::Inherit);
+        assert_eq!(style.z_index, StyleValue::Inherit);
+        assert_eq!(style.stacking_context, StyleValue::Inherit);
     }
 }

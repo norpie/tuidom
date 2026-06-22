@@ -18,9 +18,9 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Layout & Positioning
 
-**Stacking Context** — Isolated layering environment. Created explicitly (`stacking_context: true`) or implicitly by modals. Prevents z-index bleed-through between unrelated UI sections.
+**Stacking Context** — Isolated paint-order environment. Created explicitly with `stacking_context: true`. Prevents descendant `z_index` values from bleeding above siblings outside the context.
 
-**Layer** — Visual stacking order within a stacking context: `content` (default) < `overlay` (dropdowns) < `modal` (modals) < `top` (toasts, drag visuals, bypasses all contexts).
+**z-index** — Integer paint-order value within the nearest stacking context. Lower values paint first; higher values paint later. DOM order is the stable tiebreaker for equal values.
 
 **Position::Flow** — Default positioning mode. Node participates in normal flexbox layout.
 
