@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use crate::id::NodeId;
+
 /// Opaque handle returned when registering an event listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ListenerHandle {
@@ -24,6 +26,8 @@ pub(crate) type EventHandler = Arc<dyn Fn(&Event) + Send + Sync + 'static>;
 pub(crate) struct Listener {
     /// Stable listener id used for removal.
     pub id: u64,
+    /// Node this listener is attached to.
+    pub node: NodeId,
     /// Callback invoked for matching events.
     pub handler: EventHandler,
 }

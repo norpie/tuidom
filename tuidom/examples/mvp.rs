@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let ov = opacity_visible.clone();
 
-    doc.on(move |event: &Event| {
+    doc.on(container, move |event: &Event| {
         let Event::KeyPress(key) = event else {
             return;
         };
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KeyCode::Char('q') | KeyCode::Esc => d.quit(),
             _ => {}
         }
-    });
+    })?;
 
     // --- Run ----------------------------------------------------------
 

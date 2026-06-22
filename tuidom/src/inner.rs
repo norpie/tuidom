@@ -70,7 +70,7 @@ pub(crate) struct DocumentInner {
     /// Debug overlay — toggled via F1, renders performance stats.
     pub debug_overlay: Mutex<DebugOverlay>,
 
-    /// Global event listeners.
+    /// Event listeners attached to DOM nodes.
     pub listeners: Mutex<Vec<Listener>>,
 }
 

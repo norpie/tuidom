@@ -144,30 +144,36 @@ impl Document {
         self.inner.notify.notify_one();
     }
 
-    /// Register a global event listener.
+    /// Register an event listener on a node.
     ///
-    /// The handler is called synchronously for each terminal event. For async
-    /// work, spawn a task inside the handler.
+    /// The handler is called synchronously when an event is dispatched to this
+    /// node. Until focus and hit-testing are implemented, runtime events target
+    /// the document root. For async work, spawn a task inside the handler.
     ///
     /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
-    pub fn on<F>(&self, handler: F) -> ListenerHandle
+    pub fn on<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
     where
         F: Fn(&Event) + Send + Sync + 'static,
     {
+        if !self.inner.nodes.contains_key(&node) {
+            return Err(TuidomError::NodeNotFound { id: node });
+        }
+
         let id = self
             .inner
             .next_listener_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let listener = Listener {
             id,
+            node,
             handler: Arc::new(handler),
         };
 
         lock::mutex(&self.inner.listeners).push(listener);
-        ListenerHandle::new(id)
+        Ok(ListenerHandle::new(id))
     }
 
-    /// Remove a global event listener.
+    /// Remove an event listener.
     ///
     /// Returns `true` if a listener was removed, or `false` if the handle was
     /// unknown or had already been removed.
@@ -178,11 +184,21 @@ impl Document {
         listeners.len() != old_len
     }
 
-    /// Dispatch an event to all registered listeners.
+    /// Dispatch an event to the current root-targeted event path.
     pub(crate) fn dispatch_event(&self, event: Event) {
+        let Some(target) = self.root() else {
+            return;
+        };
+        self.dispatch_event_to(target, event);
+    }
+
+    fn dispatch_event_to(&self, target: NodeId, event: Event) {
         let listeners = lock::mutex(&self.inner.listeners).clone();
 
-        for listener in listeners {
+        for listener in listeners
+            .into_iter()
+            .filter(|listener| listener.node == target)
+        {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 (listener.handler)(&event);
             }));
@@ -891,12 +907,16 @@ mod tests {
     #[test]
     fn listener_handle_removes_registered_listener() {
         let doc = Document::new();
+        let root = doc.create_box();
+        doc.set_root(root);
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
 
-        let handle = doc.on(move |_| {
-            calls_for_handler.fetch_add(1, Ordering::Relaxed);
-        });
+        let handle = doc
+            .on(root, move |_| {
+                calls_for_handler.fetch_add(1, Ordering::Relaxed);
+            })
+            .unwrap();
 
         doc.dispatch_event(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -911,17 +931,22 @@ mod tests {
     #[test]
     fn listener_can_register_listener_during_dispatch() {
         let doc = Document::new();
+        let root = doc.create_box();
+        doc.set_root(root);
         let calls = Arc::new(AtomicUsize::new(0));
         let doc_for_handler = doc.clone();
         let calls_for_handler = calls.clone();
 
-        doc.on(move |_| {
+        doc.on(root, move |_| {
             calls_for_handler.fetch_add(1, Ordering::Relaxed);
             let calls_for_new_handler = calls_for_handler.clone();
-            doc_for_handler.on(move |_| {
-                calls_for_new_handler.fetch_add(10, Ordering::Relaxed);
-            });
-        });
+            doc_for_handler
+                .on(root, move |_| {
+                    calls_for_new_handler.fetch_add(10, Ordering::Relaxed);
+                })
+                .unwrap();
+        })
+        .unwrap();
 
         doc.dispatch_event(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -933,16 +958,55 @@ mod tests {
     #[test]
     fn listener_panic_is_caught_and_later_listeners_still_run() {
         let doc = Document::new();
+        let root = doc.create_box();
+        doc.set_root(root);
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
 
-        doc.on(|_| panic!("listener boom"));
-        doc.on(move |_| {
+        doc.on(root, |_| panic!("listener boom")).unwrap();
+        doc.on(root, move |_| {
             calls_for_handler.fetch_add(1, Ordering::Relaxed);
-        });
+        })
+        .unwrap();
 
         doc.dispatch_event(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn dispatch_targets_root_listeners_only_for_now() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let child = doc.create_box();
+        doc.append_child(root, child).unwrap();
+        doc.set_root(root);
+
+        let root_calls = Arc::new(AtomicUsize::new(0));
+        let child_calls = Arc::new(AtomicUsize::new(0));
+
+        let root_calls_for_handler = root_calls.clone();
+        doc.on(root, move |_| {
+            root_calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+
+        let child_calls_for_handler = child_calls.clone();
+        doc.on(child, move |_| {
+            child_calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+
+        doc.dispatch_event(key_event());
+
+        assert_eq!(root_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(child_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn registering_listener_on_missing_node_returns_error() {
+        let doc = Document::new();
+        let result = doc.on(NodeId::new(999), |_| {});
+        assert!(matches!(result, Err(TuidomError::NodeNotFound { .. })));
     }
 
     #[test]
