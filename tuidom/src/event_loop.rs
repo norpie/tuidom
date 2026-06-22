@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use crossterm::event::KeyEventKind;
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode};
+use tokio::task::JoinSet;
+use tokio::time::sleep_until;
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
@@ -24,66 +26,246 @@ pub(crate) enum RuntimeEvent {
     Resize(ResizeEvent),
 }
 
-/// Run the main loop: layout, paint, diff, flush, and event dispatch.
-///
-/// Blocks until [`Document::quit`] is called from a handler.
+/// Internal render-task command.
+#[derive(Debug, Clone)]
+pub(crate) enum RenderCommand {
+    /// Resize terminal buffers and perform a full redraw.
+    Resize { width: u16, height: u16 },
+    /// Stop the render task.
+    Shutdown,
+}
+
+/// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
-    let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
-    let mut renderer = Renderer::new(screen_w, screen_h)?;
-    let mut event_stream = EventStream::new();
-    let inner = doc.inner.clone();
+    let mut tasks = JoinSet::new();
 
-    // Initial render
-    render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
+    tasks.spawn(input_task(doc.clone()));
+    tasks.spawn(event_task(doc.clone()));
+    tasks.spawn(render_task(doc.clone()));
+    tasks.spawn(animation_task(doc.clone()));
 
-    loop {
-        if *lock::rw_read(&inner.shutdown) {
-            break;
-        }
-
-        tokio::select! {
-            // DOM mutations → re-render
-            _ = inner.notify.notified() => {
-                if *lock::rw_read(&inner.shutdown) {
-                    break;
-                }
-                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
-            }
-
-            // Terminal events (resize, keyboard) → runtime event queue
-            maybe_event = event_stream.next() => {
-                if let Some(Ok(crossterm_event)) = maybe_event
-                    && let Some(runtime_event) = convert_terminal_event(crossterm_event)
-                {
-                    enqueue_runtime_event(&doc, runtime_event);
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok(())) => {
+                if !is_shutdown(&doc) {
+                    doc.quit();
                 }
             }
-
-            // Runtime event queue → sequential dispatch / renderer coordination
-            maybe_event = recv_runtime_event(&doc) => {
-                let Some(event) = maybe_event else {
-                    break;
-                };
-                process_runtime_event(
-                    &doc,
-                    &mut renderer,
-                    &mut screen_w,
-                    &mut screen_h,
-                    event,
-                )?;
+            Ok(Err(err)) => {
+                doc.quit();
+                tasks.abort_all();
+                return Err(err);
             }
-
-            // Animation tick → re-render
-            _ = inner.anim_tick.notified() => {
-                if *lock::rw_read(&inner.shutdown) {
-                    break;
-                }
-                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
+            Err(err) => {
+                doc.quit();
+                tasks.abort_all();
+                return Err(io::Error::other(err));
             }
         }
     }
 
     Ok(())
+}
+
+async fn input_task(doc: Document) -> io::Result<()> {
+    let mut event_stream = EventStream::new();
+
+    loop {
+        if is_shutdown(&doc) {
+            break;
+        }
+
+        tokio::select! {
+            _ = doc.inner.shutdown_notify.notified() => break,
+            maybe_event = event_stream.next() => {
+                match maybe_event {
+                    Some(Ok(crossterm_event)) => {
+                        if let Some(runtime_event) = convert_terminal_event(crossterm_event) {
+                            enqueue_runtime_event(&doc, runtime_event)?;
+                        }
+                    }
+                    Some(Err(err)) => return Err(err),
+                    None => {
+                        if is_shutdown(&doc) {
+                            break;
+                        }
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "terminal event stream ended",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn event_task(doc: Document) -> io::Result<()> {
+    loop {
+        if is_shutdown(&doc) {
+            break;
+        }
+
+        tokio::select! {
+            _ = doc.inner.shutdown_notify.notified() => break,
+            maybe_event = recv_runtime_event(&doc) => {
+                let Some(event) = maybe_event else {
+                    if is_shutdown(&doc) {
+                        break;
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "runtime event queue closed",
+                    ));
+                };
+                process_runtime_event(&doc, event)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn render_task(doc: Document) -> io::Result<()> {
+    let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
+    let mut renderer = Renderer::new(screen_w, screen_h)?;
+
+    render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
+
+    loop {
+        if is_shutdown(&doc) {
+            break;
+        }
+
+        tokio::select! {
+            _ = doc.inner.shutdown_notify.notified() => break,
+
+            _ = doc.inner.notify.notified() => {
+                if is_shutdown(&doc) {
+                    break;
+                }
+                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
+            }
+
+            _ = doc.inner.anim_tick.notified() => {
+                if is_shutdown(&doc) {
+                    break;
+                }
+                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
+            }
+
+            maybe_command = recv_render_command(&doc) => {
+                let Some(command) = maybe_command else {
+                    if is_shutdown(&doc) {
+                        break;
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "render command queue closed",
+                    ));
+                };
+
+                match command {
+                    RenderCommand::Resize { width, height } => {
+                        screen_w = width;
+                        screen_h = height;
+                        renderer.resize(width, height);
+                        render_full_timed(&doc, &mut renderer, screen_w, screen_h)?;
+                    }
+                    RenderCommand::Shutdown => break,
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn animation_task(doc: Document) -> io::Result<()> {
+    loop {
+        if is_shutdown(&doc) {
+            break;
+        }
+
+        let min_tick = *lock::rw_read(&doc.inner.min_animation_tick);
+        let deadline = {
+            let driver = lock::mutex(&doc.inner.animation);
+            driver.next_deadline(min_tick)
+        };
+
+        match deadline {
+            Some(deadline) => {
+                tokio::select! {
+                    _ = doc.inner.shutdown_notify.notified() => break,
+                    _ = doc.inner.anim_config_changed.notified() => continue,
+                    _ = sleep_until(deadline) => {
+                        let mut driver = lock::mutex(&doc.inner.animation);
+                        driver.cleanup();
+                        drop(driver);
+                        doc.inner.anim_tick.notify_one();
+                    }
+                }
+            }
+            None => {
+                tokio::select! {
+                    _ = doc.inner.shutdown_notify.notified() => break,
+                    _ = doc.inner.anim_config_changed.notified() => continue,
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_shutdown(doc: &Document) -> bool {
+    *lock::rw_read(&doc.inner.shutdown)
+}
+
+/// Enqueue a runtime event for sequential processing.
+fn enqueue_runtime_event(doc: &Document, event: RuntimeEvent) -> io::Result<()> {
+    doc.inner.event_tx.send(event).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "runtime event queue receiver is closed",
+        )
+    })
+}
+
+/// Receive the next queued runtime event.
+async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
+    doc.inner.event_rx.lock().await.recv().await
+}
+
+async fn recv_render_command(doc: &Document) -> Option<RenderCommand> {
+    doc.inner.render_rx.lock().await.recv().await
+}
+
+/// Process one queued runtime event.
+fn process_runtime_event(doc: &Document, event: RuntimeEvent) -> io::Result<()> {
+    match event {
+        RuntimeEvent::KeyPress(key) => {
+            doc.dispatch_event(Event::KeyPress(key));
+            Ok(())
+        }
+        RuntimeEvent::Resize(resize) => {
+            doc.dispatch_event(Event::Resize(resize.clone()));
+            doc.inner
+                .render_tx
+                .send(RenderCommand::Resize {
+                    width: resize.width,
+                    height: resize.height,
+                })
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "render command queue receiver is closed",
+                    )
+                })
+        }
+    }
 }
 
 /// Render a diffed frame with timing for the debug overlay.
@@ -114,42 +296,6 @@ fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
     Ok(())
-}
-
-/// Enqueue a runtime event for sequential processing.
-fn enqueue_runtime_event(doc: &Document, event: RuntimeEvent) {
-    if doc.inner.event_tx.send(event).is_err() {
-        log::error!("runtime event queue receiver is closed");
-    }
-}
-
-/// Receive the next queued runtime event.
-async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
-    doc.inner.event_rx.lock().await.recv().await
-}
-
-/// Process one queued runtime event.
-fn process_runtime_event(
-    doc: &Document,
-    renderer: &mut Renderer,
-    screen_w: &mut u16,
-    screen_h: &mut u16,
-    event: RuntimeEvent,
-) -> io::Result<()> {
-    match event {
-        RuntimeEvent::KeyPress(key) => {
-            doc.dispatch_event(Event::KeyPress(key));
-            Ok(())
-        }
-        RuntimeEvent::Resize(resize) => {
-            *screen_w = resize.width;
-            *screen_h = resize.height;
-            renderer.resize(resize.width, resize.height);
-
-            doc.dispatch_event(Event::Resize(resize));
-            render_full_timed(doc, renderer, *screen_w, *screen_h)
-        }
-    }
 }
 
 /// Convert a crossterm event into an internal runtime event.

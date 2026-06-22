@@ -1,15 +1,10 @@
-//! Animation driver — manages transition state, interpolation, and the tick task.
+//! Animation driver — manages transition state, interpolation, and tick scheduling.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-use tokio::sync::Notify;
-use tokio::time::sleep_until;
 
 use crate::animation::{Easing, TransitionConfig, TransitionProperty};
 use crate::id::NodeId;
-use crate::lock;
 use crate::style::resolution::ResolvedStyle;
 
 // ---------------------------------------------------------------------------
@@ -124,7 +119,7 @@ impl AnimationDriver {
     }
 
     /// Determine the next deadline for a frame, if any animations are active.
-    fn next_deadline(&self, min_tick: Duration) -> Option<tokio::time::Instant> {
+    pub(crate) fn next_deadline(&self, min_tick: Duration) -> Option<tokio::time::Instant> {
         if self.active.is_empty() {
             return None;
         }
@@ -132,49 +127,6 @@ impl AnimationDriver {
         // Actual fps is naturally capped by render speed (Notify coalesces permits).
         Some(tokio::time::Instant::from_std(Instant::now() + min_tick))
     }
-}
-
-// ---------------------------------------------------------------------------
-// Tick task
-// ---------------------------------------------------------------------------
-
-/// Spawn a background task that drives animation frames and notifies the
-/// render loop on each tick. Exits when all animations complete.
-pub(crate) fn spawn_tick_task(
-    driver: Arc<Mutex<AnimationDriver>>,
-    config_changed: Arc<Notify>,
-    anim_tick: Arc<Notify>,
-    min_tick: Duration,
-) {
-    tokio::spawn(async move {
-        loop {
-            let deadline = {
-                let d = lock::mutex(&driver);
-                d.next_deadline(min_tick)
-            };
-
-            let Some(deadline) = deadline else {
-                // No active animations — send one last tick and exit
-                anim_tick.notify_one();
-                break;
-            };
-
-            tokio::select! {
-                _ = sleep_until(deadline) => {
-                    let mut d = lock::mutex(&driver);
-                    let has_active = d.cleanup();
-                    anim_tick.notify_one();
-                    if !has_active {
-                        break;
-                    }
-                }
-                _ = config_changed.notified() => {
-                    // Config changed — recompute deadline
-                    continue;
-                }
-            }
-        }
-    });
 }
 
 // ---------------------------------------------------------------------------

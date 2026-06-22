@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 use crate::animation::TransitionConfig;
-use crate::animation::driver::{AnimationDriver, spawn_tick_task};
+use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::error::{Result, TuidomError};
 use crate::event::{Event, Listener, ListenerHandle};
@@ -59,6 +59,7 @@ impl Document {
         }
 
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (render_tx, render_rx) = tokio::sync::mpsc::unbounded_channel();
 
         Self {
             inner: Arc::new(DocumentInner {
@@ -71,6 +72,9 @@ impl Document {
                 shutdown: std::sync::RwLock::new(false),
                 event_tx,
                 event_rx: tokio::sync::Mutex::new(event_rx),
+                render_tx,
+                render_rx: tokio::sync::Mutex::new(render_rx),
+                shutdown_notify: Arc::new(Notify::new()),
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
                 anim_tick: Arc::new(Notify::new()),
@@ -125,7 +129,14 @@ impl Document {
     /// Trigger shutdown of the render loop.
     pub fn quit(&self) {
         *lock::rw_write(&self.inner.shutdown) = true;
-        self.inner.notify.notify_one();
+        self.inner.notify.notify_waiters();
+        self.inner.anim_config_changed.notify_waiters();
+        self.inner.anim_tick.notify_waiters();
+        self.inner.shutdown_notify.notify_waiters();
+        let _ = self
+            .inner
+            .render_tx
+            .send(crate::event_loop::RenderCommand::Shutdown);
     }
 
     /// Toggle the debug overlay on/off.
@@ -342,20 +353,10 @@ impl Document {
         let new_resolved = self.resolved_base_style(id)?;
 
         let mut driver = lock::mutex(&self.inner.animation);
-        let started = driver.style_changed(id, old_resolved, &new_resolved, &configs);
+        driver.style_changed(id, old_resolved, &new_resolved, &configs);
         drop(driver);
 
-        if started {
-            let min_tick = *lock::rw_read(&self.inner.min_animation_tick);
-            spawn_tick_task(
-                self.inner.animation.clone(),
-                self.inner.anim_config_changed.clone(),
-                Arc::clone(&self.inner.anim_tick),
-                min_tick,
-            );
-        } else {
-            self.inner.anim_config_changed.notify_one();
-        }
+        self.inner.anim_config_changed.notify_one();
 
         Ok(())
     }
