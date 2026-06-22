@@ -5,10 +5,11 @@ use crate::id::NodeId;
 use crate::node::{LayoutRect, NodeKindView};
 use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::Display;
+use crate::style::color::RgbCache;
 use crate::style::resolution::ResolvedStyle;
 
 /// Paint the visible portion of the DOM tree into the grid.
-pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
+pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) {
     let root = match doc.root() {
         Some(r) => r,
         None => return,
@@ -16,7 +17,7 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid) {
 
     let mut sequence = 0;
     if let Some(context) = collect_context(doc, root, &mut sequence) {
-        paint_context(grid, &context);
+        paint_context(grid, &context, rgb_cache);
     }
 }
 
@@ -130,24 +131,24 @@ fn collect_node(doc: &Document, node_id: NodeId) -> Option<PaintNode> {
     })
 }
 
-fn paint_context(grid: &mut Grid, context: &PaintContext) {
-    paint_node_self(grid, &context.root);
+fn paint_context(grid: &mut Grid, context: &PaintContext, rgb_cache: &mut RgbCache) {
+    paint_node_self(grid, &context.root, rgb_cache);
 
     let mut items = context.items.iter().collect::<Vec<_>>();
     items.sort_by_key(|item| (item.z_index(), item.sequence()));
 
     for item in items {
         match item {
-            PaintItem::Node { node, .. } => paint_node_self(grid, node),
-            PaintItem::Context { context, .. } => paint_context(grid, context),
+            PaintItem::Node { node, .. } => paint_node_self(grid, node, rgb_cache),
+            PaintItem::Context { context, .. } => paint_context(grid, context, rgb_cache),
         }
     }
 }
 
-fn paint_node_self(grid: &mut Grid, node: &PaintNode) {
+fn paint_node_self(grid: &mut Grid, node: &PaintNode, rgb_cache: &mut RgbCache) {
     let alpha = node.resolved.opacity;
-    let bg_rgb = node.resolved.background.map(|c| c.to_rgb());
-    let fg_rgb = node.resolved.color.to_rgb();
+    let bg_rgb = node.resolved.background.map(|c| rgb_cache.resolve(c));
+    let fg_rgb = rgb_cache.resolve(node.resolved.color);
 
     match &node.kind {
         NodeKindView::Box => {
@@ -252,9 +253,14 @@ mod tests {
         doc.set_style(node, &style).unwrap();
     }
 
+    fn paint_doc(doc: &Document, grid: &mut Grid) {
+        let mut rgb_cache = RgbCache::new();
+        paint(doc, grid, &mut rgb_cache);
+    }
+
     fn painted_bg(doc: &Document) -> Option<Rgb> {
         let mut grid = Grid::new(1, 1);
-        paint(doc, &mut grid);
+        paint_doc(doc, &mut grid);
         grid.cells[0][0].bg
     }
 
@@ -397,7 +403,7 @@ mod tests {
         doc.compute_layout(5, 1);
 
         let mut visible_grid = Grid::new(5, 1);
-        paint(&doc, &mut visible_grid);
+        paint_doc(&doc, &mut visible_grid);
         assert_eq!(row_text(&visible_grid, 0), "hi   ");
 
         let mut hidden_style = Style::new();
@@ -416,7 +422,7 @@ mod tests {
         }
 
         let mut hidden_grid = Grid::new(5, 1);
-        paint(&doc, &mut hidden_grid);
+        paint_doc(&doc, &mut hidden_grid);
         assert_eq!(row_text(&hidden_grid, 0), "     ");
     }
 
@@ -454,7 +460,7 @@ mod tests {
         set_layout(&doc, overlay, layout);
 
         let mut grid = Grid::new(1, 1);
-        paint(&doc, &mut grid);
+        paint_doc(&doc, &mut grid);
 
         assert_eq!(row_text(&grid, 0), "x");
         assert_eq!(grid.cells[0][0].bg, Some(rgb(128, 128, 128)));
@@ -489,7 +495,7 @@ mod tests {
         set_layout(&doc, overlay, layout);
 
         let mut grid = Grid::new(1, 1);
-        paint(&doc, &mut grid);
+        paint_doc(&doc, &mut grid);
 
         assert_eq!(grid.cells[0][0].bg, Some(rgb(64, 64, 64)));
     }
@@ -521,7 +527,7 @@ mod tests {
         set_layout(&doc, text, layout);
 
         let mut grid = Grid::new(1, 1);
-        paint(&doc, &mut grid);
+        paint_doc(&doc, &mut grid);
 
         assert_eq!(row_text(&grid, 0), "x");
         assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 0)));
@@ -546,7 +552,7 @@ mod tests {
         }
 
         let mut grid = Grid::new(5, 3);
-        paint(&doc, &mut grid);
+        paint_doc(&doc, &mut grid);
 
         assert_eq!(row_text(&grid, 0), "     ");
         assert_eq!(row_text(&grid, 1), " ab  ");

@@ -1,8 +1,6 @@
-use palette::{IntoColor, Oklch, Srgb};
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
 
-use crate::lock;
+use palette::{IntoColor, Oklch, Srgb};
 
 /// Final color format sent to the terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +14,7 @@ pub(crate) struct Rgb {
 /// A color in the OKLCH color space, backed by [`palette::Oklch`].
 ///
 /// All colors are stored internally as OKLCH (Lightness, Chroma, Hue, Alpha).
-/// Conversion to RGB happens only at render time, with results cached globally.
+/// Conversion to RGB happens only at render time.
 ///
 /// # Creating colors
 ///
@@ -112,41 +110,6 @@ impl Color {
         }
     }
 
-    /// Convert to terminal-ready RGB.
-    ///
-    /// Results are cached globally — repeated conversions of the same
-    /// color hit the cache.
-    pub(crate) fn to_rgb(self) -> Rgb {
-        let key = CacheKey {
-            l: self.l.to_bits(),
-            c: self.c.to_bits(),
-            h: self.h.to_bits(),
-            a: self.a.to_bits(),
-        };
-
-        {
-            let cache = lock::mutex(&RGB_CACHE);
-            if let Some(&rgb) = cache.get(&key) {
-                return rgb;
-            }
-        }
-
-        let oklch = Oklch::new(self.l, self.c, self.h);
-        let srgb: Srgb = oklch.into_color();
-        let srgb_u8: Srgb<u8> = srgb.into_format();
-
-        let rgb = Rgb {
-            r: srgb_u8.red,
-            g: srgb_u8.green,
-            b: srgb_u8.blue,
-            a: (self.a * 255.0).round().clamp(0.0, 255.0) as u8,
-        };
-
-        lock::mutex(&RGB_CACHE).insert(key, rgb);
-
-        rgb
-    }
-
     /// Create a [`Color`] from sRGB components.
     fn from_srgb(r: u8, g: u8, b: u8) -> Self {
         let srgb: Srgb = Srgb::new(r, g, b).into_format();
@@ -170,6 +133,36 @@ impl Default for Color {
 // Conversion cache
 // ---------------------------------------------------------------------------
 
+/// Read-through cache for converting document colors to terminal RGB.
+#[derive(Debug, Default)]
+pub(crate) struct RgbCache {
+    entries: HashMap<CacheKey, Rgb>,
+}
+
+impl RgbCache {
+    /// Create an empty RGB cache.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Convert to terminal-ready RGB, caching repeated conversions.
+    pub fn resolve(&mut self, color: Color) -> Rgb {
+        let key = CacheKey::from(color);
+        if let Some(&rgb) = self.entries.get(&key) {
+            return rgb;
+        }
+
+        let rgb = color_to_rgb(color);
+        self.entries.insert(key, rgb);
+        rgb
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CacheKey {
     l: u32,
@@ -178,8 +171,29 @@ struct CacheKey {
     a: u32,
 }
 
-static RGB_CACHE: LazyLock<Mutex<HashMap<CacheKey, Rgb>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+impl From<Color> for CacheKey {
+    fn from(color: Color) -> Self {
+        Self {
+            l: color.l.to_bits(),
+            c: color.c.to_bits(),
+            h: color.h.to_bits(),
+            a: color.a.to_bits(),
+        }
+    }
+}
+
+fn color_to_rgb(color: Color) -> Rgb {
+    let oklch = Oklch::new(color.l, color.c, color.h);
+    let srgb: Srgb = oklch.into_color();
+    let srgb_u8: Srgb<u8> = srgb.into_format();
+
+    Rgb {
+        r: srgb_u8.red,
+        g: srgb_u8.green,
+        b: srgb_u8.blue,
+        a: (color.a * 255.0).round().clamp(0.0, 255.0) as u8,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -187,7 +201,8 @@ mod tests {
 
     #[test]
     fn white_is_white() {
-        let rgb = Color::white().to_rgb();
+        let mut cache = RgbCache::new();
+        let rgb = cache.resolve(Color::white());
         assert_eq!(rgb.r, 255);
         assert_eq!(rgb.g, 255);
         assert_eq!(rgb.b, 255);
@@ -195,7 +210,8 @@ mod tests {
 
     #[test]
     fn black_is_black() {
-        let rgb = Color::black().to_rgb();
+        let mut cache = RgbCache::new();
+        let rgb = cache.resolve(Color::black());
         assert_eq!(rgb.r, 0);
         assert_eq!(rgb.g, 0);
         assert_eq!(rgb.b, 0);
@@ -204,6 +220,7 @@ mod tests {
     #[test]
     fn named_colors_roundtrip() {
         // Colors defined from sRGB should convert back correctly.
+        let mut cache = RgbCache::new();
         for (color, r, g, b) in [
             (Color::red(), 255, 0, 0),
             (Color::green(), 0, 255, 0),
@@ -212,7 +229,7 @@ mod tests {
             (Color::magenta(), 255, 0, 255),
             (Color::yellow(), 255, 255, 0),
         ] {
-            let rgb = color.to_rgb();
+            let rgb = cache.resolve(color);
             assert_eq!((rgb.r, rgb.g, rgb.b), (r, g, b), "color: {color:?}");
         }
     }
@@ -220,10 +237,12 @@ mod tests {
     #[test]
     fn cache_hit() {
         let c = Color::oklch(0.5, 0.1, 180.0);
-        let rgb1 = c.to_rgb();
-        let rgb2 = c.to_rgb();
-        assert_eq!(rgb1.r, rgb2.r);
-        assert_eq!(rgb1.g, rgb2.g);
-        assert_eq!(rgb1.b, rgb2.b);
+        let mut cache = RgbCache::new();
+
+        let rgb1 = cache.resolve(c);
+        let rgb2 = cache.resolve(c);
+
+        assert_eq!(rgb1, rgb2);
+        assert_eq!(cache.len(), 1);
     }
 }

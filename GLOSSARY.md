@@ -28,13 +28,13 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Styling
 
-**Style** — User-provided style with unresolved values. Contains `StyleValue<T>` which can be `Set(T)` or `Inherit`.
+**Style** — User-provided style with unresolved values. Contains `StyleValue<T>` which can be `Unset`, `Set(T)`, or `Inherit`.
 
 **ResolvedStyle** — Computed style with all values resolved. Inheritance is computed and defaults are applied; colors remain in OKLCH until render-time RGB conversion.
 
 **PseudoState** — Visual state affecting style: `Normal`, `Focused`, `Active`, `Disabled`.
 
-**StyleValue** — Wrapper for style properties. Either `Set(value)` or `Inherit` (resolve from parent).
+**StyleValue** — Wrapper for style properties. `Unset` uses the document/default style, `Inherit` resolves from the parent, and `Set(value)` uses an explicit value.
 
 ## Colors
 

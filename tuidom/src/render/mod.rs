@@ -12,6 +12,7 @@ use terminal::Terminal;
 
 use crate::document::Document;
 use crate::lock;
+use crate::style::color::RgbCache;
 
 /// Breakdown of time spent in each render phase.
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,6 +49,7 @@ pub(crate) struct Renderer {
     terminal: Terminal,
     old_grid: grid::Grid,
     new_grid: grid::Grid,
+    rgb_cache: RgbCache,
 }
 
 impl Renderer {
@@ -57,6 +59,7 @@ impl Renderer {
             terminal: Terminal::new()?,
             old_grid: grid::Grid::new(width, height),
             new_grid: grid::Grid::new(width, height),
+            rgb_cache: RgbCache::new(),
         })
     }
 
@@ -69,7 +72,7 @@ impl Renderer {
 
         // 2. Paint DOM
         let dom_paint_start = std::time::Instant::now();
-        paint::paint(doc, &mut self.new_grid);
+        paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
         let dom_paint_time = dom_paint_start.elapsed();
 
         // 3. Paint debug overlay
@@ -120,7 +123,7 @@ impl Renderer {
         let grid_time = grid_start.elapsed();
 
         let dom_paint_start = std::time::Instant::now();
-        paint::paint(doc, &mut self.new_grid);
+        paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
         let dom_paint_time = dom_paint_start.elapsed();
 
         let mut overlay_paint_time = Duration::ZERO;
