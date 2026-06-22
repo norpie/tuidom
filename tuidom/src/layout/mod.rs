@@ -40,8 +40,11 @@ unsafe impl Send for LayoutEngine {}
 impl LayoutEngine {
     /// Create an empty layout engine.
     pub fn new() -> Self {
+        let mut taffy = TaffyTree::new();
+        taffy.enable_rounding();
+
         Self {
-            taffy: TaffyTree::new(),
+            taffy,
             mapping: HashMap::new(),
             reverse_mapping: HashMap::new(),
             last_laid_out: HashSet::new(),
@@ -195,10 +198,10 @@ impl LayoutEngine {
         out.push((
             node_id,
             LayoutRect {
-                x: round_to_u16(absolute_x),
-                y: round_to_u16(absolute_y),
-                width: round_to_u16(layout.size.width),
-                height: round_to_u16(layout.size.height),
+                x: rounded_taffy_value_to_u16(absolute_x),
+                y: rounded_taffy_value_to_u16(absolute_y),
+                width: rounded_taffy_value_to_u16(layout.size.width),
+                height: rounded_taffy_value_to_u16(layout.size.height),
             },
         ));
 
@@ -425,8 +428,17 @@ fn to_justify_content(j: JustifyContent) -> taffy::style::JustifyContent {
     }
 }
 
-fn round_to_u16(value: f32) -> u16 {
-    value.round().clamp(0.0, u16::MAX as f32) as u16
+fn rounded_taffy_value_to_u16(value: f32) -> u16 {
+    if !value.is_finite() {
+        return 0;
+    }
+
+    debug_assert!(
+        (value - value.round()).abs() <= 0.001,
+        "expected taffy final layout value to already be rounded, got {value}"
+    );
+
+    value.clamp(0.0, u16::MAX as f32) as u16
 }
 
 #[cfg(test)]
@@ -441,6 +453,41 @@ mod tests {
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
         style
+    }
+
+    #[test]
+    fn fractional_sibling_widths_stay_adjacent_after_taffy_rounding() {
+        let doc = Document::new();
+
+        let root = doc.create_box();
+        let first = doc.create_box();
+        let second = doc.create_box();
+        let third = doc.create_box();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second, third] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Percent(100.0 / 3.0));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        doc.set_root(root);
+        compute_layout(&doc, 10, 1);
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+
+        assert_eq!(first_layout.x, 0);
+        assert_eq!(second_layout.x, first_layout.x + first_layout.width);
+        assert_eq!(third_layout.x, second_layout.x + second_layout.width);
+        assert_eq!(third_layout.x + third_layout.width, 10);
     }
 
     #[test]
