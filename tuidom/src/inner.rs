@@ -10,6 +10,7 @@ use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::event::Listener;
 use crate::id::NodeId;
+use crate::layout::LayoutEngine;
 use crate::node::NodeData;
 
 /// Internal state of a [`Document`](crate::Document).
@@ -52,6 +53,9 @@ pub(crate) struct DocumentInner {
     /// Woken by the tick task each frame. When no tick task runs,
     /// this never fires (passive idle).
     pub anim_tick: Arc<Notify>,
+
+    /// Persistent taffy layout engine and DOM-to-layout-node mapping.
+    pub layout: Mutex<LayoutEngine>,
 
     /// Debug overlay — toggled via F1, renders performance stats.
     pub debug_overlay: Mutex<DebugOverlay>,

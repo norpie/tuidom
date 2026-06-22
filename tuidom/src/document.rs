@@ -71,6 +71,7 @@ impl Document {
                 anim_config_changed: Arc::new(Notify::new()),
                 anim_tick: Arc::new(Notify::new()),
                 min_animation_tick: std::sync::RwLock::new(Duration::from_millis(1)),
+                layout: Mutex::new(crate::layout::LayoutEngine::new()),
                 debug_overlay: Mutex::new(DebugOverlay::new()),
                 listeners: Mutex::new(Vec::new()),
             }),
@@ -85,14 +86,18 @@ impl Document {
     ///
     /// Returns the [`NodeId`] of the created node.
     pub fn create_box(&self) -> NodeId {
-        self.inner.alloc(NodeData::box_node())
+        let id = self.inner.alloc(NodeData::box_node());
+        self.register_layout_node(id);
+        id
     }
 
     /// Create a new text node with the given content.
     ///
     /// Returns the [`NodeId`] of the created node.
     pub fn create_text(&self, content: impl Into<String>) -> NodeId {
-        self.inner.alloc(NodeData::text(content))
+        let id = self.inner.alloc(NodeData::text(content));
+        self.register_layout_node(id);
+        id
     }
 
     // ------------------------------------------------------------------
@@ -236,6 +241,7 @@ impl Document {
         drop(data);
 
         self.invalidate_resolved_style(id);
+        self.sync_layout_subtree_styles(id);
         self.inner.notify.notify_one();
 
         self.signal_animation(id, &old_resolved)
@@ -258,6 +264,7 @@ impl Document {
         drop(data);
 
         self.invalidate_resolved_style(id);
+        self.sync_layout_subtree_styles(id);
         self.inner.notify.notify_one();
 
         self.signal_animation(id, &old_resolved)
@@ -431,7 +438,12 @@ impl Document {
         }
 
         self.remove_subtree(child);
+        let parent_still_exists = self.inner.nodes.contains_key(&parent);
         drop(tree_guard);
+
+        if parent_still_exists {
+            self.sync_layout_children(parent);
+        }
         self.inner.notify.notify_one();
         Ok(())
     }
@@ -464,12 +476,18 @@ impl Document {
         let tree_guard = lock::mutex(&self.inner.tree_mutation);
         self.validate_reparent(parent, child)?;
 
-        self.detach_from_current_parent(child);
+        let old_parent = self.detach_from_current_parent(child);
         self.insert_child_reference(parent, child, before_sibling)?;
         self.set_parent(child, parent)?;
 
         drop(tree_guard);
+
+        if let Some(old_parent) = old_parent {
+            self.sync_layout_children(old_parent);
+        }
+        self.sync_layout_children(parent);
         self.invalidate_resolved_style(child);
+        self.sync_layout_subtree_styles(child);
         self.inner.notify.notify_one();
         Ok(())
     }
@@ -493,13 +511,14 @@ impl Document {
         }
     }
 
-    fn detach_from_current_parent(&self, child: NodeId) {
+    fn detach_from_current_parent(&self, child: NodeId) -> Option<NodeId> {
         let old_parent = self.get_parent(child);
         if let Some(old_parent) = old_parent
             && let Some(mut old_parent_data) = self.inner.nodes.get_mut(&old_parent)
         {
             old_parent_data.children.retain(|&c| c != child);
         }
+        old_parent
     }
 
     fn insert_child_reference(
@@ -610,6 +629,65 @@ impl Document {
     }
 
     // ------------------------------------------------------------------
+    // Layout engine synchronization
+    // ------------------------------------------------------------------
+
+    fn register_layout_node(&self, id: NodeId) {
+        let Ok(resolved) = self.resolved_base_style(id) else {
+            return;
+        };
+        let Some(kind) = self.inner.nodes.get(&id).map(|data| data.kind.clone()) else {
+            return;
+        };
+        lock::mutex(&self.inner.layout).insert_node(id, &kind, &resolved);
+    }
+
+    fn remove_layout_node(&self, id: NodeId) {
+        lock::mutex(&self.inner.layout).remove_node(id);
+    }
+
+    fn sync_layout_children(&self, parent: NodeId) {
+        let children = self.get_children(parent);
+        lock::mutex(&self.inner.layout).sync_children(parent, &children);
+    }
+
+    fn sync_layout_subtree_styles(&self, id: NodeId) {
+        let mut updates = Vec::new();
+        self.collect_layout_style_updates(id, &mut updates);
+
+        let mut layout = lock::mutex(&self.inner.layout);
+        for (node_id, resolved) in updates {
+            layout.set_style(node_id, &resolved);
+        }
+    }
+
+    fn collect_layout_style_updates(&self, id: NodeId, updates: &mut Vec<(NodeId, ResolvedStyle)>) {
+        let Ok(resolved) = self.resolved_base_style(id) else {
+            return;
+        };
+        updates.push((id, resolved));
+
+        for child in self.get_children(id) {
+            self.collect_layout_style_updates(child, updates);
+        }
+    }
+
+    #[cfg(test)]
+    fn layout_node_count(&self) -> usize {
+        lock::mutex(&self.inner.layout).mapped_node_count()
+    }
+
+    #[cfg(test)]
+    fn layout_mapping_snapshot(&self) -> Vec<(NodeId, taffy::prelude::NodeId)> {
+        lock::mutex(&self.inner.layout).mapping_snapshot()
+    }
+
+    #[cfg(test)]
+    fn layout_children(&self, parent: NodeId) -> Vec<NodeId> {
+        lock::mutex(&self.inner.layout).dom_children(parent)
+    }
+
+    // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
 
@@ -622,11 +700,13 @@ impl Document {
             }
         }
 
-        if let Some((_, data)) = self.inner.nodes.remove(&id) {
-            for child in &data.children {
-                self.remove_subtree(*child);
-            }
+        let children = self.get_children(id);
+        for child in children {
+            self.remove_subtree(child);
         }
+
+        self.remove_layout_node(id);
+        self.inner.nodes.remove(&id);
     }
 }
 
@@ -655,6 +735,112 @@ mod tests {
         ));
 
         assert!(doc.get_node(NodeId::new(999)).is_none());
+    }
+
+    #[test]
+    fn creating_dom_nodes_creates_persistent_layout_nodes() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let text = doc.create_text("hello");
+
+        assert_eq!(doc.layout_node_count(), 2);
+        assert_eq!(doc.layout_mapping_snapshot().len(), 2);
+        assert!(
+            doc.layout_mapping_snapshot()
+                .iter()
+                .any(|(id, _)| *id == root)
+        );
+        assert!(
+            doc.layout_mapping_snapshot()
+                .iter()
+                .any(|(id, _)| *id == text)
+        );
+    }
+
+    #[test]
+    fn repeated_layout_uses_same_taffy_nodes() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let child = doc.create_text("hello");
+        doc.append_child(root, child).unwrap();
+        doc.set_root(root);
+
+        let before = doc.layout_mapping_snapshot();
+        doc.compute_layout(20, 5);
+        doc.compute_layout(20, 5);
+        let after = doc.layout_mapping_snapshot();
+
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn reparenting_syncs_taffy_child_order() {
+        let doc = Document::new();
+        let first_parent = doc.create_box();
+        let second_parent = doc.create_box();
+        let first = doc.create_text("first");
+        let second = doc.create_text("second");
+        let third = doc.create_text("third");
+
+        doc.append_child(first_parent, first).unwrap();
+        doc.append_child(first_parent, second).unwrap();
+        doc.insert_before(first_parent, third, second).unwrap();
+        assert_eq!(
+            doc.layout_children(first_parent),
+            vec![first, third, second]
+        );
+
+        doc.move_child(second_parent, third, first).unwrap();
+        assert_eq!(doc.layout_children(first_parent), vec![first, second]);
+        assert_eq!(doc.layout_children(second_parent), vec![third]);
+    }
+
+    #[test]
+    fn inherited_style_change_updates_layout_without_recreating_taffy_nodes() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let child = doc.create_box();
+
+        let mut root_style = Style::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut child_style = Style::new();
+        child_style.inherit_width();
+        child_style.height(Length::Pixels(1));
+        doc.set_style(child, &child_style).unwrap();
+
+        doc.append_child(root, child).unwrap();
+        doc.set_root(root);
+        let before = doc.layout_mapping_snapshot();
+
+        doc.compute_layout(100, 10);
+        assert_eq!(doc.get_node(child).unwrap().layout.unwrap().width, 10);
+
+        doc.update_style(root, |style| style.width(Length::Pixels(20)))
+            .unwrap();
+        doc.compute_layout(100, 10);
+
+        assert_eq!(doc.layout_mapping_snapshot(), before);
+        assert_eq!(doc.get_node(child).unwrap().layout.unwrap().width, 20);
+    }
+
+    #[test]
+    fn removing_subtree_removes_layout_nodes() {
+        let doc = Document::new();
+        let root = doc.create_box();
+        let child = doc.create_box();
+        let grandchild = doc.create_text("deep");
+
+        doc.append_child(root, child).unwrap();
+        doc.append_child(child, grandchild).unwrap();
+        assert_eq!(doc.layout_node_count(), 3);
+
+        doc.remove_child(root, child).unwrap();
+
+        assert_eq!(doc.layout_node_count(), 1);
+        assert_eq!(doc.layout_children(root), Vec::<NodeId>::new());
     }
 
     fn key_event() -> Event {

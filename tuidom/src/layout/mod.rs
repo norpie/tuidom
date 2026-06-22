@@ -1,203 +1,355 @@
 //! Taffy-based flexbox layout.
 //!
-//! Builds a parallel taffy tree from the DOM, computes layout, and stores
-//! resulting positions/sizes back on each node.
+//! Maintains a persistent 1:1 mapping from DOM nodes to taffy nodes, computes
+//! layout through taffy, and stores absolute screen-space layout rectangles back
+//! onto DOM nodes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use taffy::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::id::NodeId;
-use crate::node::LayoutRect;
+use crate::lock;
+use crate::node::{LayoutRect, NodeKind};
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{AlignItems, Display, JustifyContent, Length};
 
 // ---------------------------------------------------------------------------
-// Measure context — stored per-leaf node for text measurement
+// Persistent layout engine
 // ---------------------------------------------------------------------------
 
-/// Context attached to taffy leaf nodes for text measurement.
-#[derive(Clone)]
-enum MeasureContext {
-    /// Non-text leaf (no measurement needed).
-    None,
-    /// Text node content for width calculation.
-    Text { content: String },
+/// Document-owned persistent layout engine.
+pub(crate) struct LayoutEngine {
+    taffy: TaffyTree<MeasureContext>,
+    mapping: HashMap<NodeId, taffy::prelude::NodeId>,
+    reverse_mapping: HashMap<taffy::prelude::NodeId, NodeId>,
+    last_laid_out: HashSet<NodeId>,
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+// Taffy stores compact length values in tagged raw pointers, which prevents
+// automatic `Send` derivation. This is a known upstream issue; see:
+// - https://github.com/DioxusLabs/taffy/issues/823
+// - https://github.com/DioxusLabs/taffy/pull/855
+// The layout engine is only accessed behind `DocumentInner::layout`'s mutex,
+// and tuidom only constructs taffy styles from plain numeric/default values,
+// so moving the engine between threads is safe.
+unsafe impl Send for LayoutEngine {}
 
-/// Build a taffy tree from the DOM and compute layout for all nodes.
-///
-/// Stores the resulting [`LayoutRect`] on each node in the document.
-/// Nodes with `display: None` are skipped and receive no layout.
-pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
-    let root = match doc.root() {
-        Some(r) => r,
-        None => return,
-    };
+impl LayoutEngine {
+    /// Create an empty layout engine.
+    pub fn new() -> Self {
+        Self {
+            taffy: TaffyTree::new(),
+            mapping: HashMap::new(),
+            reverse_mapping: HashMap::new(),
+            last_laid_out: HashSet::new(),
+        }
+    }
 
-    clear_layouts(doc, root);
+    /// Insert the persistent taffy node for a newly allocated DOM node.
+    pub fn insert_node(&mut self, node_id: NodeId, kind: &NodeKind, resolved: &ResolvedStyle) {
+        if self.mapping.contains_key(&node_id) {
+            self.update_node(node_id, kind, resolved);
+            return;
+        }
 
-    let mut taffy_tree = TaffyTree::<MeasureContext>::new();
-    let mut mapping = HashMap::new();
+        let style = to_taffy_style(resolved);
+        let created = match kind {
+            NodeKind::Text { content } => self.taffy.new_leaf_with_context(
+                style,
+                MeasureContext::Text {
+                    content: content.clone(),
+                },
+            ),
+            NodeKind::Box => self.taffy.new_leaf(style),
+        };
 
-    let taffy_root = build_node(doc, &mut taffy_tree, root, &mut mapping);
+        match created {
+            Ok(taffy_id) => {
+                self.mapping.insert(node_id, taffy_id);
+                self.reverse_mapping.insert(taffy_id, node_id);
+            }
+            Err(err) => log::error!("taffy node creation failed for {node_id:?}: {err:?}"),
+        }
+    }
 
-    if let Some(taffy_root) = taffy_root {
+    /// Remove a DOM node's persistent taffy node.
+    pub fn remove_node(&mut self, node_id: NodeId) {
+        let Some(taffy_id) = self.mapping.remove(&node_id) else {
+            return;
+        };
+        self.reverse_mapping.remove(&taffy_id);
+        self.last_laid_out.remove(&node_id);
+
+        if let Err(err) = self.taffy.remove(taffy_id) {
+            log::error!("taffy node removal failed for {node_id:?}: {err:?}");
+        }
+    }
+
+    /// Update style and measurement context for an existing node.
+    pub fn update_node(&mut self, node_id: NodeId, kind: &NodeKind, resolved: &ResolvedStyle) {
+        self.set_style(node_id, resolved);
+        self.set_measure_context(node_id, kind);
+    }
+
+    /// Update a node's taffy style.
+    pub fn set_style(&mut self, node_id: NodeId, resolved: &ResolvedStyle) {
+        let Some(&taffy_id) = self.mapping.get(&node_id) else {
+            return;
+        };
+
+        if let Err(err) = self.taffy.set_style(taffy_id, to_taffy_style(resolved)) {
+            log::error!("taffy style update failed for {node_id:?}: {err:?}");
+        }
+    }
+
+    /// Update a node's taffy measurement context from DOM data.
+    pub fn set_measure_context(&mut self, node_id: NodeId, kind: &NodeKind) {
+        let Some(&taffy_id) = self.mapping.get(&node_id) else {
+            return;
+        };
+
+        let context = match kind {
+            NodeKind::Text { content } => Some(MeasureContext::Text {
+                content: content.clone(),
+            }),
+            NodeKind::Box => None,
+        };
+
+        if let Err(err) = self.taffy.set_node_context(taffy_id, context) {
+            log::error!("taffy context update failed for {node_id:?}: {err:?}");
+        }
+    }
+
+    /// Replace a parent's taffy child list with the DOM child order.
+    pub fn sync_children(&mut self, parent: NodeId, children: &[NodeId]) {
+        let Some(&parent_taffy) = self.mapping.get(&parent) else {
+            return;
+        };
+
+        let taffy_children: Vec<_> = children
+            .iter()
+            .filter_map(|child| {
+                let mapped = self.mapping.get(child).copied();
+                if mapped.is_none() {
+                    log::error!("missing taffy mapping for child {child:?} of parent {parent:?}");
+                }
+                mapped
+            })
+            .collect();
+
+        if let Err(err) = self.taffy.set_children(parent_taffy, &taffy_children) {
+            log::error!("taffy child sync failed for {parent:?}: {err:?}");
+        }
+    }
+
+    fn compute(
+        &mut self,
+        root: NodeId,
+        visible_children: &HashMap<NodeId, Vec<NodeId>>,
+        screen_width: u16,
+        screen_height: u16,
+    ) -> Vec<(NodeId, LayoutRect)> {
+        let Some(&taffy_root) = self.mapping.get(&root) else {
+            return Vec::new();
+        };
+
         let available = Size {
             width: AvailableSpace::Definite(screen_width as f32),
             height: AvailableSpace::Definite(screen_height as f32),
         };
 
-        if let Err(err) = taffy_tree.compute_layout_with_measure(taffy_root, available, measure_fn)
+        if let Err(err) = self
+            .taffy
+            .compute_layout_with_measure(taffy_root, available, measure_fn)
         {
             log::error!("taffy compute_layout failed: {err:?}");
+            return Vec::new();
+        }
+
+        let mut layouts = Vec::new();
+        self.collect_absolute_layouts(root, visible_children, 0.0, 0.0, &mut layouts);
+        self.last_laid_out = layouts.iter().map(|(id, _)| *id).collect();
+        layouts
+    }
+
+    fn collect_absolute_layouts(
+        &self,
+        node_id: NodeId,
+        visible_children: &HashMap<NodeId, Vec<NodeId>>,
+        parent_x: f32,
+        parent_y: f32,
+        out: &mut Vec<(NodeId, LayoutRect)>,
+    ) {
+        let Some(&taffy_id) = self.mapping.get(&node_id) else {
             return;
+        };
+        let Ok(layout) = self.taffy.layout(taffy_id) else {
+            return;
+        };
+
+        let absolute_x = parent_x + layout.location.x;
+        let absolute_y = parent_y + layout.location.y;
+        out.push((
+            node_id,
+            LayoutRect {
+                x: round_to_u16(absolute_x),
+                y: round_to_u16(absolute_y),
+                width: round_to_u16(layout.size.width),
+                height: round_to_u16(layout.size.height),
+            },
+        ));
+
+        if let Some(children) = visible_children.get(&node_id) {
+            for child in children {
+                self.collect_absolute_layouts(
+                    *child,
+                    visible_children,
+                    absolute_x,
+                    absolute_y,
+                    out,
+                );
+            }
         }
+    }
 
-        // Store absolute screen coordinates back on DOM nodes. Taffy stores
-        // locations relative to each node's parent, while the renderer paints
-        // from screen-space coordinates.
-        store_layouts(doc, &taffy_tree, root, &mapping, 0.0, 0.0);
+    fn stale_layouts(&self, visible: &HashSet<NodeId>) -> Vec<NodeId> {
+        self.last_laid_out
+            .difference(visible)
+            .copied()
+            .collect::<Vec<_>>()
+    }
+
+    #[cfg(test)]
+    pub fn mapped_node_count(&self) -> usize {
+        self.mapping.len()
+    }
+
+    #[cfg(test)]
+    pub fn mapping_snapshot(&self) -> Vec<(NodeId, taffy::prelude::NodeId)> {
+        let mut entries = self
+            .mapping
+            .iter()
+            .map(|(dom, taffy)| (*dom, *taffy))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|(dom, _)| dom.index);
+        entries
+    }
+
+    #[cfg(test)]
+    pub fn dom_children(&self, parent: NodeId) -> Vec<NodeId> {
+        let Some(&parent_taffy) = self.mapping.get(&parent) else {
+            return Vec::new();
+        };
+        let Ok(children) = self.taffy.children(parent_taffy) else {
+            return Vec::new();
+        };
+        children
+            .into_iter()
+            .filter_map(|child| self.reverse_mapping.get(&child).copied())
+            .collect()
     }
 }
 
-fn clear_layouts(doc: &Document, node_id: NodeId) {
-    if let Some(mut data) = doc.inner.nodes.get_mut(&node_id) {
-        data.layout = None;
+// ---------------------------------------------------------------------------
+// Measure context
+// ---------------------------------------------------------------------------
+
+/// Context attached to taffy leaf nodes for text measurement.
+#[derive(Clone, Debug)]
+enum MeasureContext {
+    /// Text node content for width calculation.
+    Text { content: String },
+}
+
+// ---------------------------------------------------------------------------
+// Public layout entry point
+// ---------------------------------------------------------------------------
+
+/// Compute layout for the current document root using persistent taffy state.
+pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
+    let Some(root) = doc.root() else {
+        clear_all_previous_layouts(doc);
+        return;
+    };
+
+    let mut visible = HashSet::new();
+    let mut visible_children = HashMap::new();
+    collect_visible_tree(doc, root, &mut visible, &mut visible_children);
+
+    let (stale, layouts) = {
+        let mut engine = lock::mutex(&doc.inner.layout);
+        let stale = engine.stale_layouts(&visible);
+        let layouts = if visible.contains(&root) {
+            engine.compute(root, &visible_children, screen_width, screen_height)
+        } else {
+            Vec::new()
+        };
+        (stale, layouts)
+    };
+
+    for id in stale {
+        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
+            data.layout = None;
+        }
     }
 
-    for child in doc.get_children(node_id) {
-        clear_layouts(doc, child);
+    for id in visible {
+        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
+            data.layout = None;
+        }
+    }
+
+    for (id, rect) in layouts {
+        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
+            data.layout = Some(rect);
+        }
     }
 }
 
-fn store_layouts(
+fn clear_all_previous_layouts(doc: &Document) {
+    let stale = {
+        let engine = lock::mutex(&doc.inner.layout);
+        engine.last_laid_out.iter().copied().collect::<Vec<_>>()
+    };
+
+    for id in stale {
+        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
+            data.layout = None;
+        }
+    }
+}
+
+fn collect_visible_tree(
     doc: &Document,
-    taffy_tree: &TaffyTree<MeasureContext>,
     node_id: NodeId,
-    mapping: &HashMap<NodeId, taffy::NodeId>,
-    parent_x: f32,
-    parent_y: f32,
+    visible: &mut HashSet<NodeId>,
+    visible_children: &mut HashMap<NodeId, Vec<NodeId>>,
 ) {
-    let Some(&taffy_id) = mapping.get(&node_id) else {
-        return;
-    };
-
-    let Ok(layout) = taffy_tree.layout(taffy_id) else {
-        return;
-    };
-
-    let absolute_x = parent_x + layout.location.x;
-    let absolute_y = parent_y + layout.location.y;
-    let rect = LayoutRect {
-        x: round_to_u16(absolute_x),
-        y: round_to_u16(absolute_y),
-        width: round_to_u16(layout.size.width),
-        height: round_to_u16(layout.size.height),
-    };
-
-    if let Some(mut data) = doc.inner.nodes.get_mut(&node_id) {
-        data.layout = Some(rect);
-    }
-
-    for child in doc.get_children(node_id) {
-        store_layouts(doc, taffy_tree, child, mapping, absolute_x, absolute_y);
-    }
-}
-
-fn round_to_u16(value: f32) -> u16 {
-    value.round().clamp(0.0, u16::MAX as f32) as u16
-}
-
-// ---------------------------------------------------------------------------
-// Tree building
-// ---------------------------------------------------------------------------
-
-/// Recursively build a taffy node for a DOM node.
-fn build_node(
-    doc: &Document,
-    taffy: &mut TaffyTree<MeasureContext>,
-    node_id: NodeId,
-    mapping: &mut HashMap<NodeId, taffy::NodeId>,
-) -> Option<taffy::NodeId> {
     let Ok(resolved) = doc.resolved_style(node_id) else {
-        return None;
+        return;
     };
-
-    // Skip hidden nodes
     if resolved.display == Display::None {
-        return None;
+        return;
     }
 
-    let children_ids = doc.get_children(node_id);
+    visible.insert(node_id);
 
-    let taffy_node = if children_ids.is_empty() {
-        build_leaf(taffy, doc, node_id)
-    } else {
-        build_container(taffy, doc, node_id, &children_ids, mapping)
-    };
+    let children = doc
+        .get_children(node_id)
+        .into_iter()
+        .filter(|child| {
+            doc.resolved_style(*child)
+                .is_ok_and(|resolved| resolved.display != Display::None)
+        })
+        .collect::<Vec<_>>();
 
-    if let Some(tn) = taffy_node {
-        mapping.insert(node_id, tn);
-    }
+    visible_children.insert(node_id, children.clone());
 
-    taffy_node
-}
-
-/// Build a leaf node (no children).
-fn build_leaf(
-    taffy: &mut TaffyTree<MeasureContext>,
-    doc: &Document,
-    node_id: NodeId,
-) -> Option<taffy::NodeId> {
-    let node_view = doc.get_node(node_id)?;
-    let resolved = doc.resolved_style(node_id).ok()?;
-    let style = to_taffy_leaf_style(&resolved);
-
-    let context = match &node_view.kind {
-        crate::node::NodeKindView::Text { content } => MeasureContext::Text {
-            content: content.clone(),
-        },
-        _ => MeasureContext::None,
-    };
-
-    match taffy.new_leaf_with_context(style, context) {
-        Ok(node) => Some(node),
-        Err(err) => {
-            log::error!("taffy new_leaf_with_context failed for {node_id:?}: {err:?}");
-            None
-        }
-    }
-}
-
-/// Build a container node with children.
-fn build_container(
-    taffy: &mut TaffyTree<MeasureContext>,
-    doc: &Document,
-    _node_id: NodeId,
-    children_ids: &[NodeId],
-    mapping: &mut HashMap<NodeId, taffy::NodeId>,
-) -> Option<taffy::NodeId> {
-    let resolved = doc.resolved_style(_node_id).ok()?;
-    let style = to_taffy_container_style(&resolved);
-
-    let child_taffy_nodes: Vec<taffy::NodeId> = children_ids
-        .iter()
-        .filter_map(|&child| build_node(doc, taffy, child, mapping))
-        .collect();
-
-    match taffy.new_with_children(style, &child_taffy_nodes) {
-        Ok(node) => Some(node),
-        Err(err) => {
-            log::error!("taffy new_with_children failed for {_node_id:?}: {err:?}");
-            None
-        }
+    for child in children {
+        collect_visible_tree(doc, child, visible, visible_children);
     }
 }
 
@@ -209,7 +361,7 @@ fn build_container(
 fn measure_fn(
     _known_dimensions: Size<Option<f32>>,
     _available_space: Size<AvailableSpace>,
-    _node_id: taffy::NodeId,
+    _node_id: taffy::prelude::NodeId,
     context: Option<&mut MeasureContext>,
     _style: &Style,
 ) -> Size<f32> {
@@ -222,7 +374,7 @@ fn measure_fn(
             let height = content.lines().count() as f32;
             Size { width, height }
         }
-        _ => Size::ZERO,
+        None => Size::ZERO,
     }
 }
 
@@ -230,19 +382,7 @@ fn measure_fn(
 // Style translation
 // ---------------------------------------------------------------------------
 
-/// Convert a resolved style to a taffy style for a leaf node (no children).
-fn to_taffy_leaf_style(resolved: &ResolvedStyle) -> Style {
-    Style {
-        size: Size {
-            width: to_dimension(resolved.width),
-            height: to_dimension(resolved.height),
-        },
-        ..Default::default()
-    }
-}
-
-/// Convert a resolved style to a taffy style for a container node (has children).
-fn to_taffy_container_style(resolved: &ResolvedStyle) -> Style {
+fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
     Style {
         display: match resolved.display {
             Display::Flex => taffy::style::Display::Flex,
@@ -283,6 +423,10 @@ fn to_justify_content(j: JustifyContent) -> taffy::style::JustifyContent {
         JustifyContent::SpaceBetween => taffy::style::JustifyContent::SPACE_BETWEEN,
         JustifyContent::SpaceAround => taffy::style::JustifyContent::SPACE_AROUND,
     }
+}
+
+fn round_to_u16(value: f32) -> u16 {
+    value.round().clamp(0.0, u16::MAX as f32) as u16
 }
 
 #[cfg(test)]
