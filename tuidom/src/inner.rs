@@ -58,17 +58,11 @@ pub(crate) struct DocumentInner {
     /// Animation driver for managing transitions.
     pub animation: Arc<Mutex<AnimationDriver>>,
 
-    /// Configuration change signal for the animation tick task.
+    /// Animation state change signal for waking the render task.
     pub anim_config_changed: Arc<Notify>,
 
-    /// Minimum interval between animation ticks, to prevent busy-waiting.
-    /// Defaults to 1ms (render as fast as possible).
-    pub min_animation_tick: std::sync::RwLock<std::time::Duration>,
-
-    /// Animation tick signal — the render loop `select!`s on this.
-    /// Woken by the tick task each frame. When no tick task runs,
-    /// this never fires (passive idle).
-    pub anim_tick: Arc<Notify>,
+    /// Optional document-wide frame-rate cap. `None` means uncapped.
+    pub max_frame_interval: std::sync::RwLock<Option<std::time::Duration>>,
 
     /// Persistent taffy layout engine and DOM-to-layout-node mapping.
     pub layout: Mutex<LayoutEngine>,

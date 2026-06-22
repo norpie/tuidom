@@ -58,7 +58,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Propagation** — Event flow through DOM tree. Target phase (fires on target node) → Bubble phase (fires on ancestors, root-ward).
 
-**Event Loop** — Async loop that waits for document notifications, terminal events, animation ticks, and shutdown. It dispatches terminal events to global listeners and renders when needed.
+**Event Loop** — Async runtime that waits for terminal events, document notifications, animation state, and shutdown. It dispatches terminal events to listeners and renders when needed.
 
 ## Focus & Selection
 

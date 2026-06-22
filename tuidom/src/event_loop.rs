@@ -6,7 +6,7 @@ use std::time::Instant;
 use crossterm::event::KeyEventKind;
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode};
 use tokio::task::JoinSet;
-use tokio::time::sleep_until;
+use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
@@ -42,7 +42,6 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     tasks.spawn(input_task(doc.clone()));
     tasks.spawn(event_task(doc.clone()));
     tasks.spawn(render_task(doc.clone()));
-    tasks.spawn(animation_task(doc.clone()));
 
     while let Some(result) = tasks.join_next().await {
         match result {
@@ -131,30 +130,19 @@ async fn event_task(doc: Document) -> io::Result<()> {
 async fn render_task(doc: Document) -> io::Result<()> {
     let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
     let mut renderer = Renderer::new(screen_w, screen_h)?;
+    let mut next_frame_at = None;
 
-    render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
+    render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at).await?;
 
     loop {
         if is_shutdown(&doc) {
             break;
         }
 
+        let animation_frame_needed = animations_active(&doc);
+
         tokio::select! {
             _ = doc.inner.shutdown_notify.notified() => break,
-
-            _ = doc.inner.notify.notified() => {
-                if is_shutdown(&doc) {
-                    break;
-                }
-                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
-            }
-
-            _ = doc.inner.anim_tick.notified() => {
-                if is_shutdown(&doc) {
-                    break;
-                }
-                render_frame_timed(&doc, &mut renderer, screen_w, screen_h)?;
-            }
 
             maybe_command = recv_render_command(&doc) => {
                 let Some(command) = maybe_command else {
@@ -172,47 +160,59 @@ async fn render_task(doc: Document) -> io::Result<()> {
                         screen_w = width;
                         screen_h = height;
                         renderer.resize(width, height);
-                        render_full_timed(&doc, &mut renderer, screen_w, screen_h)?;
+                        render_full_timed_capped(
+                            &doc,
+                            &mut renderer,
+                            screen_w,
+                            screen_h,
+                            &mut next_frame_at,
+                        )
+                        .await?;
                     }
                     RenderCommand::Shutdown => break,
                 }
             }
-        }
-    }
 
-    Ok(())
-}
+            _ = doc.inner.notify.notified() => {
+                if is_shutdown(&doc) {
+                    break;
+                }
+                render_frame_timed_capped(
+                    &doc,
+                    &mut renderer,
+                    screen_w,
+                    screen_h,
+                    &mut next_frame_at,
+                )
+                .await?;
+            }
 
-async fn animation_task(doc: Document) -> io::Result<()> {
-    loop {
-        if is_shutdown(&doc) {
-            break;
-        }
-
-        let min_tick = *lock::rw_read(&doc.inner.min_animation_tick);
-        let deadline = {
-            let driver = lock::mutex(&doc.inner.animation);
-            driver.next_deadline(min_tick)
-        };
-
-        match deadline {
-            Some(deadline) => {
-                tokio::select! {
-                    _ = doc.inner.shutdown_notify.notified() => break,
-                    _ = doc.inner.anim_config_changed.notified() => continue,
-                    _ = sleep_until(deadline) => {
-                        let mut driver = lock::mutex(&doc.inner.animation);
-                        driver.cleanup();
-                        drop(driver);
-                        doc.inner.anim_tick.notify_one();
-                    }
+            _ = doc.inner.anim_config_changed.notified() => {
+                if is_shutdown(&doc) {
+                    break;
+                }
+                if animations_active(&doc) {
+                    render_frame_timed_capped(
+                        &doc,
+                        &mut renderer,
+                        screen_w,
+                        screen_h,
+                        &mut next_frame_at,
+                    )
+                    .await?;
                 }
             }
-            None => {
-                tokio::select! {
-                    _ = doc.inner.shutdown_notify.notified() => break,
-                    _ = doc.inner.anim_config_changed.notified() => continue,
-                }
+
+            _ = tokio::task::yield_now(), if animation_frame_needed => {
+                cleanup_animations(&doc);
+                render_frame_timed_capped(
+                    &doc,
+                    &mut renderer,
+                    screen_w,
+                    screen_h,
+                    &mut next_frame_at,
+                )
+                .await?;
             }
         }
     }
@@ -296,6 +296,84 @@ fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
     Ok(())
+}
+
+async fn render_frame_timed_capped(
+    doc: &Document,
+    renderer: &mut Renderer,
+    sw: u16,
+    sh: u16,
+    next_frame_at: &mut Option<TokioInstant>,
+) -> io::Result<()> {
+    if !wait_for_frame_slot(doc, *next_frame_at).await {
+        return Ok(());
+    }
+
+    let started_at = TokioInstant::now();
+    render_frame_timed(doc, renderer, sw, sh)?;
+    advance_frame_slot(doc, next_frame_at, started_at);
+    Ok(())
+}
+
+async fn render_full_timed_capped(
+    doc: &Document,
+    renderer: &mut Renderer,
+    sw: u16,
+    sh: u16,
+    next_frame_at: &mut Option<TokioInstant>,
+) -> io::Result<()> {
+    if !wait_for_frame_slot(doc, *next_frame_at).await {
+        return Ok(());
+    }
+
+    let started_at = TokioInstant::now();
+    render_full_timed(doc, renderer, sw, sh)?;
+    advance_frame_slot(doc, next_frame_at, started_at);
+    Ok(())
+}
+
+async fn wait_for_frame_slot(doc: &Document, next_frame_at: Option<TokioInstant>) -> bool {
+    if lock::rw_read(&doc.inner.max_frame_interval).is_none() {
+        return true;
+    }
+    let Some(deadline) = next_frame_at else {
+        return true;
+    };
+
+    if TokioInstant::now() >= deadline {
+        return true;
+    }
+
+    tokio::select! {
+        _ = doc.inner.shutdown_notify.notified() => false,
+        _ = sleep_until(deadline) => true,
+    }
+}
+
+fn advance_frame_slot(
+    doc: &Document,
+    next_frame_at: &mut Option<TokioInstant>,
+    started_at: TokioInstant,
+) {
+    let interval = *lock::rw_read(&doc.inner.max_frame_interval);
+    let Some(interval) = interval else {
+        *next_frame_at = None;
+        return;
+    };
+
+    let mut next = next_frame_at.map_or(started_at + interval, |deadline| deadline + interval);
+    while next <= started_at {
+        next += interval;
+    }
+    *next_frame_at = Some(next);
+}
+
+fn animations_active(doc: &Document) -> bool {
+    lock::mutex(&doc.inner.animation).has_active()
+}
+
+fn cleanup_animations(doc: &Document) -> bool {
+    lock::mutex(&doc.inner.animation).cleanup()
 }
 
 /// Convert a crossterm event into an internal runtime event.

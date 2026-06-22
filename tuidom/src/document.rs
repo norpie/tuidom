@@ -77,8 +77,7 @@ impl Document {
                 shutdown_notify: Arc::new(Notify::new()),
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
-                anim_tick: Arc::new(Notify::new()),
-                min_animation_tick: std::sync::RwLock::new(Duration::from_millis(1)),
+                max_frame_interval: std::sync::RwLock::new(None),
                 layout: Mutex::new(crate::layout::LayoutEngine::new()),
                 debug_overlay: Mutex::new(DebugOverlay::new()),
                 listeners: Mutex::new(Vec::new()),
@@ -131,7 +130,6 @@ impl Document {
         *lock::rw_write(&self.inner.shutdown) = true;
         self.inner.notify.notify_waiters();
         self.inner.anim_config_changed.notify_waiters();
-        self.inner.anim_tick.notify_waiters();
         self.inner.shutdown_notify.notify_waiters();
         let _ = self
             .inner
@@ -228,11 +226,16 @@ impl Document {
         }
     }
 
-    /// Set the minimum interval between animation frames.
+    /// Set a document-wide maximum frame rate.
     ///
-    /// Lower values = smoother but higher CPU. Default is 1ms.
-    pub fn set_min_animation_tick(&self, interval: Duration) {
-        *lock::rw_write(&self.inner.min_animation_tick) = interval;
+    /// `None` disables the cap, which is the default. Non-finite or non-positive
+    /// values are treated as `None`.
+    pub fn set_max_fps(&self, fps: Option<f64>) {
+        let interval = fps
+            .filter(|fps| fps.is_finite() && *fps > 0.0)
+            .and_then(|fps| Duration::try_from_secs_f64(1.0 / fps).ok());
+        *lock::rw_write(&self.inner.max_frame_interval) = interval;
+        self.inner.notify.notify_one();
     }
 
     // ------------------------------------------------------------------
@@ -852,6 +855,37 @@ mod tests {
         Event::KeyPress(KeyEvent {
             code: KeyCode::Char('x'),
         })
+    }
+
+    #[test]
+    fn max_fps_defaults_to_uncapped_and_can_be_configured() {
+        let doc = Document::new();
+
+        assert!(lock::rw_read(&doc.inner.max_frame_interval).is_none());
+
+        doc.set_max_fps(Some(120.0));
+        assert_eq!(
+            *lock::rw_read(&doc.inner.max_frame_interval),
+            Some(Duration::try_from_secs_f64(1.0 / 120.0).unwrap())
+        );
+
+        doc.set_max_fps(None);
+        assert!(lock::rw_read(&doc.inner.max_frame_interval).is_none());
+    }
+
+    #[test]
+    fn invalid_max_fps_values_disable_the_cap() {
+        let doc = Document::new();
+
+        for fps in [
+            Some(0.0),
+            Some(-1.0),
+            Some(f64::NAN),
+            Some(f64::MIN_POSITIVE),
+        ] {
+            doc.set_max_fps(fps);
+            assert!(lock::rw_read(&doc.inner.max_frame_interval).is_none());
+        }
     }
 
     #[test]

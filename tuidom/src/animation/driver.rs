@@ -1,7 +1,7 @@
 //! Animation driver — manages transition state, interpolation, and tick scheduling.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::animation::{Easing, TransitionConfig, TransitionProperty};
 use crate::id::NodeId;
@@ -111,21 +111,16 @@ impl AnimationDriver {
         overrides
     }
 
+    /// Return whether any transitions are currently active.
+    pub fn has_active(&self) -> bool {
+        !self.active.is_empty()
+    }
+
     /// Remove completed transitions. Returns `true` if any remain active.
     pub fn cleanup(&mut self) -> bool {
         let now = Instant::now();
         self.active.retain(|t| !t.is_done(now));
         !self.active.is_empty()
-    }
-
-    /// Determine the next deadline for a frame, if any animations are active.
-    pub(crate) fn next_deadline(&self, min_tick: Duration) -> Option<tokio::time::Instant> {
-        if self.active.is_empty() {
-            return None;
-        }
-        // Fire at min_tick intervals — transition progress is checked each frame.
-        // Actual fps is naturally capped by render speed (Notify coalesces permits).
-        Some(tokio::time::Instant::from_std(Instant::now() + min_tick))
     }
 }
 

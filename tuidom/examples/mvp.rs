@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     doc.set_transition(
         text,
-        TransitionConfig::opacity(Duration::from_millis(2000), Easing::EaseInOut),
+        TransitionConfig::opacity(Duration::from_millis(4000), Easing::EaseInOut),
     );
 
     // --- Shared state -------------------------------------------------

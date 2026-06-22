@@ -180,7 +180,7 @@ Each stacking context is an isolated paint-order environment — descendant `z_i
 - [x] Terminal resize handling:
   - [x] Auto-relayout on resize
   - [x] Resize event fired for user handlers
-- [ ] Maximum FPS cap during active rendering (debounces rapid changes)
+- [x] Optional document-wide maximum FPS cap; uncapped by default
 - [ ] Unicode / wide character support:
   - [x] Use existing crates (`unicode-width`, etc.) for character width calculation
   - [x] Handle wide characters (CJK, emoji) transparently in text rendering
