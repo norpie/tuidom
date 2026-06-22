@@ -58,6 +58,8 @@ impl Document {
             );
         }
 
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+
         Self {
             inner: Arc::new(DocumentInner {
                 nodes: dashmap::DashMap::new(),
@@ -67,6 +69,8 @@ impl Document {
                 tree_mutation: Mutex::new(()),
                 notify: tokio::sync::Notify::new(),
                 shutdown: std::sync::RwLock::new(false),
+                event_tx,
+                event_rx: tokio::sync::Mutex::new(event_rx),
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
                 anim_tick: Arc::new(Notify::new()),

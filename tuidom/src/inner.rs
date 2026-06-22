@@ -4,11 +4,12 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::event::Listener;
+use crate::event_loop::RuntimeEvent;
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
 use crate::node::NodeData;
@@ -38,6 +39,12 @@ pub(crate) struct DocumentInner {
 
     /// Shutdown signal — triggered by [`Document::quit`].
     pub shutdown: RwLock<bool>,
+
+    /// Sender for queued runtime events.
+    pub event_tx: mpsc::UnboundedSender<RuntimeEvent>,
+
+    /// Receiver for queued runtime events, consumed sequentially by the event loop.
+    pub event_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<RuntimeEvent>>,
 
     /// Animation driver for managing transitions.
     pub animation: Arc<Mutex<AnimationDriver>>,
