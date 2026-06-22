@@ -24,6 +24,7 @@ Think of it as the relationship between a browser engine (Chromium, WebKit) and 
 **Core Primitives:**
 - Box, Text, Input, Frames, Canvas node types
 - Arena-based DOM with `NodeId` handles
+- Permanent document root node as the viewport entry point
 - Async-first with Tokio runtime
 - Thread-safe `Document` with interior mutability
 

@@ -10,10 +10,7 @@ use crate::style::resolution::ResolvedStyle;
 
 /// Paint the visible portion of the DOM tree into the grid.
 pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) {
-    let root = match doc.root() {
-        Some(r) => r,
-        None => return,
-    };
+    let root = doc.root();
 
     let mut sequence = 0;
     if let Some(context) = collect_context(doc, root, &mut sequence) {
@@ -267,7 +264,7 @@ mod tests {
     #[test]
     fn default_paint_order_matches_dom_order() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let first = doc.create_box();
         let second = doc.create_box();
 
@@ -277,7 +274,6 @@ mod tests {
 
         doc.append_child(root, first).unwrap();
         doc.append_child(root, second).unwrap();
-        doc.set_root(root);
         set_one_cell_layouts(&doc, &[root, first, second]);
 
         assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
@@ -286,7 +282,7 @@ mod tests {
     #[test]
     fn higher_z_index_paints_above_later_dom_sibling() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let high = doc.create_box();
         let low = doc.create_box();
 
@@ -296,7 +292,6 @@ mod tests {
 
         doc.append_child(root, high).unwrap();
         doc.append_child(root, low).unwrap();
-        doc.set_root(root);
         set_one_cell_layouts(&doc, &[root, high, low]);
 
         assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
@@ -305,7 +300,7 @@ mod tests {
     #[test]
     fn lower_z_index_paints_below_earlier_dom_sibling() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let normal = doc.create_box();
         let low = doc.create_box();
 
@@ -315,7 +310,6 @@ mod tests {
 
         doc.append_child(root, normal).unwrap();
         doc.append_child(root, low).unwrap();
-        doc.set_root(root);
         set_one_cell_layouts(&doc, &[root, normal, low]);
 
         assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
@@ -324,7 +318,7 @@ mod tests {
     #[test]
     fn descendant_z_index_can_participate_in_nearest_stacking_context() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let parent = doc.create_box();
         let child = doc.create_box();
         let sibling = doc.create_box();
@@ -337,7 +331,6 @@ mod tests {
         doc.append_child(root, parent).unwrap();
         doc.append_child(parent, child).unwrap();
         doc.append_child(root, sibling).unwrap();
-        doc.set_root(root);
         set_one_cell_layouts(&doc, &[root, parent, child, sibling]);
 
         assert_eq!(painted_bg(&doc), Some(rgb(0, 255, 0)));
@@ -346,7 +339,7 @@ mod tests {
     #[test]
     fn stacking_context_prevents_descendant_z_index_bleed() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let context_root = doc.create_box();
         let child = doc.create_box();
         let sibling = doc.create_box();
@@ -359,7 +352,6 @@ mod tests {
         doc.append_child(root, context_root).unwrap();
         doc.append_child(context_root, child).unwrap();
         doc.append_child(root, sibling).unwrap();
-        doc.set_root(root);
         set_one_cell_layouts(&doc, &[root, context_root, child, sibling]);
 
         assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
@@ -368,7 +360,7 @@ mod tests {
     #[test]
     fn descendants_sort_inside_their_stacking_context() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let context_root = doc.create_box();
         let high = doc.create_box();
         let low = doc.create_box();
@@ -381,7 +373,6 @@ mod tests {
         doc.append_child(root, context_root).unwrap();
         doc.append_child(context_root, high).unwrap();
         doc.append_child(context_root, low).unwrap();
-        doc.set_root(root);
         set_one_cell_layouts(&doc, &[root, context_root, high, low]);
 
         assert_eq!(painted_bg(&doc), Some(rgb(0, 255, 0)));
@@ -390,7 +381,7 @@ mod tests {
     #[test]
     fn child_changed_to_display_none_does_not_paint_from_stale_layout() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let text = doc.create_text("hi");
 
         let mut root_style = Style::new();
@@ -399,7 +390,6 @@ mod tests {
         doc.set_style(root, &root_style).unwrap();
 
         doc.append_child(root, text).unwrap();
-        doc.set_root(root);
         doc.compute_layout(5, 1);
 
         let mut visible_grid = Grid::new(5, 1);
@@ -429,7 +419,7 @@ mod tests {
     #[test]
     fn translucent_background_color_blends_without_node_opacity_and_preserves_text() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let text = doc.create_text("x");
         let overlay = doc.create_box();
 
@@ -447,7 +437,6 @@ mod tests {
 
         doc.append_child(root, text).unwrap();
         doc.append_child(root, overlay).unwrap();
-        doc.set_root(root);
 
         let layout = LayoutRect {
             x: 0,
@@ -470,7 +459,7 @@ mod tests {
     #[test]
     fn color_alpha_and_node_opacity_multiply() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let overlay = doc.create_box();
 
         let mut root_style = Style::new();
@@ -483,7 +472,6 @@ mod tests {
         doc.set_style(overlay, &overlay_style).unwrap();
 
         doc.append_child(root, overlay).unwrap();
-        doc.set_root(root);
 
         let layout = LayoutRect {
             x: 0,
@@ -503,7 +491,7 @@ mod tests {
     #[test]
     fn translucent_foreground_color_blends_with_background() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let text = doc.create_text("x");
 
         let mut root_style = Style::new();
@@ -515,7 +503,6 @@ mod tests {
         doc.set_style(text, &text_style).unwrap();
 
         doc.append_child(root, text).unwrap();
-        doc.set_root(root);
 
         let layout = LayoutRect {
             x: 0,
@@ -537,19 +524,30 @@ mod tests {
     #[test]
     fn text_node_paints_multiline_content_clipped_to_layout() {
         let doc = Document::new();
+        let root = doc.root();
         let text = doc.create_text("abcd\nefgh");
-        doc.set_root(text);
+        doc.append_child(root, text).unwrap();
 
-        if let Some(mut data) = doc.inner.nodes.get_mut(&text) {
-            data.layout = Some(LayoutRect {
+        set_layout(
+            &doc,
+            root,
+            LayoutRect {
+                x: 0,
+                y: 0,
+                width: 5,
+                height: 3,
+            },
+        );
+        set_layout(
+            &doc,
+            text,
+            LayoutRect {
                 x: 1,
                 y: 1,
                 width: 2,
                 height: 1,
-            });
-        } else {
-            panic!("text node should exist");
-        }
+            },
+        );
 
         let mut grid = Grid::new(5, 3);
         paint_doc(&doc, &mut grid);

@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.set_style(text, &text_style)?;
 
     doc.append_child(container, text)?;
-    doc.set_root(container);
+    doc.append_child(doc.root(), container)?;
 
     // Always show debug overlay
     doc.toggle_debug_overlay();
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let ov = opacity_visible.clone();
 
-    doc.on(container, move |event: &Event| {
+    doc.on(doc.root(), move |event: &Event| {
         let Event::KeyPress(key) = event else {
             return;
         };

@@ -5,6 +5,7 @@
 - [x] Arena node storage — all mutations go through `Document`
 - [x] `Document` wraps `Arc<DocumentInner>` — cheap cloning, no explicit Arc wrapping needed
 - [x] Thread-safe interior mutability — all methods take `&self`, `Document` is `Send + Sync`
+- [x] Permanent document root node — created by `Document::new()`, always exists, cannot be reparented or removed
 - [x] `NodeId` is a lightweight, `Copy` integer handle
 - [ ] Node kinds:
   - [x] Box (generic container, div equivalent)

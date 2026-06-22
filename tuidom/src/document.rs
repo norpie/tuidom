@@ -17,20 +17,21 @@ use crate::inner::DocumentInner;
 use crate::lock;
 use crate::node::{NodeData, NodeView};
 use crate::style::Style;
-use crate::style::resolution::ResolvedStyle;
+use crate::style::resolution::{ResolvedStyle, StyleDefaults};
 
 /// The root container and public API surface for tuidom.
 ///
 /// Wraps an `Arc<DocumentInner>` for cheap cloning. All methods take `&self`
 /// and use interior mutability — the document is `Send + Sync` and can be
-/// shared across threads.
+/// shared across threads. Every document owns a permanent root node that acts
+/// as the layout, rendering, and runtime-event entry point.
 ///
 /// # Example
 ///
 /// ```ignore
 /// let doc = Document::new();
 /// let container = doc.create_box();
-/// doc.set_root(container);
+/// doc.append_child(doc.root(), container)?;
 /// // ... build tree, register handlers, then:
 /// doc.run().await;
 /// ```
@@ -46,7 +47,7 @@ impl Default for Document {
 }
 
 impl Document {
-    /// Create a new, empty document.
+    /// Create a new document with a permanent root node.
     pub fn new() -> Self {
         // Initialize file-based logging. This is best-effort: logging must never
         // prevent a TUI from starting.
@@ -60,13 +61,16 @@ impl Document {
 
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (render_tx, render_rx) = tokio::sync::mpsc::unbounded_channel();
+        let root = NodeId::new(0);
+        let nodes = dashmap::DashMap::new();
+        nodes.insert(root, NodeData::box_node());
 
-        Self {
+        let document = Self {
             inner: Arc::new(DocumentInner {
-                nodes: dashmap::DashMap::new(),
-                next_id: std::sync::atomic::AtomicU64::new(0),
+                nodes,
+                next_id: std::sync::atomic::AtomicU64::new(1),
                 next_listener_id: std::sync::atomic::AtomicU64::new(0),
-                root: std::sync::RwLock::new(None),
+                root,
                 tree_mutation: Mutex::new(()),
                 notify: tokio::sync::Notify::new(),
                 shutdown: std::sync::RwLock::new(false),
@@ -82,7 +86,9 @@ impl Document {
                 debug_overlay: Mutex::new(DebugOverlay::new()),
                 listeners: Mutex::new(Vec::new()),
             }),
-        }
+        };
+        document.register_layout_node(root);
+        document
     }
 
     // ------------------------------------------------------------------
@@ -111,18 +117,13 @@ impl Document {
     // Root
     // ------------------------------------------------------------------
 
-    /// Set the root node for rendering.
+    /// Get the permanent document root node.
     ///
-    /// Only the root and its descendants are rendered. There can only be
-    /// one root at a time; calling this again replaces the previous root.
-    pub fn set_root(&self, id: NodeId) {
-        *lock::rw_write(&self.inner.root) = Some(id);
-        self.inner.notify.notify_one();
-    }
-
-    /// Get the current root node, if set.
-    pub fn root(&self) -> Option<NodeId> {
-        *lock::rw_read(&self.inner.root)
+    /// The root is created by [`Document::new`], always exists, cannot be
+    /// reparented or removed, and is the entry point for layout, rendering, and
+    /// runtime events.
+    pub fn root(&self) -> NodeId {
+        self.inner.root
     }
 
     /// Trigger shutdown of the render loop.
@@ -184,12 +185,9 @@ impl Document {
         listeners.len() != old_len
     }
 
-    /// Dispatch an event to the current root-targeted event path.
+    /// Dispatch an event to the document root-targeted event path.
     pub(crate) fn dispatch_event(&self, event: Event) {
-        let Some(target) = self.root() else {
-            return;
-        };
-        self.dispatch_event_to(target, event);
+        self.dispatch_event_to(self.root(), event);
     }
 
     fn dispatch_event_to(&self, target: NodeId, event: Event) {
@@ -352,7 +350,15 @@ impl Document {
         let Some(node) = self.inner.nodes.get(&id) else {
             return Err(TuidomError::NodeNotFound { id });
         };
-        let resolved = ResolvedStyle::compute(&node, parent_resolved.as_ref());
+        let resolved = if id == self.root() {
+            ResolvedStyle::compute_with_defaults(
+                &node,
+                parent_resolved.as_ref(),
+                &StyleDefaults::root(),
+            )
+        } else {
+            ResolvedStyle::compute(&node, parent_resolved.as_ref())
+        };
 
         *lock::rw_write(&node.resolved_style) = Some(resolved.clone());
         Ok(resolved)
@@ -439,6 +445,9 @@ impl Document {
         let tree_guard = lock::mutex(&self.inner.tree_mutation);
         self.ensure_node_exists(parent)?;
         self.ensure_node_exists(child)?;
+        if child == self.root() {
+            return Err(TuidomError::CannotRemoveRoot { id: child });
+        }
 
         let parent_contains_child = self
             .inner
@@ -519,6 +528,10 @@ impl Document {
     fn validate_reparent(&self, parent: NodeId, child: NodeId) -> Result<()> {
         self.ensure_node_exists(parent)?;
         self.ensure_node_exists(child)?;
+
+        if child == self.root() {
+            return Err(TuidomError::CannotReparentRoot { id: child });
+        }
 
         if parent == child || self.is_descendant_of(parent, child) {
             return Err(TuidomError::TreeCycle { parent, child });
@@ -717,11 +730,8 @@ impl Document {
 
     /// Remove a node and its entire subtree from the arena.
     fn remove_subtree(&self, id: NodeId) {
-        {
-            let mut root = lock::rw_write(&self.inner.root);
-            if *root == Some(id) {
-                *root = None;
-            }
+        if id == self.root() {
+            return;
         }
 
         let children = self.get_children(id);
@@ -767,8 +777,8 @@ mod tests {
         let root = doc.create_box();
         let text = doc.create_text("hello");
 
-        assert_eq!(doc.layout_node_count(), 2);
-        assert_eq!(doc.layout_mapping_snapshot().len(), 2);
+        assert_eq!(doc.layout_node_count(), 3);
+        assert_eq!(doc.layout_mapping_snapshot().len(), 3);
         assert!(
             doc.layout_mapping_snapshot()
                 .iter()
@@ -784,10 +794,9 @@ mod tests {
     #[test]
     fn repeated_layout_uses_same_taffy_nodes() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let child = doc.create_text("hello");
         doc.append_child(root, child).unwrap();
-        doc.set_root(root);
 
         let before = doc.layout_mapping_snapshot();
         doc.compute_layout(20, 5);
@@ -822,7 +831,7 @@ mod tests {
     #[test]
     fn inherited_style_change_updates_layout_without_recreating_taffy_nodes() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let child = doc.create_box();
 
         let mut root_style = Style::new();
@@ -836,7 +845,6 @@ mod tests {
         doc.set_style(child, &child_style).unwrap();
 
         doc.append_child(root, child).unwrap();
-        doc.set_root(root);
         let before = doc.layout_mapping_snapshot();
 
         doc.compute_layout(100, 10);
@@ -859,11 +867,11 @@ mod tests {
 
         doc.append_child(root, child).unwrap();
         doc.append_child(child, grandchild).unwrap();
-        assert_eq!(doc.layout_node_count(), 3);
+        assert_eq!(doc.layout_node_count(), 4);
 
         doc.remove_child(root, child).unwrap();
 
-        assert_eq!(doc.layout_node_count(), 1);
+        assert_eq!(doc.layout_node_count(), 2);
         assert_eq!(doc.layout_children(root), Vec::<NodeId>::new());
     }
 
@@ -907,8 +915,7 @@ mod tests {
     #[test]
     fn listener_handle_removes_registered_listener() {
         let doc = Document::new();
-        let root = doc.create_box();
-        doc.set_root(root);
+        let root = doc.root();
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
 
@@ -931,8 +938,7 @@ mod tests {
     #[test]
     fn listener_can_register_listener_during_dispatch() {
         let doc = Document::new();
-        let root = doc.create_box();
-        doc.set_root(root);
+        let root = doc.root();
         let calls = Arc::new(AtomicUsize::new(0));
         let doc_for_handler = doc.clone();
         let calls_for_handler = calls.clone();
@@ -958,8 +964,7 @@ mod tests {
     #[test]
     fn listener_panic_is_caught_and_later_listeners_still_run() {
         let doc = Document::new();
-        let root = doc.create_box();
-        doc.set_root(root);
+        let root = doc.root();
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
 
@@ -976,10 +981,9 @@ mod tests {
     #[test]
     fn dispatch_targets_root_listeners_only_for_now() {
         let doc = Document::new();
-        let root = doc.create_box();
+        let root = doc.root();
         let child = doc.create_box();
         doc.append_child(root, child).unwrap();
-        doc.set_root(root);
 
         let root_calls = Arc::new(AtomicUsize::new(0));
         let child_calls = Arc::new(AtomicUsize::new(0));
@@ -1200,18 +1204,17 @@ mod tests {
     }
 
     #[test]
-    fn remove_subtree_clears_root_if_root_was_removed() {
+    fn cannot_remove_document_root() {
         let doc = Document::new();
-
+        let root = doc.root();
         let parent = doc.create_box();
-        let child = doc.create_box();
 
-        doc.append_child(parent, child).unwrap();
-        doc.set_root(child);
-
-        doc.remove_child(parent, child).unwrap();
-
-        assert_eq!(doc.root(), None);
+        assert_eq!(
+            doc.remove_child(parent, root),
+            Err(TuidomError::CannotRemoveRoot { id: root })
+        );
+        assert!(doc.get_node(root).is_some());
+        assert_eq!(doc.get_parent(root), None);
     }
 
     #[test]
@@ -1254,17 +1257,34 @@ mod tests {
     }
 
     #[test]
-    fn set_root() {
+    fn document_has_permanent_root() {
         let doc = Document::new();
-        assert_eq!(doc.root(), None);
+        let root = doc.root();
 
-        let root = doc.create_box();
-        doc.set_root(root);
-        assert_eq!(doc.root(), Some(root));
+        assert!(doc.get_node(root).is_some());
+        assert_eq!(doc.get_parent(root), None);
+        assert_eq!(doc.layout_node_count(), 1);
 
-        let new_root = doc.create_box();
-        doc.set_root(new_root);
-        assert_eq!(doc.root(), Some(new_root));
+        let parent = doc.create_box();
+        assert_eq!(
+            doc.append_child(parent, root),
+            Err(TuidomError::CannotReparentRoot { id: root })
+        );
+        assert_eq!(doc.get_parent(root), None);
+    }
+
+    #[test]
+    fn document_root_defaults_to_full_viewport_size() {
+        let doc = Document::new();
+        let normal_node = doc.create_box();
+
+        let root_style = doc.resolved_style(doc.root()).unwrap();
+        let normal_style = doc.resolved_style(normal_node).unwrap();
+
+        assert_eq!(root_style.width, Length::Percent(100.0));
+        assert_eq!(root_style.height, Length::Percent(100.0));
+        assert_eq!(normal_style.width, Length::Auto);
+        assert_eq!(normal_style.height, Length::Auto);
     }
 
     // -- Style resolution tests ---------------------------------------

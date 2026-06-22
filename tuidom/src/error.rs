@@ -23,4 +23,18 @@ pub enum TuidomError {
         /// The requested child node.
         child: NodeId,
     },
+
+    /// The permanent document root cannot be reparented.
+    #[error("cannot reparent the document root {id:?}")]
+    CannotReparentRoot {
+        /// The document root node.
+        id: NodeId,
+    },
+
+    /// The permanent document root cannot be removed.
+    #[error("cannot remove the document root {id:?}")]
+    CannotRemoveRoot {
+        /// The document root node.
+        id: NodeId,
+    },
 }

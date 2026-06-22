@@ -271,12 +271,9 @@ enum MeasureContext {
 // Public layout entry point
 // ---------------------------------------------------------------------------
 
-/// Compute layout for the current document root using persistent taffy state.
+/// Compute layout for the permanent document root using persistent taffy state.
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
-    let Some(root) = doc.root() else {
-        clear_all_previous_layouts(doc);
-        return;
-    };
+    let root = doc.root();
 
     let mut visible = HashSet::new();
     let mut visible_children = HashMap::new();
@@ -308,19 +305,6 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
     for (id, rect) in layouts {
         if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
             data.layout = Some(rect);
-        }
-    }
-}
-
-fn clear_all_previous_layouts(doc: &Document) {
-    let stale = {
-        let engine = lock::mutex(&doc.inner.layout);
-        engine.last_laid_out.iter().copied().collect::<Vec<_>>()
-    };
-
-    for id in stale {
-        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
-            data.layout = None;
         }
     }
 }
@@ -459,7 +443,7 @@ mod tests {
     fn fractional_sibling_widths_stay_adjacent_after_taffy_rounding() {
         let doc = Document::new();
 
-        let root = doc.create_box();
+        let root = doc.root();
         let first = doc.create_box();
         let second = doc.create_box();
         let third = doc.create_box();
@@ -477,7 +461,6 @@ mod tests {
             doc.append_child(root, child).unwrap();
         }
 
-        doc.set_root(root);
         compute_layout(&doc, 10, 1);
 
         let first_layout = doc.get_node(first).unwrap().layout.unwrap();
@@ -494,7 +477,7 @@ mod tests {
     fn nested_layout_positions_are_stored_as_absolute_screen_coordinates() {
         let doc = Document::new();
 
-        let root = doc.create_box();
+        let root = doc.root();
         let parent = doc.create_box();
         let child = doc.create_box();
 
@@ -509,7 +492,6 @@ mod tests {
 
         doc.append_child(root, parent).unwrap();
         doc.append_child(parent, child).unwrap();
-        doc.set_root(root);
 
         compute_layout(&doc, 100, 40);
 

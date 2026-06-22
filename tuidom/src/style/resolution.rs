@@ -70,6 +70,15 @@ impl Default for StyleDefaults {
 }
 
 impl StyleDefaults {
+    /// Defaults used by the permanent document root when a property is unset.
+    pub(crate) fn root() -> Self {
+        Self {
+            width: Length::Percent(100.0),
+            height: Length::Percent(100.0),
+            ..Self::default()
+        }
+    }
+
     fn to_resolved_style(&self) -> ResolvedStyle {
         ResolvedStyle {
             width: self.width,

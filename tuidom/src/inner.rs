@@ -28,8 +28,8 @@ pub(crate) struct DocumentInner {
     /// Monotonically increasing counter for event listener ids.
     pub next_listener_id: AtomicU64,
 
-    /// The root node for rendering.
-    pub root: RwLock<Option<NodeId>>,
+    /// The permanent document root node.
+    pub root: NodeId,
 
     /// Serializes multi-node tree mutations so parent/child links stay consistent.
     pub tree_mutation: Mutex<()>,

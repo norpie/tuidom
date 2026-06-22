@@ -8,9 +8,11 @@ Terms and concepts used throughout the tuidom codebase.
 
 **NodeId** — Lightweight, `Copy` integer handle that references a node in the arena.
 
-**Document** — The root container and public API surface. Wraps `Arc<DocumentInner>` for cheap cloning.
+**Document** — The owner and public API surface. Wraps `Arc<DocumentInner>` for cheap cloning and owns one permanent root node.
 
-**DocumentInner** — Internal state holding the arena, caches, event/listener state, animation state, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
+**Root Node** — The permanent top-level Box node created by `Document::new()`. It is the entry point for layout, rendering, and current runtime event dispatch; it always exists and cannot be reparented or removed.
+
+**DocumentInner** — Internal state holding the arena, root node id, caches, event/listener state, animation state, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
 
 **Arena** — Internal storage using DashMap. Maps `NodeId` to `NodeData`. Single source of truth for all nodes.
 
