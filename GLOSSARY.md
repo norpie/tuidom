@@ -6,13 +6,13 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Node** — Any item in the DOM tree. All items are nodes (Box, Text, Input, Frames, Canvas). We don't use "element" — just "node".
 
-**NodeId** — Lightweight, `Copy` integer handle that references a node in the arena.
+**NodeId** — Lightweight, `Copy` integer handle that references a node in one document's arena. Encodes internal document identity so handles from different documents do not collide.
 
 **Document** — The owner and public API surface. Wraps `Arc<DocumentInner>` for cheap cloning and owns one permanent root node.
 
 **Root Node** — The permanent top-level Box node created by `Document::new()`. It is the entry point for layout, rendering, and current runtime event dispatch; it always exists and cannot be reparented or removed.
 
-**DocumentInner** — Internal state holding the arena, root node id, caches, event/listener state, animation state, layout snapshots, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
+**DocumentInner** — Internal state holding the arena, document/root ids, caches, event/listener state, animation state, layout snapshots, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
 
 **Arena** — Internal storage using DashMap. Maps `NodeId` to `NodeData`. Single source of truth for all nodes.
 
@@ -58,7 +58,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Listener** — User-provided handler function. Internally stored with a stable id and shared callback so dispatch can snapshot listeners before invocation.
 
-**ListenerHandle** — Opaque handle for removing a registered listener. Contains a unique listener id.
+**ListenerHandle** — Opaque handle for removing a registered listener. Contains a document-scoped listener id so handles from different documents do not collide.
 
 **Propagation** — Event flow through DOM tree. Target phase (fires on target node) → Bubble phase (fires on ancestors, root-ward).
 

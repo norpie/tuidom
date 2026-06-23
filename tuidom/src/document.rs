@@ -12,7 +12,7 @@ use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::error::{Result, TuidomError};
 use crate::event::{Event, Listener, ListenerHandle};
-use crate::id::NodeId;
+use crate::id::{NodeId, next_document_id};
 use crate::inner::DocumentInner;
 use crate::lock;
 use crate::node::{NodeData, NodeView};
@@ -51,13 +51,15 @@ impl Document {
     pub fn new() -> Self {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (render_tx, render_rx) = tokio::sync::mpsc::unbounded_channel();
-        let root = NodeId::new(0);
+        let document_id = next_document_id();
+        let root = NodeId::scoped(document_id, 0);
         let nodes = dashmap::DashMap::new();
         nodes.insert(root, NodeData::box_node());
 
         let document = Self {
             inner: Arc::new(DocumentInner {
                 nodes,
+                document_id,
                 next_id: std::sync::atomic::AtomicU64::new(1),
                 next_listener_id: std::sync::atomic::AtomicU64::new(0),
                 root,
@@ -162,7 +164,7 @@ impl Document {
         };
 
         lock::mutex(&self.inner.listeners).push(listener);
-        Ok(ListenerHandle::new(id))
+        Ok(ListenerHandle::new(self.inner.document_id, id))
     }
 
     /// Remove an event listener.
@@ -172,7 +174,9 @@ impl Document {
     pub fn remove_listener(&self, handle: ListenerHandle) -> bool {
         let mut listeners = lock::mutex(&self.inner.listeners);
         let old_len = listeners.len();
-        listeners.retain(|listener| listener.id != handle.id);
+        listeners.retain(|listener| {
+            listener.id != handle.id || handle.document_id != self.inner.document_id
+        });
         listeners.len() != old_len
     }
 
@@ -795,6 +799,25 @@ mod tests {
     }
 
     #[test]
+    fn node_ids_are_scoped_to_their_document() {
+        let first = Document::new();
+        let second = Document::new();
+        let first_root = first.root();
+        let second_root = second.root();
+
+        assert_ne!(first_root, second_root);
+        assert!(second.get_node(first_root).is_none());
+
+        let mut style = Style::new();
+        style.width(Length::Pixels(1));
+        assert_eq!(
+            second.set_style(first_root, &style),
+            Err(TuidomError::NodeNotFound { id: first_root })
+        );
+        assert!(second.get_node(second_root).is_some());
+    }
+
+    #[test]
     fn creating_dom_nodes_creates_persistent_layout_nodes() {
         let doc = Document::new();
         let root = doc.create_box();
@@ -956,6 +979,35 @@ mod tests {
 
         doc.dispatch_event(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn listener_handles_are_scoped_to_their_document() {
+        let first = Document::new();
+        let second = Document::new();
+        let first_calls = Arc::new(AtomicUsize::new(0));
+        let second_calls = Arc::new(AtomicUsize::new(0));
+
+        let first_calls_for_handler = first_calls.clone();
+        let first_handle = first
+            .on(first.root(), move |_| {
+                first_calls_for_handler.fetch_add(1, Ordering::Relaxed);
+            })
+            .unwrap();
+
+        let second_calls_for_handler = second_calls.clone();
+        second
+            .on(second.root(), move |_| {
+                second_calls_for_handler.fetch_add(1, Ordering::Relaxed);
+            })
+            .unwrap();
+
+        assert!(!second.remove_listener(first_handle));
+
+        first.dispatch_event(key_event());
+        second.dispatch_event(key_event());
+        assert_eq!(first_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(second_calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]

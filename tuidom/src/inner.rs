@@ -23,6 +23,9 @@ pub(crate) struct DocumentInner {
     /// Arena mapping [`NodeId`] to [`NodeData`].
     pub nodes: DashMap<NodeId, NodeData>,
 
+    /// Unique identity encoded into handles created by this document.
+    pub document_id: u64,
+
     /// Monotonically increasing counter for the next `NodeId::index`.
     pub next_id: AtomicU64,
 
@@ -84,7 +87,7 @@ impl DocumentInner {
         let index = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        NodeId::new(index)
+        NodeId::scoped(self.document_id, index)
     }
 
     /// Allocate a new node and return its [`NodeId`].

@@ -9,12 +9,13 @@ use crate::id::NodeId;
 /// Opaque handle returned when registering an event listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ListenerHandle {
+    pub(crate) document_id: u64,
     pub(crate) id: u64,
 }
 
 impl ListenerHandle {
-    pub(crate) fn new(id: u64) -> Self {
-        Self { id }
+    pub(crate) fn new(document_id: u64, id: u64) -> Self {
+        Self { document_id, id }
     }
 }
 
