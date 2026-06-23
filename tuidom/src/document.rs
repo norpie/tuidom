@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -61,7 +61,7 @@ impl Document {
                 next_id: std::sync::atomic::AtomicU64::new(1),
                 next_listener_id: std::sync::atomic::AtomicU64::new(0),
                 root,
-                tree_mutation: Mutex::new(()),
+                tree_mutation: RwLock::new(()),
                 notify: tokio::sync::Notify::new(),
                 shutdown: std::sync::RwLock::new(false),
                 event_tx,
@@ -432,7 +432,7 @@ impl Document {
     ///
     /// Returns an error if `parent` or `child` does not exist.
     pub fn remove_child(&self, parent: NodeId, child: NodeId) -> Result<()> {
-        let tree_guard = lock::mutex(&self.inner.tree_mutation);
+        let tree_guard = lock::rw_write(&self.inner.tree_mutation);
         self.ensure_node_exists(parent)?;
         self.ensure_node_exists(child)?;
         if child == self.root() {
@@ -496,7 +496,7 @@ impl Document {
         child: NodeId,
         before_sibling: Option<NodeId>,
     ) -> Result<()> {
-        let tree_guard = lock::mutex(&self.inner.tree_mutation);
+        let tree_guard = lock::rw_write(&self.inner.tree_mutation);
         self.validate_reparent(parent, child)?;
 
         let old_parent = self.detach_from_current_parent(child);
@@ -523,7 +523,7 @@ impl Document {
             return Err(TuidomError::CannotReparentRoot { id: child });
         }
 
-        if parent == child || self.is_descendant_of(parent, child) {
+        if parent == child || self.is_descendant_of_unlocked(parent, child) {
             return Err(TuidomError::TreeCycle { parent, child });
         }
 
@@ -539,7 +539,7 @@ impl Document {
     }
 
     fn detach_from_current_parent(&self, child: NodeId) -> Option<NodeId> {
-        let old_parent = self.get_parent(child);
+        let old_parent = self.get_parent_unlocked(child);
         if let Some(old_parent) = old_parent
             && let Some(mut old_parent_data) = self.inner.nodes.get_mut(&old_parent)
         {
@@ -589,6 +589,11 @@ impl Document {
 
     /// Get the parent of a node, if any.
     pub fn get_parent(&self, id: NodeId) -> Option<NodeId> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.get_parent_unlocked(id)
+    }
+
+    fn get_parent_unlocked(&self, id: NodeId) -> Option<NodeId> {
         self.inner.nodes.get(&id).and_then(|r| r.parent)
     }
 
@@ -596,6 +601,11 @@ impl Document {
     ///
     /// Returns an empty vector if the node does not exist.
     pub fn get_children(&self, id: NodeId) -> Vec<NodeId> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.get_children_unlocked(id)
+    }
+
+    fn get_children_unlocked(&self, id: NodeId) -> Vec<NodeId> {
         self.inner
             .nodes
             .get(&id)
@@ -605,13 +615,18 @@ impl Document {
 
     /// Check whether `id` is a descendant of `ancestor`.
     pub fn is_descendant_of(&self, id: NodeId, ancestor: NodeId) -> bool {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.is_descendant_of_unlocked(id, ancestor)
+    }
+
+    fn is_descendant_of_unlocked(&self, id: NodeId, ancestor: NodeId) -> bool {
         if id == ancestor {
             return false;
         }
 
         let mut seen = HashSet::new();
         let mut current = id;
-        while let Some(parent) = self.get_parent(current) {
+        while let Some(parent) = self.get_parent_unlocked(current) {
             if parent == ancestor {
                 return true;
             }
@@ -645,6 +660,11 @@ impl Document {
     ///
     /// Returns `None` if the node does not exist.
     pub fn get_node(&self, id: NodeId) -> Option<NodeView> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.get_node_unlocked(id)
+    }
+
+    fn get_node_unlocked(&self, id: NodeId) -> Option<NodeView> {
         self.inner.nodes.get(&id).map(|r| NodeView {
             id,
             kind: r.kind.to_view(),
@@ -724,7 +744,7 @@ impl Document {
             return;
         }
 
-        let children = self.get_children(id);
+        let children = self.get_children_unlocked(id);
         for child in children {
             self.remove_subtree(child);
         }
