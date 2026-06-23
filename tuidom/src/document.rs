@@ -1,7 +1,7 @@
 //! The [`Document`] type — the public API surface for tuidom.
 
 use std::collections::HashSet;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -292,7 +292,13 @@ impl Document {
         let Some(mut data) = self.inner.nodes.get_mut(&id) else {
             return Err(TuidomError::NodeNotFound { id });
         };
-        f(&mut data.style);
+        let mut style = data.style.clone();
+        let result = catch_unwind(AssertUnwindSafe(|| f(&mut style)));
+        if let Err(payload) = result {
+            log::error!("style update callback panicked for {id:?}");
+            resume_unwind(payload);
+        }
+        data.style = style;
         drop(data);
 
         self.invalidate_resolved_style(id);
@@ -1469,6 +1475,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(20));
+    }
+
+    #[test]
+    fn panicking_update_style_does_not_partially_mutate_style() {
+        let doc = Document::new();
+        let node = doc.create_box();
+
+        let mut style = Style::new();
+        style.width(Length::Pixels(10));
+        doc.set_style(node, &style).unwrap();
+        assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(10));
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = doc.update_style(node, |style| {
+                style.width(Length::Pixels(20));
+                panic!("boom");
+            });
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(10));
     }
 
     #[test]
