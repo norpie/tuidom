@@ -1,5 +1,6 @@
 //! Internal document state behind `Arc`.
 
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -12,7 +13,7 @@ use crate::event::Listener;
 use crate::event_loop::{RenderCommand, RuntimeEvent};
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
-use crate::node::NodeData;
+use crate::node::{LayoutRect, NodeData};
 
 /// Internal state of a [`Document`](crate::Document).
 ///
@@ -66,6 +67,9 @@ pub(crate) struct DocumentInner {
 
     /// Persistent taffy layout engine and DOM-to-layout-node mapping.
     pub layout: Mutex<LayoutEngine>,
+
+    /// Latest published layout rectangles, updated atomically after layout computation.
+    pub layout_rects: RwLock<HashMap<NodeId, LayoutRect>>,
 
     /// Debug overlay — toggled via F1, renders performance stats.
     pub debug_overlay: Mutex<DebugOverlay>,

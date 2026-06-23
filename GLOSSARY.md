@@ -12,13 +12,15 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Root Node** — The permanent top-level Box node created by `Document::new()`. It is the entry point for layout, rendering, and current runtime event dispatch; it always exists and cannot be reparented or removed.
 
-**DocumentInner** — Internal state holding the arena, root node id, caches, event/listener state, animation state, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
+**DocumentInner** — Internal state holding the arena, root node id, caches, event/listener state, animation state, layout snapshots, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
 
 **Arena** — Internal storage using DashMap. Maps `NodeId` to `NodeData`. Single source of truth for all nodes.
 
-**NodeData** — Internal node representation. Contains the node kind, parent/children, attributes, style, cached resolved style, computed layout, and animation/transition metadata.
+**NodeData** — Internal node representation. Contains the node kind, parent/children, attributes, style, cached resolved style, and animation/transition metadata. Computed layout is published separately as a document-level layout snapshot.
 
 ## Layout & Positioning
+
+**Layout Snapshot** — The document-level map of latest computed layout rectangles by `NodeId`. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state.
 
 **Stacking Context** — Isolated paint-order environment. Created explicitly with `stacking_context: true`. Prevents descendant `z_index` values from bleeding above siblings outside the context.
 

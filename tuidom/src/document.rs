@@ -73,6 +73,7 @@ impl Document {
                 anim_config_changed: Arc::new(Notify::new()),
                 max_frame_interval: std::sync::RwLock::new(None),
                 layout: Mutex::new(crate::layout::LayoutEngine::new()),
+                layout_rects: RwLock::new(std::collections::HashMap::new()),
                 debug_overlay: Mutex::new(DebugOverlay::new()),
                 listeners: Mutex::new(Vec::new()),
             }),
@@ -302,7 +303,12 @@ impl Document {
     ///
     /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
     pub fn resolved_style(&self, id: NodeId) -> Result<ResolvedStyle> {
-        let mut resolved = self.resolved_base_style(id)?;
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.resolved_style_unlocked(id)
+    }
+
+    pub(crate) fn resolved_style_unlocked(&self, id: NodeId) -> Result<ResolvedStyle> {
+        let mut resolved = self.resolved_base_style_unlocked(id)?;
 
         // Apply animation overrides
         {
@@ -321,6 +327,11 @@ impl Document {
     ///
     /// Used internally by the animation driver to read target values.
     pub(crate) fn resolved_base_style(&self, id: NodeId) -> Result<ResolvedStyle> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.resolved_base_style_unlocked(id)
+    }
+
+    pub(crate) fn resolved_base_style_unlocked(&self, id: NodeId) -> Result<ResolvedStyle> {
         // Check cache
         {
             let Some(node) = self.inner.nodes.get(&id) else {
@@ -332,9 +343,9 @@ impl Document {
         }
 
         // Cache miss — compute
-        let parent = self.get_parent(id);
+        let parent = self.get_parent_unlocked(id);
         let parent_resolved = parent
-            .map(|pid| self.resolved_base_style(pid))
+            .map(|pid| self.resolved_base_style_unlocked(pid))
             .transpose()?;
 
         let Some(node) = self.inner.nodes.get(&id) else {
@@ -605,7 +616,7 @@ impl Document {
         self.get_children_unlocked(id)
     }
 
-    fn get_children_unlocked(&self, id: NodeId) -> Vec<NodeId> {
+    pub(crate) fn get_children_unlocked(&self, id: NodeId) -> Vec<NodeId> {
         self.inner
             .nodes
             .get(&id)
@@ -665,12 +676,13 @@ impl Document {
     }
 
     fn get_node_unlocked(&self, id: NodeId) -> Option<NodeView> {
+        let layout = lock::rw_read(&self.inner.layout_rects).get(&id).copied();
         self.inner.nodes.get(&id).map(|r| NodeView {
             id,
             kind: r.kind.to_view(),
             parent: r.parent,
             children: r.children.clone(),
-            layout: r.layout,
+            layout,
             attrs: r.attrs.clone(),
         })
     }
@@ -691,6 +703,7 @@ impl Document {
 
     fn remove_layout_node(&self, id: NodeId) {
         lock::mutex(&self.inner.layout).remove_node(id);
+        lock::rw_write(&self.inner.layout_rects).remove(&id);
     }
 
     fn sync_layout_children(&self, parent: NodeId) {

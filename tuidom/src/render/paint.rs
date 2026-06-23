@@ -209,9 +209,7 @@ mod tests {
     }
 
     fn set_layout(doc: &Document, node: NodeId, layout: LayoutRect) {
-        if let Some(mut data) = doc.inner.nodes.get_mut(&node) {
-            data.layout = Some(layout);
-        }
+        crate::lock::rw_write(&doc.inner.layout_rects).insert(node, layout);
     }
 
     fn one_cell() -> LayoutRect {
@@ -402,14 +400,16 @@ mod tests {
         doc.compute_layout(5, 1);
         assert!(doc.get_node(text).unwrap().layout.is_none());
 
-        if let Some(mut data) = doc.inner.nodes.get_mut(&text) {
-            data.layout = Some(LayoutRect {
+        set_layout(
+            &doc,
+            text,
+            LayoutRect {
                 x: 0,
                 y: 0,
                 width: 2,
                 height: 1,
-            });
-        }
+            },
+        );
 
         let mut hidden_grid = Grid::new(5, 1);
         paint_doc(&doc, &mut hidden_grid);

@@ -25,7 +25,6 @@ pub(crate) struct LayoutEngine {
     taffy: TaffyTree<MeasureContext>,
     mapping: HashMap<NodeId, taffy::prelude::NodeId>,
     reverse_mapping: HashMap<taffy::prelude::NodeId, NodeId>,
-    last_laid_out: HashSet<NodeId>,
 }
 
 // Taffy stores compact length values in tagged raw pointers, which prevents
@@ -47,7 +46,6 @@ impl LayoutEngine {
             taffy,
             mapping: HashMap::new(),
             reverse_mapping: HashMap::new(),
-            last_laid_out: HashSet::new(),
         }
     }
 
@@ -84,7 +82,6 @@ impl LayoutEngine {
             return;
         };
         self.reverse_mapping.remove(&taffy_id);
-        self.last_laid_out.remove(&node_id);
 
         if let Err(err) = self.taffy.remove(taffy_id) {
             log::error!("taffy node removal failed for {node_id:?}: {err:?}");
@@ -174,7 +171,6 @@ impl LayoutEngine {
 
         let mut layouts = Vec::new();
         self.collect_absolute_layouts(root, visible_children, 0.0, 0.0, &mut layouts);
-        self.last_laid_out = layouts.iter().map(|(id, _)| *id).collect();
         layouts
     }
 
@@ -216,13 +212,6 @@ impl LayoutEngine {
                 );
             }
         }
-    }
-
-    fn stale_layouts(&self, visible: &HashSet<NodeId>) -> Vec<NodeId> {
-        self.last_laid_out
-            .difference(visible)
-            .copied()
-            .collect::<Vec<_>>()
     }
 
     #[cfg(test)]
@@ -273,40 +262,23 @@ enum MeasureContext {
 
 /// Compute layout for the permanent document root using persistent taffy state.
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) {
+    let _tree_guard = lock::rw_read(&doc.inner.tree_mutation);
     let root = doc.root();
 
     let mut visible = HashSet::new();
     let mut visible_children = HashMap::new();
     collect_visible_tree(doc, root, &mut visible, &mut visible_children);
 
-    let (stale, layouts) = {
-        let mut engine = lock::mutex(&doc.inner.layout);
-        let stale = engine.stale_layouts(&visible);
-        let layouts = if visible.contains(&root) {
-            engine.compute(root, &visible_children, screen_width, screen_height)
-        } else {
-            Vec::new()
-        };
-        (stale, layouts)
+    let mut engine = lock::mutex(&doc.inner.layout);
+    let layouts = if visible.contains(&root) {
+        engine.compute(root, &visible_children, screen_width, screen_height)
+    } else {
+        Vec::new()
     };
 
-    for id in stale {
-        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
-            data.layout = None;
-        }
-    }
-
-    for id in visible {
-        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
-            data.layout = None;
-        }
-    }
-
-    for (id, rect) in layouts {
-        if let Some(mut data) = doc.inner.nodes.get_mut(&id) {
-            data.layout = Some(rect);
-        }
-    }
+    let mut layout_rects = lock::rw_write(&doc.inner.layout_rects);
+    layout_rects.clear();
+    layout_rects.extend(layouts);
 }
 
 fn collect_visible_tree(
@@ -315,7 +287,7 @@ fn collect_visible_tree(
     visible: &mut HashSet<NodeId>,
     visible_children: &mut HashMap<NodeId, Vec<NodeId>>,
 ) {
-    let Ok(resolved) = doc.resolved_style(node_id) else {
+    let Ok(resolved) = doc.resolved_style_unlocked(node_id) else {
         return;
     };
     if resolved.display == Display::None {
@@ -325,10 +297,10 @@ fn collect_visible_tree(
     visible.insert(node_id);
 
     let children = doc
-        .get_children(node_id)
+        .get_children_unlocked(node_id)
         .into_iter()
         .filter(|child| {
-            doc.resolved_style(*child)
+            doc.resolved_style_unlocked(*child)
                 .is_ok_and(|resolved| resolved.display != Display::None)
         })
         .collect::<Vec<_>>();

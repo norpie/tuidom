@@ -53,8 +53,6 @@ pub(crate) struct NodeData {
     pub style: Style,
     /// Cached resolved style. Set to `None` to mark as dirty.
     pub resolved_style: RwLock<Option<ResolvedStyle>>,
-    /// Computed layout (set by [`crate::layout::compute_layout`]).
-    pub layout: Option<LayoutRect>,
     /// Transition configs for animatable properties.
     pub transition_configs: HashMap<TransitionProperty, TransitionConfig>,
     /// Arbitrary string attributes.
@@ -70,7 +68,6 @@ impl NodeData {
             children: Vec::new(),
             style: Style::default(),
             resolved_style: RwLock::new(None),
-            layout: None,
             transition_configs: HashMap::new(),
             attrs: HashMap::new(),
         }
@@ -86,7 +83,6 @@ impl NodeData {
             children: Vec::new(),
             style: Style::default(),
             resolved_style: RwLock::new(None),
-            layout: None,
             transition_configs: HashMap::new(),
             attrs: HashMap::new(),
         }
