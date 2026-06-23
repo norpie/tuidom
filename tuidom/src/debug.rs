@@ -126,7 +126,7 @@ impl DebugOverlay {
         let max_width = lines.iter().map(|l| l.len()).max().unwrap_or(0);
         let height = lines.len() as u16;
 
-        let x = grid.width.saturating_sub(max_width as u16 + 1);
+        let x = i32::from(grid.width.saturating_sub(max_width as u16 + 1));
         let fg = Some(Rgb {
             r: 255,
             g: 255,
@@ -143,10 +143,10 @@ impl DebugOverlay {
         // Background strip
         for y in 0..height {
             let cell = crate::render::grid::Cell::empty_with_bg(bg);
-            grid.fill_rect(x, y, max_width as u16, 1, cell, 1.0);
+            grid.fill_rect(x, i32::from(y), max_width as u16, 1, cell, 1.0);
         }
         for (i, line) in lines.iter().enumerate() {
-            grid.write_text(x, i as u16, line, fg, 1.0);
+            grid.write_text(x, i as i32, line, fg, 1.0);
         }
     }
 

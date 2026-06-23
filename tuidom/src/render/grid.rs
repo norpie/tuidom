@@ -41,10 +41,10 @@ impl CellContent {
 /// A rectangular region in the grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GridRect {
-    /// Left edge in terminal cells.
-    pub x: u16,
-    /// Top edge in terminal cells.
-    pub y: u16,
+    /// Left edge in terminal cells. May be negative when the region starts offscreen.
+    pub x: i32,
+    /// Top edge in terminal cells. May be negative when the region starts offscreen.
+    pub y: i32,
     /// Width in terminal cells.
     pub width: u16,
     /// Height in terminal cells.
@@ -213,10 +213,10 @@ impl Grid {
     }
 
     /// Fill a rectangular region with a cell value, blending by `alpha`.
-    pub fn fill_rect(&mut self, x: u16, y: u16, w: u16, h: u16, cell: Cell, alpha: f64) {
-        if x >= self.width || y >= self.height || w == 0 || h == 0 {
+    pub fn fill_rect(&mut self, x: i32, y: i32, w: u16, h: u16, cell: Cell, alpha: f64) {
+        let Some((x_start, y_start, x_end, y_end)) = self.clip_rect(x, y, w, h) else {
             return;
-        }
+        };
 
         let alpha = clamp_alpha(alpha);
         if alpha <= 0.0 {
@@ -225,83 +225,132 @@ impl Grid {
 
         let replaces_content = !matches!(cell.content, CellContent::Empty)
             || cell.bg.is_some_and(|bg| effective_alpha(bg, alpha) >= 1.0);
-        let x_end = x.saturating_add(w).min(self.width);
-        let y_end = y.saturating_add(h).min(self.height);
-        for row in y..y_end {
-            for col in x..x_end {
+        for row in y_start..y_end {
+            for col in x_start..x_end {
                 if replaces_content {
-                    self.clear_text_span_at(row as usize, col as usize);
+                    self.clear_text_span_at(row, col);
                 }
-                let dst = &self.cells[row as usize][col as usize];
-                self.cells[row as usize][col as usize] =
-                    blend_cell(dst, &cell, alpha, replaces_content);
+                let dst = &self.cells[row][col];
+                self.cells[row][col] = blend_cell(dst, &cell, alpha, replaces_content);
             }
         }
     }
 
     /// Write one line of text at a position, clipped to the screen width.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
-    pub fn write_text(&mut self, x: u16, y: u16, text: &str, fg: Option<Rgb>, alpha: f64) {
-        if x >= self.width || y >= self.height {
+    pub fn write_text(&mut self, x: i32, y: i32, text: &str, fg: Option<Rgb>, alpha: f64) {
+        if y < 0 || y >= self.height as i32 {
             return;
         }
 
-        let max_width = self.width - x;
         let line = text.lines().next().unwrap_or("");
-        self.write_text_line_clipped(x, y, max_width, line, fg, alpha);
+        self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha);
     }
 
     /// Write multiline text clipped to a rectangular region.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
     pub fn write_text_clipped(&mut self, rect: GridRect, text: &str, fg: Option<Rgb>, alpha: f64) {
-        if rect.x >= self.width || rect.y >= self.height || rect.width == 0 || rect.height == 0 {
+        if rect.width == 0 || rect.height == 0 {
             return;
         }
 
-        let max_width = rect.width.min(self.width - rect.x);
-        let max_height = rect.height.min(self.height - rect.y);
-        for (line_index, line) in text.lines().take(max_height as usize).enumerate() {
-            self.write_text_line_clipped(
-                rect.x,
-                rect.y + line_index as u16,
-                max_width,
-                line,
-                fg,
-                alpha,
-            );
+        let rect_top = rect.y as i64;
+        let rect_bottom = rect_top + i64::from(rect.height);
+        if rect_bottom <= 0 || rect_top >= i64::from(self.height) {
+            return;
+        }
+
+        let clip_right = (rect.x as i64 + i64::from(rect.width)).min(i64::from(self.width));
+        if clip_right <= 0 || rect.x as i64 >= i64::from(self.width) {
+            return;
+        }
+
+        for (line_index, line) in text.lines().take(rect.height as usize).enumerate() {
+            let y = rect.y + line_index as i32;
+            if y < 0 {
+                continue;
+            }
+            if y >= self.height as i32 {
+                break;
+            }
+            self.write_text_line_clipped(rect.x, y as usize, clip_right, line, fg, alpha);
         }
     }
 
     fn write_text_line_clipped(
         &mut self,
-        x: u16,
-        y: u16,
-        max_width: u16,
+        x: i32,
+        row: usize,
+        clip_right: i64,
         text: &str,
         fg: Option<Rgb>,
         alpha: f64,
     ) {
         let alpha = clamp_alpha(alpha);
-        if alpha <= 0.0 || max_width == 0 {
+        if alpha <= 0.0 || clip_right <= 0 {
             return;
         }
 
-        let row = y as usize;
-        let mut col = x as usize;
-        let end = col + max_width as usize;
+        let clip_left = 0_i64;
+        let mut col = i64::from(x);
 
         for grapheme in text.graphemes(true) {
-            let width = UnicodeWidthStr::width(grapheme).min(2);
+            let width = UnicodeWidthStr::width(grapheme).min(2) as i64;
             if width == 0 {
                 continue;
             }
-            if col + width > end {
+
+            let next_col = col + width;
+            if next_col <= clip_left {
+                col = next_col;
+                continue;
+            }
+            if col < clip_left {
+                col = next_col;
+                continue;
+            }
+            if next_col > clip_right {
                 break;
             }
 
-            self.write_glyph(row, col, grapheme, width as u8, fg, alpha);
-            col += width;
+            self.write_glyph(row, col as usize, grapheme, width as u8, fg, alpha);
+            col = next_col;
         }
+    }
+
+    fn clip_rect(
+        &self,
+        x: i32,
+        y: i32,
+        width: u16,
+        height: u16,
+    ) -> Option<(usize, usize, usize, usize)> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let left = i64::from(x);
+        let top = i64::from(y);
+        let right = left + i64::from(width);
+        let bottom = top + i64::from(height);
+        let grid_right = i64::from(self.width);
+        let grid_bottom = i64::from(self.height);
+
+        let clipped_left = left.max(0);
+        let clipped_top = top.max(0);
+        let clipped_right = right.min(grid_right);
+        let clipped_bottom = bottom.min(grid_bottom);
+
+        if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
+            return None;
+        }
+
+        Some((
+            clipped_left as usize,
+            clipped_top as usize,
+            clipped_right as usize,
+            clipped_bottom as usize,
+        ))
     }
 
     fn write_glyph(
@@ -394,6 +443,31 @@ mod tests {
     }
 
     #[test]
+    fn fill_rect_clips_negative_position() {
+        let blue = rgb(0, 0, 255);
+        let cell = Cell::empty_with_bg(blue);
+        let mut grid = Grid::new(3, 2);
+
+        grid.fill_rect(-1, -1, 3, 2, cell, 1.0);
+
+        assert_eq!(grid.cells[0][0].bg, Some(blue));
+        assert_eq!(grid.cells[0][1].bg, Some(blue));
+        assert_eq!(grid.cells[0][2].bg, None);
+        assert_eq!(grid.cells[1][0].bg, None);
+    }
+
+    #[test]
+    fn fill_rect_ignores_fully_negative_offscreen_position() {
+        let blue = rgb(0, 0, 255);
+        let cell = Cell::empty_with_bg(blue);
+        let mut grid = Grid::new(2, 1);
+
+        grid.fill_rect(-3, 0, 2, 1, cell, 1.0);
+
+        assert_eq!(grid.cells, vec![vec![Cell::empty(); 2]]);
+    }
+
+    #[test]
     fn translucent_empty_fill_blends_background_without_erasing_text() {
         let white = rgb(255, 255, 255);
         let blue = rgb(0, 0, 255);
@@ -431,6 +505,27 @@ mod tests {
 
         grid.write_text(0, 1, "abc", Some(rgb(255, 255, 255)), 1.0);
         assert_eq!(grid.cells, before.cells);
+
+        grid.write_text(0, -1, "abc", Some(rgb(255, 255, 255)), 1.0);
+        assert_eq!(grid.cells, before.cells);
+    }
+
+    #[test]
+    fn write_text_clips_negative_x() {
+        let mut grid = Grid::new(3, 1);
+
+        grid.write_text(-2, 0, "abcd", Some(rgb(255, 255, 255)), 1.0);
+
+        assert_eq!(row_text(&grid, 0), "cd ");
+    }
+
+    #[test]
+    fn write_text_skips_partial_wide_glyph_at_left_edge() {
+        let mut grid = Grid::new(3, 1);
+
+        grid.write_text(-1, 0, "界ab", Some(rgb(255, 255, 255)), 1.0);
+
+        assert_eq!(row_text(&grid, 0), " ab");
     }
 
     #[test]
@@ -477,6 +572,26 @@ mod tests {
         assert_eq!(row_text(&grid, 0), "ab  ");
         assert_eq!(row_text(&grid, 1), "cd  ");
         assert_eq!(row_text(&grid, 2), "    ");
+    }
+
+    #[test]
+    fn write_text_clipped_clips_negative_position() {
+        let mut grid = Grid::new(4, 2);
+
+        grid.write_text_clipped(
+            GridRect {
+                x: -1,
+                y: -1,
+                width: 4,
+                height: 3,
+            },
+            "ab\ncd\nef",
+            Some(rgb(255, 255, 255)),
+            1.0,
+        );
+
+        assert_eq!(row_text(&grid, 0), "d   ");
+        assert_eq!(row_text(&grid, 1), "f   ");
     }
 
     #[test]

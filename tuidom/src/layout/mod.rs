@@ -194,10 +194,10 @@ impl LayoutEngine {
         out.push((
             node_id,
             LayoutRect {
-                x: rounded_taffy_value_to_u16(absolute_x),
-                y: rounded_taffy_value_to_u16(absolute_y),
-                width: rounded_taffy_value_to_u16(layout.size.width),
-                height: rounded_taffy_value_to_u16(layout.size.height),
+                x: rounded_taffy_position_to_i32(absolute_x),
+                y: rounded_taffy_position_to_i32(absolute_y),
+                width: rounded_taffy_size_to_u16(layout.size.width),
+                height: rounded_taffy_size_to_u16(layout.size.height),
             },
         ));
 
@@ -415,7 +415,7 @@ fn to_justify_content(j: JustifyContent) -> taffy::style::JustifyContent {
     }
 }
 
-fn rounded_taffy_value_to_u16(value: f32) -> u16 {
+fn rounded_taffy_position_to_i32(value: f32) -> i32 {
     if !value.is_finite() {
         return 0;
     }
@@ -425,7 +425,20 @@ fn rounded_taffy_value_to_u16(value: f32) -> u16 {
         "expected taffy final layout value to already be rounded, got {value}"
     );
 
-    value.clamp(0.0, u16::MAX as f32) as u16
+    value.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
+}
+
+fn rounded_taffy_size_to_u16(value: f32) -> u16 {
+    if !value.is_finite() {
+        return 0;
+    }
+
+    debug_assert!(
+        (value - value.round()).abs() <= 0.001,
+        "expected taffy final layout value to already be rounded, got {value}"
+    );
+
+    value.round().clamp(0.0, u16::MAX as f32) as u16
 }
 
 #[cfg(test)]
@@ -440,6 +453,12 @@ mod tests {
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
         style
+    }
+
+    #[test]
+    fn taffy_position_conversion_preserves_negative_values() {
+        assert_eq!(rounded_taffy_position_to_i32(-3.0), -3);
+        assert_eq!(rounded_taffy_size_to_u16(-3.0), 0);
     }
 
     #[test]
@@ -507,9 +526,15 @@ mod tests {
         let third_layout = doc.get_node(third).unwrap().layout.unwrap();
 
         assert_eq!(first_layout.x, 0);
-        assert_eq!(second_layout.x, first_layout.x + first_layout.width);
-        assert_eq!(third_layout.x, second_layout.x + second_layout.width);
-        assert_eq!(third_layout.x + third_layout.width, 10);
+        assert_eq!(
+            second_layout.x,
+            first_layout.x + i32::from(first_layout.width)
+        );
+        assert_eq!(
+            third_layout.x,
+            second_layout.x + i32::from(second_layout.width)
+        );
+        assert_eq!(third_layout.x + i32::from(third_layout.width), 10);
     }
 
     #[test]

@@ -470,6 +470,40 @@ mod tests {
     }
 
     #[test]
+    fn paint_clips_negative_layout_position_without_snapping_to_origin() {
+        let doc = Document::new();
+        let root = doc.root();
+        let text = doc.create_text("hi");
+
+        doc.append_child(root, text).unwrap();
+        set_layout(
+            &doc,
+            root,
+            LayoutRect {
+                x: 0,
+                y: 0,
+                width: 3,
+                height: 1,
+            },
+        );
+        set_layout(
+            &doc,
+            text,
+            LayoutRect {
+                x: -1,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+        );
+
+        let mut grid = Grid::new(3, 1);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "i  ");
+    }
+
+    #[test]
     fn text_node_paints_multiline_content_clipped_to_layout() {
         let doc = Document::new();
         let root = doc.root();

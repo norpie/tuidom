@@ -20,7 +20,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Layout & Positioning
 
-**Layout Snapshot** — The document-level map of latest computed layout rectangles by `NodeId`. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state.
+**Layout Snapshot** — The document-level map of latest computed layout rectangles by `NodeId`. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state. Layout positions may be negative/offscreen; rendering clips them to the grid.
 
 **Stacking Context** — Explicit isolation marker created with `stacking_context: true`. Used by modal/focus policy and future positioning behavior; paint order already treats every node's subtree as an isolated unit.
 

@@ -16,10 +16,10 @@ use crate::style::resolution::ResolvedStyle;
 /// Computed layout for a node — position and size in terminal cells.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LayoutRect {
-    /// X position in terminal cells.
-    pub x: u16,
-    /// Y position in terminal cells.
-    pub y: u16,
+    /// X position in terminal cells. May be negative when content is offscreen.
+    pub x: i32,
+    /// Y position in terminal cells. May be negative when content is offscreen.
+    pub y: i32,
     /// Width in terminal cells.
     pub width: u16,
     /// Height in terminal cells.
