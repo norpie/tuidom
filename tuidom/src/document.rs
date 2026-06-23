@@ -49,16 +49,6 @@ impl Default for Document {
 impl Document {
     /// Create a new document with a permanent root node.
     pub fn new() -> Self {
-        // Initialize file-based logging. This is best-effort: logging must never
-        // prevent a TUI from starting.
-        if let Ok(file) = std::fs::File::create("/tmp/tuidom.log") {
-            let _ = simplelog::WriteLogger::init(
-                log::LevelFilter::Trace,
-                simplelog::Config::default(),
-                file,
-            );
-        }
-
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (render_tx, render_rx) = tokio::sync::mpsc::unbounded_channel();
         let root = NodeId::new(0);

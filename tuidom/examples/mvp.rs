@@ -13,8 +13,20 @@ use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{Event, KeyCode};
 use tuidom::style::{AlignItems, Color, JustifyContent, Length, Style};
 
+fn init_logging() {
+    // Best-effort file logging for the smoke test.
+    if let Ok(file) = std::fs::File::create("/tmp/tuidom.log") {
+        let _ = simplelog::WriteLogger::init(
+            log::LevelFilter::Trace,
+            simplelog::Config::default(),
+            file,
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging();
     let doc = tuidom::Document::new();
 
     // --- Styles -------------------------------------------------------
