@@ -715,6 +715,12 @@ impl Document {
         lock::rw_write(&self.inner.layout_rects).remove(&id);
     }
 
+    fn remove_node_side_state(&self, id: NodeId) {
+        self.remove_layout_node(id);
+        lock::mutex(&self.inner.listeners).retain(|listener| listener.node != id);
+        lock::mutex(&self.inner.animation).remove_node(id);
+    }
+
     fn sync_layout_children(&self, parent: NodeId) {
         let children = self.get_children(parent);
         lock::mutex(&self.inner.layout).sync_children(parent, &children);
@@ -771,7 +777,7 @@ impl Document {
             self.remove_subtree(child);
         }
 
-        self.remove_layout_node(id);
+        self.remove_node_side_state(id);
         self.inner.nodes.remove(&id);
     }
 }
@@ -1281,6 +1287,44 @@ mod tests {
         assert!(doc.get_node(child).is_none());
         assert!(doc.get_node(grandchild).is_none());
         assert!(doc.get_children(root).is_empty());
+    }
+
+    #[test]
+    fn remove_subtree_removes_attached_listeners() {
+        let doc = Document::new();
+        let root = doc.root();
+        let child = doc.create_box();
+        let grandchild = doc.create_text("deep");
+
+        doc.append_child(root, child).unwrap();
+        doc.append_child(child, grandchild).unwrap();
+        doc.on(child, |_| {}).unwrap();
+        doc.on(grandchild, |_| {}).unwrap();
+        assert_eq!(lock::mutex(&doc.inner.listeners).len(), 2);
+
+        doc.remove_child(root, child).unwrap();
+
+        assert!(lock::mutex(&doc.inner.listeners).is_empty());
+    }
+
+    #[test]
+    fn remove_subtree_removes_active_animations() {
+        let doc = Document::new();
+        let root = doc.root();
+        let child = doc.create_box();
+
+        doc.append_child(root, child).unwrap();
+        doc.set_transition(
+            child,
+            TransitionConfig::opacity(Duration::from_secs(60), crate::animation::Easing::Linear),
+        )
+        .unwrap();
+        doc.update_style(child, |style| style.opacity(0.0)).unwrap();
+        assert!(lock::mutex(&doc.inner.animation).has_active());
+
+        doc.remove_child(root, child).unwrap();
+
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
     }
 
     #[test]

@@ -116,6 +116,12 @@ impl AnimationDriver {
         !self.active.is_empty()
     }
 
+    /// Remove all active transitions for a removed node.
+    pub fn remove_node(&mut self, node_id: NodeId) {
+        self.active
+            .retain(|transition| transition.node_id != node_id);
+    }
+
     /// Remove completed transitions. Returns `true` if any remain active.
     pub fn cleanup(&mut self) -> bool {
         let now = Instant::now();
