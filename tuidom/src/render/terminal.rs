@@ -4,7 +4,9 @@ use std::io::{self, Stdout, Write};
 
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::queue;
-use crossterm::style::{Print, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::{
+    Attribute, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -170,6 +172,7 @@ fn restore_terminal(
     if alternate_screen_entered {
         let _ = queue!(stdout, LeaveAlternateScreen);
     }
+    let _ = queue!(stdout, ResetColor, SetAttribute(Attribute::Reset));
     let _ = stdout.flush();
     if raw_mode_enabled {
         let _ = disable_raw_mode();
