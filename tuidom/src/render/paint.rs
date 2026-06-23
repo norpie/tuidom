@@ -1,4 +1,4 @@
-//! Tree → grid painting using z-index sorted stacking contexts.
+//! Tree → grid painting using z-index sorted sibling subtrees.
 
 use crate::document::Document;
 use crate::id::NodeId;
@@ -23,97 +23,20 @@ struct PaintNode {
     kind: NodeKindView,
     layout: LayoutRect,
     resolved: ResolvedStyle,
+    sequence: u64,
+    children: Vec<PaintNode>,
 }
 
-#[derive(Debug)]
-struct PaintContext {
-    root: PaintNode,
-    items: Vec<PaintItem>,
+fn collect_context(doc: &Document, root: NodeId, sequence: &mut u64) -> Option<PaintNode> {
+    collect_node_tree(doc, root, sequence, 0)
 }
 
-#[derive(Debug)]
-enum PaintItem {
-    Node {
-        node: PaintNode,
-        z_index: i32,
-        sequence: u64,
-    },
-    Context {
-        context: PaintContext,
-        z_index: i32,
-        sequence: u64,
-    },
-}
-
-impl PaintItem {
-    fn z_index(&self) -> i32 {
-        match self {
-            Self::Node { z_index, .. } | Self::Context { z_index, .. } => *z_index,
-        }
-    }
-
-    fn sequence(&self) -> u64 {
-        match self {
-            Self::Node { sequence, .. } | Self::Context { sequence, .. } => *sequence,
-        }
-    }
-}
-
-fn collect_context(doc: &Document, root: NodeId, sequence: &mut u64) -> Option<PaintContext> {
-    let root_node = collect_node(doc, root)?;
-    let mut context = PaintContext {
-        root: root_node,
-        items: Vec::new(),
-    };
-
-    for child in doc.get_children(root) {
-        collect_into_context(doc, child, sequence, &mut context.items);
-    }
-
-    Some(context)
-}
-
-fn collect_into_context(
+fn collect_node_tree(
     doc: &Document,
     node_id: NodeId,
     sequence: &mut u64,
-    items: &mut Vec<PaintItem>,
-) {
-    let Some(node) = collect_node(doc, node_id) else {
-        return;
-    };
-
-    *sequence += 1;
-    let node_sequence = *sequence;
-    let z_index = node.resolved.z_index;
-    let creates_context = node.resolved.stacking_context;
-
-    if creates_context {
-        let mut nested_context = PaintContext {
-            root: node,
-            items: Vec::new(),
-        };
-        for child in doc.get_children(node_id) {
-            collect_into_context(doc, child, sequence, &mut nested_context.items);
-        }
-        items.push(PaintItem::Context {
-            context: nested_context,
-            z_index,
-            sequence: node_sequence,
-        });
-    } else {
-        items.push(PaintItem::Node {
-            node,
-            z_index,
-            sequence: node_sequence,
-        });
-        for child in doc.get_children(node_id) {
-            collect_into_context(doc, child, sequence, items);
-        }
-    }
-}
-
-fn collect_node(doc: &Document, node_id: NodeId) -> Option<PaintNode> {
+    node_sequence: u64,
+) -> Option<PaintNode> {
     let view = doc.get_node(node_id)?;
     let resolved = doc.resolved_style(node_id).ok()?;
     if resolved.display == Display::None || resolved.opacity <= 0.0 {
@@ -121,24 +44,31 @@ fn collect_node(doc: &Document, node_id: NodeId) -> Option<PaintNode> {
     }
     let layout = view.layout?;
 
+    let mut children = Vec::new();
+    for child in doc.get_children(node_id) {
+        *sequence += 1;
+        if let Some(child_node) = collect_node_tree(doc, child, sequence, *sequence) {
+            children.push(child_node);
+        }
+    }
+
     Some(PaintNode {
         kind: view.kind,
         layout,
         resolved,
+        sequence: node_sequence,
+        children,
     })
 }
 
-fn paint_context(grid: &mut Grid, context: &PaintContext, rgb_cache: &mut RgbCache) {
-    paint_node_self(grid, &context.root, rgb_cache);
+fn paint_context(grid: &mut Grid, root: &PaintNode, rgb_cache: &mut RgbCache) {
+    paint_node_self(grid, root, rgb_cache);
 
-    let mut items = context.items.iter().collect::<Vec<_>>();
-    items.sort_by_key(|item| (item.z_index(), item.sequence()));
+    let mut children = root.children.iter().collect::<Vec<_>>();
+    children.sort_by_key(|child| (child.resolved.z_index, child.sequence));
 
-    for item in items {
-        match item {
-            PaintItem::Node { node, .. } => paint_node_self(grid, node, rgb_cache),
-            PaintItem::Context { context, .. } => paint_context(grid, context, rgb_cache),
-        }
+    for child in children {
+        paint_context(grid, child, rgb_cache);
     }
 }
 
@@ -314,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn descendant_z_index_can_participate_in_nearest_stacking_context() {
+    fn descendant_z_index_does_not_escape_parent_subtree() {
         let doc = Document::new();
         let root = doc.root();
         let parent = doc.create_box();
@@ -331,11 +261,29 @@ mod tests {
         doc.append_child(root, sibling).unwrap();
         set_one_cell_layouts(&doc, &[root, parent, child, sibling]);
 
+        assert_eq!(painted_bg(&doc), Some(rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn parent_self_paints_before_child_even_with_higher_z_index() {
+        let doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_box();
+        let child = doc.create_box();
+
+        set_background(&doc, root, Color::black());
+        set_background_z(&doc, parent, Color::red(), 10);
+        set_background_z(&doc, child, Color::green(), 0);
+
+        doc.append_child(root, parent).unwrap();
+        doc.append_child(parent, child).unwrap();
+        set_one_cell_layouts(&doc, &[root, parent, child]);
+
         assert_eq!(painted_bg(&doc), Some(rgb(0, 255, 0)));
     }
 
     #[test]
-    fn stacking_context_prevents_descendant_z_index_bleed() {
+    fn explicit_stacking_context_subtree_paints_atomically() {
         let doc = Document::new();
         let root = doc.root();
         let context_root = doc.create_box();
@@ -356,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn descendants_sort_inside_their_stacking_context() {
+    fn descendants_sort_inside_parent_subtree() {
         let doc = Document::new();
         let root = doc.root();
         let context_root = doc.create_box();

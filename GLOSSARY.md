@@ -22,9 +22,9 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Layout Snapshot** — The document-level map of latest computed layout rectangles by `NodeId`. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state.
 
-**Stacking Context** — Isolated paint-order environment. Created explicitly with `stacking_context: true`. Prevents descendant `z_index` values from bleeding above siblings outside the context.
+**Stacking Context** — Explicit isolation marker created with `stacking_context: true`. Used by modal/focus policy and future positioning behavior; paint order already treats every node's subtree as an isolated unit.
 
-**z-index** — Integer paint-order value within the nearest stacking context. Lower values paint first; higher values paint later. DOM order is the stable tiebreaker for equal values.
+**z-index** — Integer paint-order value for sibling subtrees. Lower values paint first; higher values paint later. DOM order is the stable tiebreaker for equal values. A descendant's `z_index` cannot escape its parent subtree.
 
 **Position::Flow** — Default positioning mode. Node participates in normal flexbox layout.
 

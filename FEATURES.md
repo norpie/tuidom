@@ -62,15 +62,14 @@
 
 ## Stacking Contexts & z-index
 
-Solves the "dropdown in modal" problem: a dropdown in App1 shouldn't appear above a modal in App2.
-Each stacking context is an isolated paint-order environment — descendant `z_index` values can't visually escape their context.
+Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unexpectedly paint above unrelated UI. Paint order treats each node's subtree as an atomic unit.
 
-- [x] `z_index: i32` controls paint order within the nearest stacking context
+- [x] `z_index: i32` controls paint order between sibling subtrees
   - [x] Lower values paint first, higher values paint later
   - [x] DOM order is the stable tiebreaker for equal values
+  - [x] Descendant `z_index` values cannot escape their parent subtree
 - [x] Stacking contexts: created explicitly (`stacking_context: true`)
-  - [x] Children are stacked relative to their context, not globally
-  - [x] Prevents z-index bleed-through between unrelated UI sections
+  - [x] Available as an isolation marker for modal/focus policy and future positioning behavior
 - [ ] Focus integration with stacking contexts:
   - [ ] Modal-like downstream components can trap focus within a chosen stacking context
   - [ ] Content behind an active modal-like context can be made inert by downstream policy
