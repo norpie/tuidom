@@ -318,22 +318,53 @@ fn collect_visible_tree(
 
 /// Measure function passed to taffy for computing text node sizes.
 fn measure_fn(
-    _known_dimensions: Size<Option<f32>>,
-    _available_space: Size<AvailableSpace>,
+    known_dimensions: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
     _node_id: taffy::prelude::NodeId,
     context: Option<&mut MeasureContext>,
     _style: &Style,
 ) -> Size<f32> {
     match context {
         Some(MeasureContext::Text { content }) => {
-            let width = content
-                .lines()
-                .map(|line| UnicodeWidthStr::width(line) as f32)
-                .fold(0.0_f32, f32::max);
-            let height = content.lines().count() as f32;
-            Size { width, height }
+            measure_text_content(content, known_dimensions, available_space)
         }
         None => Size::ZERO,
+    }
+}
+
+fn measure_text_content(
+    content: &str,
+    known_dimensions: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
+) -> Size<f32> {
+    let natural = natural_text_size(content);
+    Size {
+        width: resolve_measured_axis(known_dimensions.width, available_space.width, natural.width),
+        height: resolve_measured_axis(
+            known_dimensions.height,
+            available_space.height,
+            natural.height,
+        ),
+    }
+}
+
+fn natural_text_size(content: &str) -> Size<f32> {
+    let width = content
+        .lines()
+        .map(|line| UnicodeWidthStr::width(line) as f32)
+        .fold(0.0_f32, f32::max);
+    let height = content.lines().count() as f32;
+    Size { width, height }
+}
+
+fn resolve_measured_axis(known: Option<f32>, available: AvailableSpace, natural: f32) -> f32 {
+    if let Some(known) = known {
+        return known;
+    }
+
+    match available {
+        AvailableSpace::Definite(limit) => natural.min(limit),
+        AvailableSpace::MinContent | AvailableSpace::MaxContent => natural,
     }
 }
 
@@ -409,6 +440,42 @@ mod tests {
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
         style
+    }
+
+    #[test]
+    fn text_measurement_uses_known_dimensions() {
+        let measured = measure_text_content(
+            "hello",
+            Size {
+                width: Some(2.0),
+                height: Some(3.0),
+            },
+            Size {
+                width: AvailableSpace::Definite(10.0),
+                height: AvailableSpace::Definite(10.0),
+            },
+        );
+
+        assert_eq!(measured.width, 2.0);
+        assert_eq!(measured.height, 3.0);
+    }
+
+    #[test]
+    fn text_measurement_clips_to_definite_available_space() {
+        let measured = measure_text_content(
+            "hello world\nwide line",
+            Size {
+                width: None,
+                height: None,
+            },
+            Size {
+                width: AvailableSpace::Definite(5.0),
+                height: AvailableSpace::Definite(1.0),
+            },
+        );
+
+        assert_eq!(measured.width, 5.0);
+        assert_eq!(measured.height, 1.0);
     }
 
     #[test]
