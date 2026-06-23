@@ -24,6 +24,7 @@ pub(crate) struct DebugOverlay {
     avg_frame_time: Duration,
     avg_layout_time: Duration,
     avg_grid_time: Duration,
+    avg_dom_collect_time: Duration,
     avg_dom_paint_time: Duration,
     avg_overlay_paint_time: Duration,
     avg_diff_time: Duration,
@@ -35,6 +36,7 @@ pub(crate) struct DebugOverlay {
     total_frame: Duration,
     total_layout: Duration,
     total_grid: Duration,
+    total_dom_collect: Duration,
     total_dom_paint: Duration,
     total_overlay_paint: Duration,
     total_diff: Duration,
@@ -57,6 +59,7 @@ impl DebugOverlay {
             avg_frame_time: Duration::ZERO,
             avg_layout_time: Duration::ZERO,
             avg_grid_time: Duration::ZERO,
+            avg_dom_collect_time: Duration::ZERO,
             avg_dom_paint_time: Duration::ZERO,
             avg_overlay_paint_time: Duration::ZERO,
             avg_diff_time: Duration::ZERO,
@@ -67,6 +70,7 @@ impl DebugOverlay {
             total_frame: Duration::ZERO,
             total_layout: Duration::ZERO,
             total_grid: Duration::ZERO,
+            total_dom_collect: Duration::ZERO,
             total_dom_paint: Duration::ZERO,
             total_overlay_paint: Duration::ZERO,
             total_diff: Duration::ZERO,
@@ -88,6 +92,7 @@ impl DebugOverlay {
         self.total_frame += frame;
         self.total_layout += layout;
         self.total_grid += stats.grid_time;
+        self.total_dom_collect += stats.dom_collect_time;
         self.total_dom_paint += stats.dom_paint_time;
         self.total_overlay_paint += stats.overlay_paint_time;
         self.total_diff += stats.diff_time;
@@ -99,6 +104,7 @@ impl DebugOverlay {
         self.avg_frame_time = avg(self.total_frame, n);
         self.avg_layout_time = avg(self.total_layout, n);
         self.avg_grid_time = avg(self.total_grid, n);
+        self.avg_dom_collect_time = avg(self.total_dom_collect, n);
         self.avg_dom_paint_time = avg(self.total_dom_paint, n);
         self.avg_overlay_paint_time = avg(self.total_overlay_paint, n);
         self.avg_diff_time = avg(self.total_diff, n);
@@ -152,10 +158,13 @@ impl DebugOverlay {
 
     fn format_lines(&self) -> Vec<String> {
         let avg_render_time = self.avg_grid_time
+            + self.avg_dom_collect_time
             + self.avg_dom_paint_time
             + self.avg_overlay_paint_time
             + self.avg_diff_time
             + self.avg_flush_time;
+        let dom_time = self.stats.dom_collect_time + self.stats.dom_paint_time;
+        let avg_dom_time = self.avg_dom_collect_time + self.avg_dom_paint_time;
         let cells_label = if self.stats.full_redraw {
             "full"
         } else {
@@ -186,6 +195,16 @@ impl DebugOverlay {
             ),
             format!(
                 "    DOM:    {:.3}ms (avg: {:.3}ms)",
+                ms(dom_time),
+                ms(avg_dom_time)
+            ),
+            format!(
+                "      Collect: {:.3}ms (avg: {:.3}ms)",
+                ms(self.stats.dom_collect_time),
+                ms(self.avg_dom_collect_time)
+            ),
+            format!(
+                "      Paint:   {:.3}ms (avg: {:.3}ms)",
                 ms(self.stats.dom_paint_time),
                 ms(self.avg_dom_paint_time)
             ),
@@ -219,3 +238,4 @@ fn avg(d: Duration, n: f64) -> Duration {
 fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
+

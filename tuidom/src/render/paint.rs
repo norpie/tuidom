@@ -1,5 +1,7 @@
 //! Tree → grid painting using z-index sorted sibling subtrees.
 
+use std::time::{Duration, Instant};
+
 use crate::document::Document;
 use crate::id::NodeId;
 use crate::node::{LayoutRect, NodeKindView};
@@ -8,13 +10,35 @@ use crate::style::Display;
 use crate::style::color::RgbCache;
 use crate::style::resolution::ResolvedStyle;
 
+/// DOM painting stage timings.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DomPaintStats {
+    /// Time spent collecting the visible DOM tree into a paintable snapshot.
+    pub collect_time: Duration,
+    /// Time spent rasterizing the collected DOM snapshot into the grid.
+    pub paint_time: Duration,
+}
+
 /// Paint the visible portion of the DOM tree into the grid.
-pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) {
+pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -> DomPaintStats {
     let root = doc.root();
 
     let mut sequence = 0;
-    if let Some(context) = collect_context(doc, root, &mut sequence) {
+
+    let collect_start = Instant::now();
+    let context = collect_context(doc, root, &mut sequence);
+    let collect_time = collect_start.elapsed();
+
+    let mut paint_time = Duration::ZERO;
+    if let Some(context) = context {
+        let paint_start = Instant::now();
         paint_context(grid, &context, rgb_cache);
+        paint_time = paint_start.elapsed();
+    }
+
+    DomPaintStats {
+        collect_time,
+        paint_time,
     }
 }
 

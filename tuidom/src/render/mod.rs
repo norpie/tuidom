@@ -23,6 +23,8 @@ pub(crate) struct RenderStats {
     pub full_redraw: bool,
     /// Time spent creating/clearing the frame grid.
     pub grid_time: Duration,
+    /// Time spent collecting the visible DOM tree into a paintable snapshot.
+    pub dom_collect_time: Duration,
     /// Time spent painting DOM nodes into the grid.
     pub dom_paint_time: Duration,
     /// Time spent painting the debug overlay into the grid.
@@ -37,6 +39,7 @@ impl RenderStats {
     /// Total time spent inside the renderer for this frame.
     pub fn render_time(self) -> Duration {
         self.grid_time
+            + self.dom_collect_time
             + self.dom_paint_time
             + self.overlay_paint_time
             + self.diff_time
@@ -71,9 +74,7 @@ impl Renderer {
         let grid_time = grid_start.elapsed();
 
         // 2. Paint DOM
-        let dom_paint_start = std::time::Instant::now();
-        paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
-        let dom_paint_time = dom_paint_start.elapsed();
+        let dom_stats = paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
 
         // 3. Paint debug overlay
         let mut overlay_paint_time = Duration::ZERO;
@@ -103,7 +104,8 @@ impl Renderer {
             cells_changed: changes.len(),
             full_redraw: false,
             grid_time,
-            dom_paint_time,
+            dom_collect_time: dom_stats.collect_time,
+            dom_paint_time: dom_stats.paint_time,
             overlay_paint_time,
             diff_time,
             flush_time,
@@ -122,9 +124,7 @@ impl Renderer {
         self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
         let grid_time = grid_start.elapsed();
 
-        let dom_paint_start = std::time::Instant::now();
-        paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
-        let dom_paint_time = dom_paint_start.elapsed();
+        let dom_stats = paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
 
         let mut overlay_paint_time = Duration::ZERO;
         {
@@ -147,7 +147,8 @@ impl Renderer {
             cells_changed: cells,
             full_redraw: true,
             grid_time,
-            dom_paint_time,
+            dom_collect_time: dom_stats.collect_time,
+            dom_paint_time: dom_stats.paint_time,
             overlay_paint_time,
             diff_time: Duration::ZERO,
             flush_time,
