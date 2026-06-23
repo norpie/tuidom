@@ -4,6 +4,11 @@
 
 use std::sync::Arc;
 
+mod key;
+
+pub(crate) use key::convert_key_event;
+pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
+
 use crate::id::NodeId;
 
 /// Opaque handle returned when registering an event listener.
@@ -56,15 +61,4 @@ pub struct ResizeEvent {
     pub width: u16,
     /// New height in terminal cells.
     pub height: u16,
-}
-
-/// Key codes for keyboard events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyCode {
-    /// A character key.
-    Char(char),
-    /// Escape key.
-    Esc,
-    /// Function key (F1, F2, …).
-    F(u8),
 }

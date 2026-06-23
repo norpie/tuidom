@@ -4,13 +4,13 @@ use std::io;
 use std::time::Instant;
 
 use crossterm::event::KeyEventKind;
-use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode};
+use crossterm::event::{Event as CrosstermEvent, EventStream};
 use tokio::task::JoinSet;
 use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
-use crate::event::{Event, KeyCode, KeyEvent, ResizeEvent};
+use crate::event::{Event, KeyEvent, ResizeEvent, convert_key_event};
 use crate::lock;
 use crate::render::Renderer;
 
@@ -387,16 +387,4 @@ fn convert_terminal_event(event: CrosstermEvent) -> Option<RuntimeEvent> {
         }
         _ => None,
     }
-}
-
-/// Convert a crossterm key event to a tuidom key event.
-fn convert_key_event(key: crossterm::event::KeyEvent) -> KeyEvent {
-    let code = match key.code {
-        CrosstermKeyCode::Char(c) => KeyCode::Char(c),
-        CrosstermKeyCode::Esc => KeyCode::Esc,
-        CrosstermKeyCode::F(n) => KeyCode::F(n),
-        _ => KeyCode::Char('?'), // unhandled keys → '?'
-    };
-
-    KeyEvent { code }
 }
