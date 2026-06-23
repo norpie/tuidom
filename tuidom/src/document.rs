@@ -229,10 +229,15 @@ impl Document {
     ///
     /// When the given property changes (via [`update_style`] or [`set_style`]),
     /// the engine will animate the change over the specified duration and easing.
-    pub fn set_transition(&self, id: NodeId, config: TransitionConfig) {
-        if let Some(mut data) = self.inner.nodes.get_mut(&id) {
-            data.transition_configs.insert(config.property, config);
-        }
+    ///
+    /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
+    pub fn set_transition(&self, id: NodeId, config: TransitionConfig) -> Result<()> {
+        let Some(mut data) = self.inner.nodes.get_mut(&id) else {
+            return Err(TuidomError::NodeNotFound { id });
+        };
+
+        data.transition_configs.insert(config.property, config);
+        Ok(())
     }
 
     /// Set a document-wide maximum frame rate.
@@ -1386,6 +1391,19 @@ mod tests {
 
         assert_eq!(
             doc.set_style(missing, &Style::new()),
+            Err(TuidomError::NodeNotFound { id: missing })
+        );
+    }
+
+    #[test]
+    fn set_transition_missing_node_returns_error() {
+        let doc = Document::new();
+        let missing = NodeId::new(999);
+        let config =
+            TransitionConfig::opacity(Duration::from_millis(100), crate::animation::Easing::Linear);
+
+        assert_eq!(
+            doc.set_transition(missing, config),
             Err(TuidomError::NodeNotFound { id: missing })
         );
     }
