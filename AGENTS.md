@@ -11,11 +11,16 @@ Read these at the start of every session:
 - **Feature requirements**: @FEATURES.md
 - **Code style conventions**: @STYLE.md
 
+## Workflow 
+
+- User is the final authority on all decisions, including design, planning and implementation.
+- There will always be a final approval step from the user before any implementation is done. (a "go ahead" or similar, not enough to "we'll be working on this" or "we'll implement this")
+
 ## Planning
 
-Plans live in `.plans/` directory (gitignored, may not show up with glob).
+Plans live in `.plans/` directory (gitignored).
 
-**For larger features:**
+**For larger features (This is user determined, you will not suggest a feature is "large" or "small"):**
 1. Always use planning before implementation
 2. Discuss approach with user
 3. Agree on implementation strategy
@@ -29,7 +34,7 @@ Plans live in `.plans/` directory (gitignored, may not show up with glob).
 
 ## Git
 
-Only applicable when asked to commit automatically.
+Only applicable when asked to commit automatically. If not asked, do not touch git, no "end of feature" summaries, no "final" commits, no "cleanup" commits.
 
 - We work with small "atomic" commit.
 - Messages are in conventional commit format, no body. 
