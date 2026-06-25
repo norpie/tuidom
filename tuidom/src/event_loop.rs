@@ -273,7 +273,7 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
-    doc.compute_layout(sw, sh);
+    doc.compute_layout(sw, sh).map_err(io::Error::other)?;
     let layout_time = layout_start.elapsed();
 
     let stats = renderer.render_frame(doc)?;
@@ -288,7 +288,7 @@ fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) 
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
-    doc.compute_layout(sw, sh);
+    doc.compute_layout(sw, sh).map_err(io::Error::other)?;
     let layout_time = layout_start.elapsed();
 
     let stats = renderer.render_full(doc)?;

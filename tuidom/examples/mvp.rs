@@ -27,7 +27,7 @@ fn init_logging() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
-    let doc = tuidom::Document::new();
+    let doc = tuidom::Document::new()?;
 
     // --- Styles -------------------------------------------------------
 
@@ -46,10 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- DOM ----------------------------------------------------------
 
-    let container = doc.create_box();
+    let container = doc.create_box()?;
     doc.set_style(container, &container_style)?;
 
-    let text = doc.create_text("Hello, tuidom!");
+    let text = doc.create_text("Hello, tuidom!")?;
     doc.set_style(text, &text_style)?;
 
     doc.append_child(container, text)?;

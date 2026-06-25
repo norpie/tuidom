@@ -6,7 +6,7 @@ use crate::NodeId;
 pub type Result<T> = std::result::Result<T, TuidomError>;
 
 /// Errors returned by tuidom APIs.
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum TuidomError {
     /// A referenced node does not exist in the document arena.
     #[error("node {id:?} does not exist")]
@@ -35,6 +35,17 @@ pub enum TuidomError {
     #[error("cannot remove the document root {id:?}")]
     CannotRemoveRoot {
         /// The document root node.
+        id: NodeId,
+    },
+
+    /// The underlying layout engine reported an error.
+    #[error("layout engine error: {0}")]
+    Layout(#[from] taffy::tree::TaffyError),
+
+    /// A DOM node was missing its corresponding layout engine node.
+    #[error("layout mapping missing for node {id:?}")]
+    LayoutMappingMissing {
+        /// The DOM node without a layout mapping.
         id: NodeId,
     },
 }

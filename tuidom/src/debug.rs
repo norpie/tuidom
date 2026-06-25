@@ -238,4 +238,3 @@ fn avg(d: Duration, n: f64) -> Duration {
 fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
-

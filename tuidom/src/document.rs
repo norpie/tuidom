@@ -29,8 +29,8 @@ use crate::style::resolution::{ResolvedStyle, StyleDefaults};
 /// # Example
 ///
 /// ```ignore
-/// let doc = Document::new();
-/// let container = doc.create_box();
+/// let doc = Document::new()?;
+/// let container = doc.create_box()?;
 /// doc.append_child(doc.root(), container)?;
 /// // ... build tree, register handlers, then:
 /// doc.run().await;
@@ -40,15 +40,9 @@ pub struct Document {
     pub(crate) inner: Arc<DocumentInner>,
 }
 
-impl Default for Document {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Document {
     /// Create a new document with a permanent root node.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (render_tx, render_rx) = tokio::sync::mpsc::unbounded_channel();
         let document_id = next_document_id();
@@ -80,8 +74,8 @@ impl Document {
                 listeners: Mutex::new(Vec::new()),
             }),
         };
-        document.register_layout_node(root);
-        document
+        document.register_layout_node(root)?;
+        Ok(document)
     }
 
     // ------------------------------------------------------------------
@@ -91,19 +85,25 @@ impl Document {
     /// Create a new box (generic container) node.
     ///
     /// Returns the [`NodeId`] of the created node.
-    pub fn create_box(&self) -> NodeId {
+    pub fn create_box(&self) -> Result<NodeId> {
         let id = self.inner.alloc(NodeData::box_node());
-        self.register_layout_node(id);
-        id
+        if let Err(err) = self.register_layout_node(id) {
+            self.inner.nodes.remove(&id);
+            return Err(err);
+        }
+        Ok(id)
     }
 
     /// Create a new text node with the given content.
     ///
     /// Returns the [`NodeId`] of the created node.
-    pub fn create_text(&self, content: impl Into<String>) -> NodeId {
+    pub fn create_text(&self, content: impl Into<String>) -> Result<NodeId> {
         let id = self.inner.alloc(NodeData::text(content));
-        self.register_layout_node(id);
-        id
+        if let Err(err) = self.register_layout_node(id) {
+            self.inner.nodes.remove(&id);
+            return Err(err);
+        }
+        Ok(id)
     }
 
     // ------------------------------------------------------------------
@@ -273,7 +273,7 @@ impl Document {
         drop(data);
 
         self.invalidate_resolved_style(id);
-        self.sync_layout_subtree_styles(id);
+        self.sync_layout_subtree_styles(id)?;
         self.inner.notify.notify_one();
 
         self.signal_animation(id, &old_resolved)
@@ -302,7 +302,7 @@ impl Document {
         drop(data);
 
         self.invalidate_resolved_style(id);
-        self.sync_layout_subtree_styles(id);
+        self.sync_layout_subtree_styles(id)?;
         self.inner.notify.notify_one();
 
         self.signal_animation(id, &old_resolved)
@@ -486,12 +486,12 @@ impl Document {
             return Err(TuidomError::NodeNotFound { id: parent });
         }
 
-        self.remove_subtree(child);
+        self.remove_subtree(child)?;
         let parent_still_exists = self.inner.nodes.contains_key(&parent);
         drop(tree_guard);
 
         if parent_still_exists {
-            self.sync_layout_children(parent);
+            self.sync_layout_children(parent)?;
         }
         self.inner.notify.notify_one();
         Ok(())
@@ -532,11 +532,11 @@ impl Document {
         drop(tree_guard);
 
         if let Some(old_parent) = old_parent {
-            self.sync_layout_children(old_parent);
+            self.sync_layout_children(old_parent)?;
         }
-        self.sync_layout_children(parent);
+        self.sync_layout_children(parent)?;
         self.invalidate_resolved_style(child);
-        self.sync_layout_subtree_styles(child);
+        self.sync_layout_subtree_styles(child)?;
         self.inner.notify.notify_one();
         Ok(())
     }
@@ -674,8 +674,8 @@ impl Document {
     /// Resolves styles, builds a taffy layout tree, computes positions and
     /// sizes, and stores the results on each node. Nodes with `display: None`
     /// are skipped.
-    pub fn compute_layout(&self, screen_width: u16, screen_height: u16) {
-        crate::layout::compute_layout(self, screen_width, screen_height);
+    pub fn compute_layout(&self, screen_width: u16, screen_height: u16) -> Result<()> {
+        crate::layout::compute_layout(self, screen_width, screen_height)
     }
 
     // ------------------------------------------------------------------
@@ -706,51 +706,55 @@ impl Document {
     // Layout engine synchronization
     // ------------------------------------------------------------------
 
-    fn register_layout_node(&self, id: NodeId) {
-        let Ok(resolved) = self.resolved_base_style(id) else {
-            return;
-        };
+    fn register_layout_node(&self, id: NodeId) -> Result<()> {
+        let resolved = self.resolved_base_style(id)?;
         let Some(kind) = self.inner.nodes.get(&id).map(|data| data.kind.clone()) else {
-            return;
+            return Err(TuidomError::NodeNotFound { id });
         };
-        lock::mutex(&self.inner.layout).insert_node(id, &kind, &resolved);
+        lock::mutex(&self.inner.layout).insert_node(id, &kind, &resolved)
     }
 
-    fn remove_layout_node(&self, id: NodeId) {
-        lock::mutex(&self.inner.layout).remove_node(id);
+    fn remove_layout_node(&self, id: NodeId) -> Result<()> {
+        lock::mutex(&self.inner.layout).remove_node(id)?;
         lock::rw_write(&self.inner.layout_rects).remove(&id);
+        Ok(())
     }
 
-    fn remove_node_side_state(&self, id: NodeId) {
-        self.remove_layout_node(id);
+    fn remove_node_side_state(&self, id: NodeId) -> Result<()> {
+        self.remove_layout_node(id)?;
         lock::mutex(&self.inner.listeners).retain(|listener| listener.node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
+        Ok(())
     }
 
-    fn sync_layout_children(&self, parent: NodeId) {
+    fn sync_layout_children(&self, parent: NodeId) -> Result<()> {
         let children = self.get_children(parent);
-        lock::mutex(&self.inner.layout).sync_children(parent, &children);
+        lock::mutex(&self.inner.layout).sync_children(parent, &children)
     }
 
-    fn sync_layout_subtree_styles(&self, id: NodeId) {
+    fn sync_layout_subtree_styles(&self, id: NodeId) -> Result<()> {
         let mut updates = Vec::new();
-        self.collect_layout_style_updates(id, &mut updates);
+        self.collect_layout_style_updates(id, &mut updates)?;
 
         let mut layout = lock::mutex(&self.inner.layout);
         for (node_id, resolved) in updates {
-            layout.set_style(node_id, &resolved);
+            layout.set_style(node_id, &resolved)?;
         }
+        Ok(())
     }
 
-    fn collect_layout_style_updates(&self, id: NodeId, updates: &mut Vec<(NodeId, ResolvedStyle)>) {
-        let Ok(resolved) = self.resolved_base_style(id) else {
-            return;
-        };
+    fn collect_layout_style_updates(
+        &self,
+        id: NodeId,
+        updates: &mut Vec<(NodeId, ResolvedStyle)>,
+    ) -> Result<()> {
+        let resolved = self.resolved_base_style(id)?;
         updates.push((id, resolved));
 
         for child in self.get_children(id) {
-            self.collect_layout_style_updates(child, updates);
+            self.collect_layout_style_updates(child, updates)?;
         }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -768,23 +772,29 @@ impl Document {
         lock::mutex(&self.inner.layout).dom_children(parent)
     }
 
+    #[cfg(test)]
+    fn remove_layout_mapping_for_test(&self, id: NodeId) {
+        lock::mutex(&self.inner.layout).remove_node(id).unwrap();
+    }
+
     // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
 
     /// Remove a node and its entire subtree from the arena.
-    fn remove_subtree(&self, id: NodeId) {
+    fn remove_subtree(&self, id: NodeId) -> Result<()> {
         if id == self.root() {
-            return;
+            return Ok(());
         }
 
         let children = self.get_children_unlocked(id);
         for child in children {
-            self.remove_subtree(child);
+            self.remove_subtree(child)?;
         }
 
-        self.remove_node_side_state(id);
+        self.remove_node_side_state(id)?;
         self.inner.nodes.remove(&id);
+        Ok(())
     }
 }
 
@@ -799,9 +809,9 @@ mod tests {
 
     #[test]
     fn create_nodes() {
-        let doc = Document::new();
-        let box_id = doc.create_box();
-        let text_id = doc.create_text("hello");
+        let doc = Document::new().unwrap();
+        let box_id = doc.create_box().unwrap();
+        let text_id = doc.create_text("hello").unwrap();
 
         let box_view = doc.get_node(box_id).unwrap();
         let text_view = doc.get_node(text_id).unwrap();
@@ -817,8 +827,8 @@ mod tests {
 
     #[test]
     fn node_ids_are_scoped_to_their_document() {
-        let first = Document::new();
-        let second = Document::new();
+        let first = Document::new().unwrap();
+        let second = Document::new().unwrap();
         let first_root = first.root();
         let second_root = second.root();
 
@@ -836,9 +846,9 @@ mod tests {
 
     #[test]
     fn creating_dom_nodes_creates_persistent_layout_nodes() {
-        let doc = Document::new();
-        let root = doc.create_box();
-        let text = doc.create_text("hello");
+        let doc = Document::new().unwrap();
+        let root = doc.create_box().unwrap();
+        let text = doc.create_text("hello").unwrap();
 
         assert_eq!(doc.layout_node_count(), 3);
         assert_eq!(doc.layout_mapping_snapshot().len(), 3);
@@ -856,27 +866,55 @@ mod tests {
 
     #[test]
     fn repeated_layout_uses_same_taffy_nodes() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let child = doc.create_text("hello");
+        let child = doc.create_text("hello").unwrap();
         doc.append_child(root, child).unwrap();
 
         let before = doc.layout_mapping_snapshot();
-        doc.compute_layout(20, 5);
-        doc.compute_layout(20, 5);
+        doc.compute_layout(20, 5).unwrap();
+        doc.compute_layout(20, 5).unwrap();
         let after = doc.layout_mapping_snapshot();
 
         assert_eq!(before, after);
     }
 
     #[test]
+    fn failed_layout_preserves_previous_snapshot() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let child = doc.create_box().unwrap();
+
+        let mut child_style = Style::new();
+        child_style.width(Length::Pixels(7));
+        child_style.height(Length::Pixels(1));
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(root, child).unwrap();
+        doc.compute_layout(20, 5).unwrap();
+
+        let before = doc.get_node(child).unwrap().layout.unwrap();
+
+        doc.remove_layout_mapping_for_test(child);
+
+        assert_eq!(
+            doc.compute_layout(20, 5),
+            Err(TuidomError::LayoutMappingMissing { id: child })
+        );
+        let after = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!(after.x, before.x);
+        assert_eq!(after.y, before.y);
+        assert_eq!(after.width, before.width);
+        assert_eq!(after.height, before.height);
+    }
+
+    #[test]
     fn reparenting_syncs_taffy_child_order() {
-        let doc = Document::new();
-        let first_parent = doc.create_box();
-        let second_parent = doc.create_box();
-        let first = doc.create_text("first");
-        let second = doc.create_text("second");
-        let third = doc.create_text("third");
+        let doc = Document::new().unwrap();
+        let first_parent = doc.create_box().unwrap();
+        let second_parent = doc.create_box().unwrap();
+        let first = doc.create_text("first").unwrap();
+        let second = doc.create_text("second").unwrap();
+        let third = doc.create_text("third").unwrap();
 
         doc.append_child(first_parent, first).unwrap();
         doc.append_child(first_parent, second).unwrap();
@@ -893,9 +931,9 @@ mod tests {
 
     #[test]
     fn inherited_style_change_updates_layout_without_recreating_taffy_nodes() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let child = doc.create_box();
+        let child = doc.create_box().unwrap();
 
         let mut root_style = Style::new();
         root_style.width(Length::Pixels(10));
@@ -910,12 +948,12 @@ mod tests {
         doc.append_child(root, child).unwrap();
         let before = doc.layout_mapping_snapshot();
 
-        doc.compute_layout(100, 10);
+        doc.compute_layout(100, 10).unwrap();
         assert_eq!(doc.get_node(child).unwrap().layout.unwrap().width, 10);
 
         doc.update_style(root, |style| style.width(Length::Pixels(20)))
             .unwrap();
-        doc.compute_layout(100, 10);
+        doc.compute_layout(100, 10).unwrap();
 
         assert_eq!(doc.layout_mapping_snapshot(), before);
         assert_eq!(doc.get_node(child).unwrap().layout.unwrap().width, 20);
@@ -923,10 +961,10 @@ mod tests {
 
     #[test]
     fn removing_subtree_removes_layout_nodes() {
-        let doc = Document::new();
-        let root = doc.create_box();
-        let child = doc.create_box();
-        let grandchild = doc.create_text("deep");
+        let doc = Document::new().unwrap();
+        let root = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        let grandchild = doc.create_text("deep").unwrap();
 
         doc.append_child(root, child).unwrap();
         doc.append_child(child, grandchild).unwrap();
@@ -946,7 +984,7 @@ mod tests {
 
     #[test]
     fn max_fps_defaults_to_uncapped_and_can_be_configured() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
         assert!(lock::rw_read(&doc.inner.max_frame_interval).is_none());
 
@@ -962,7 +1000,7 @@ mod tests {
 
     #[test]
     fn invalid_max_fps_values_disable_the_cap() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
         for fps in [
             Some(0.0),
@@ -977,7 +1015,7 @@ mod tests {
 
     #[test]
     fn listener_handle_removes_registered_listener() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
@@ -1000,8 +1038,8 @@ mod tests {
 
     #[test]
     fn listener_handles_are_scoped_to_their_document() {
-        let first = Document::new();
-        let second = Document::new();
+        let first = Document::new().unwrap();
+        let second = Document::new().unwrap();
         let first_calls = Arc::new(AtomicUsize::new(0));
         let second_calls = Arc::new(AtomicUsize::new(0));
 
@@ -1029,7 +1067,7 @@ mod tests {
 
     #[test]
     fn listener_can_register_listener_during_dispatch() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
         let calls = Arc::new(AtomicUsize::new(0));
         let doc_for_handler = doc.clone();
@@ -1055,7 +1093,7 @@ mod tests {
 
     #[test]
     fn listener_panic_is_caught_and_later_listeners_still_run() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
@@ -1072,9 +1110,9 @@ mod tests {
 
     #[test]
     fn dispatch_targets_root_listeners_only_for_now() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let child = doc.create_box();
+        let child = doc.create_box().unwrap();
         doc.append_child(root, child).unwrap();
 
         let root_calls = Arc::new(AtomicUsize::new(0));
@@ -1100,19 +1138,19 @@ mod tests {
 
     #[test]
     fn registering_listener_on_missing_node_returns_error() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let result = doc.on(NodeId::new(999), |_| {});
         assert!(matches!(result, Err(TuidomError::NodeNotFound { .. })));
     }
 
     #[test]
     fn tree_ops() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let root = doc.create_box();
-        let child1 = doc.create_text("one");
-        let child2 = doc.create_text("two");
-        let child3 = doc.create_text("three");
+        let root = doc.create_box().unwrap();
+        let child1 = doc.create_text("one").unwrap();
+        let child2 = doc.create_text("two").unwrap();
+        let child3 = doc.create_text("three").unwrap();
 
         // append
         doc.append_child(root, child1).unwrap();
@@ -1124,7 +1162,7 @@ mod tests {
         assert_eq!(doc.get_children(root), vec![child1, child3, child2]);
 
         // move_child
-        let other = doc.create_box();
+        let other = doc.create_box().unwrap();
         doc.move_child(other, child3, child2).unwrap(); // inserts at end since child2 isn't in other
         assert_eq!(doc.get_children(root), vec![child1, child2]);
         assert_eq!(doc.get_children(other), vec![child3]);
@@ -1134,10 +1172,10 @@ mod tests {
 
     #[test]
     fn append_child_reparents_without_stale_reference() {
-        let doc = Document::new();
-        let first_parent = doc.create_box();
-        let second_parent = doc.create_box();
-        let child = doc.create_text("child");
+        let doc = Document::new().unwrap();
+        let first_parent = doc.create_box().unwrap();
+        let second_parent = doc.create_box().unwrap();
+        let child = doc.create_text("child").unwrap();
 
         doc.append_child(first_parent, child).unwrap();
         doc.append_child(second_parent, child).unwrap();
@@ -1149,9 +1187,9 @@ mod tests {
 
     #[test]
     fn append_child_does_not_duplicate_existing_child() {
-        let doc = Document::new();
-        let parent = doc.create_box();
-        let child = doc.create_text("child");
+        let doc = Document::new().unwrap();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_text("child").unwrap();
 
         doc.append_child(parent, child).unwrap();
         doc.append_child(parent, child).unwrap();
@@ -1162,11 +1200,11 @@ mod tests {
 
     #[test]
     fn insert_before_reorders_existing_child_without_duplicate() {
-        let doc = Document::new();
-        let parent = doc.create_box();
-        let first = doc.create_text("first");
-        let second = doc.create_text("second");
-        let third = doc.create_text("third");
+        let doc = Document::new().unwrap();
+        let parent = doc.create_box().unwrap();
+        let first = doc.create_text("first").unwrap();
+        let second = doc.create_text("second").unwrap();
+        let third = doc.create_text("third").unwrap();
 
         doc.append_child(parent, first).unwrap();
         doc.append_child(parent, second).unwrap();
@@ -1179,9 +1217,9 @@ mod tests {
 
     #[test]
     fn cycle_attempt_returns_error_and_does_not_mutate() {
-        let doc = Document::new();
-        let ancestor = doc.create_box();
-        let child = doc.create_box();
+        let doc = Document::new().unwrap();
+        let ancestor = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
 
         doc.append_child(ancestor, child).unwrap();
 
@@ -1201,9 +1239,9 @@ mod tests {
 
     #[test]
     fn invalid_node_error_does_not_partially_mutate_tree() {
-        let doc = Document::new();
-        let parent = doc.create_box();
-        let child = doc.create_text("child");
+        let doc = Document::new().unwrap();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_text("child").unwrap();
         let missing = NodeId::new(999);
 
         assert_eq!(
@@ -1221,9 +1259,9 @@ mod tests {
 
     #[test]
     fn move_child_invalid_parent_does_not_detach_child() {
-        let doc = Document::new();
-        let parent = doc.create_box();
-        let child = doc.create_text("child");
+        let doc = Document::new().unwrap();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_text("child").unwrap();
         let missing = NodeId::new(999);
 
         doc.append_child(parent, child).unwrap();
@@ -1238,10 +1276,10 @@ mod tests {
 
     #[test]
     fn remove_child_noops_when_child_belongs_to_another_parent() {
-        let doc = Document::new();
-        let unrelated_parent = doc.create_box();
-        let actual_parent = doc.create_box();
-        let child = doc.create_text("child");
+        let doc = Document::new().unwrap();
+        let unrelated_parent = doc.create_box().unwrap();
+        let actual_parent = doc.create_box().unwrap();
+        let child = doc.create_text("child").unwrap();
 
         doc.append_child(actual_parent, child).unwrap();
         doc.remove_child(unrelated_parent, child).unwrap();
@@ -1254,9 +1292,9 @@ mod tests {
 
     #[test]
     fn remove_child_missing_node_returns_error_without_mutation() {
-        let doc = Document::new();
-        let parent = doc.create_box();
-        let child = doc.create_text("child");
+        let doc = Document::new().unwrap();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_text("child").unwrap();
         let missing = NodeId::new(999);
 
         doc.append_child(parent, child).unwrap();
@@ -1278,11 +1316,11 @@ mod tests {
 
     #[test]
     fn remove_subtree() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let root = doc.create_box();
-        let child = doc.create_box();
-        let grandchild = doc.create_text("deep");
+        let root = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        let grandchild = doc.create_text("deep").unwrap();
 
         doc.append_child(root, child).unwrap();
         doc.append_child(child, grandchild).unwrap();
@@ -1297,10 +1335,10 @@ mod tests {
 
     #[test]
     fn remove_subtree_removes_attached_listeners() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let child = doc.create_box();
-        let grandchild = doc.create_text("deep");
+        let child = doc.create_box().unwrap();
+        let grandchild = doc.create_text("deep").unwrap();
 
         doc.append_child(root, child).unwrap();
         doc.append_child(child, grandchild).unwrap();
@@ -1315,9 +1353,9 @@ mod tests {
 
     #[test]
     fn remove_subtree_removes_active_animations() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let child = doc.create_box();
+        let child = doc.create_box().unwrap();
 
         doc.append_child(root, child).unwrap();
         doc.set_transition(
@@ -1335,9 +1373,9 @@ mod tests {
 
     #[test]
     fn cannot_remove_document_root() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let parent = doc.create_box();
+        let parent = doc.create_box().unwrap();
 
         assert_eq!(
             doc.remove_child(parent, root),
@@ -1349,11 +1387,11 @@ mod tests {
 
     #[test]
     fn is_descendant_of() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let a = doc.create_box();
-        let b = doc.create_box();
-        let c = doc.create_text("deep");
+        let a = doc.create_box().unwrap();
+        let b = doc.create_box().unwrap();
+        let c = doc.create_text("deep").unwrap();
 
         doc.append_child(a, b).unwrap();
         doc.append_child(b, c).unwrap();
@@ -1367,12 +1405,12 @@ mod tests {
 
     #[test]
     fn move_child_preserves_children() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let a = doc.create_box();
-        let b = doc.create_box();
-        let child = doc.create_box();
-        let grandchild = doc.create_text("deep");
+        let a = doc.create_box().unwrap();
+        let b = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        let grandchild = doc.create_text("deep").unwrap();
 
         doc.append_child(a, child).unwrap();
         doc.append_child(child, grandchild).unwrap();
@@ -1388,14 +1426,14 @@ mod tests {
 
     #[test]
     fn document_has_permanent_root() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
 
         assert!(doc.get_node(root).is_some());
         assert_eq!(doc.get_parent(root), None);
         assert_eq!(doc.layout_node_count(), 1);
 
-        let parent = doc.create_box();
+        let parent = doc.create_box().unwrap();
         assert_eq!(
             doc.append_child(parent, root),
             Err(TuidomError::CannotReparentRoot { id: root })
@@ -1405,8 +1443,8 @@ mod tests {
 
     #[test]
     fn document_root_defaults_to_full_viewport_size() {
-        let doc = Document::new();
-        let normal_node = doc.create_box();
+        let doc = Document::new().unwrap();
+        let normal_node = doc.create_box().unwrap();
 
         let root_style = doc.resolved_style(doc.root()).unwrap();
         let normal_style = doc.resolved_style(normal_node).unwrap();
@@ -1421,8 +1459,8 @@ mod tests {
 
     #[test]
     fn set_style_gets_resolved() {
-        let doc = Document::new();
-        let node = doc.create_box();
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
 
         let mut style = Style::new();
         style.width(Length::Pixels(42));
@@ -1436,7 +1474,7 @@ mod tests {
 
     #[test]
     fn set_style_missing_node_returns_error() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let missing = NodeId::new(999);
 
         assert_eq!(
@@ -1447,7 +1485,7 @@ mod tests {
 
     #[test]
     fn set_transition_missing_node_returns_error() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let missing = NodeId::new(999);
         let config =
             TransitionConfig::opacity(Duration::from_millis(100), crate::animation::Easing::Linear);
@@ -1460,8 +1498,8 @@ mod tests {
 
     #[test]
     fn update_style_invalidates_cache() {
-        let doc = Document::new();
-        let node = doc.create_box();
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
 
         let mut style = Style::new();
         style.width(Length::Pixels(10));
@@ -1479,8 +1517,8 @@ mod tests {
 
     #[test]
     fn panicking_update_style_does_not_partially_mutate_style() {
-        let doc = Document::new();
-        let node = doc.create_box();
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
 
         let mut style = Style::new();
         style.width(Length::Pixels(10));
@@ -1500,7 +1538,7 @@ mod tests {
 
     #[test]
     fn update_style_missing_node_returns_error() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let missing = NodeId::new(999);
 
         assert_eq!(
@@ -1511,7 +1549,7 @@ mod tests {
 
     #[test]
     fn resolved_style_missing_node_returns_error() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let missing = NodeId::new(999);
 
         assert!(matches!(
@@ -1522,14 +1560,14 @@ mod tests {
 
     #[test]
     fn unset_properties_use_defaults_not_parent_values() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let parent = doc.create_box();
+        let parent = doc.create_box().unwrap();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
         doc.set_style(parent, &parent_style).unwrap();
 
-        let child = doc.create_text("hi");
+        let child = doc.create_text("hi").unwrap();
         doc.append_child(parent, child).unwrap();
 
         let child_resolved = doc.resolved_style(child).unwrap();
@@ -1539,14 +1577,14 @@ mod tests {
 
     #[test]
     fn explicitly_inherits_from_parent() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let parent = doc.create_box();
+        let parent = doc.create_box().unwrap();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
         doc.set_style(parent, &parent_style).unwrap();
 
-        let child = doc.create_text("hi");
+        let child = doc.create_text("hi").unwrap();
         let mut child_style = Style::new();
         child_style.inherit_color();
         doc.set_style(child, &child_style).unwrap();
@@ -1559,14 +1597,14 @@ mod tests {
 
     #[test]
     fn override_breaks_inheritance() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let parent = doc.create_box();
+        let parent = doc.create_box().unwrap();
         let mut parent_style = Style::new();
         parent_style.color(Color::red());
         doc.set_style(parent, &parent_style).unwrap();
 
-        let child = doc.create_text("hi");
+        let child = doc.create_text("hi").unwrap();
         let mut child_style = Style::new();
         child_style.color(Color::blue()); // Explicit override
         doc.set_style(child, &child_style).unwrap();
@@ -1578,19 +1616,19 @@ mod tests {
 
     #[test]
     fn move_child_triggers_re_resolve() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
 
-        let parent_red = doc.create_box();
+        let parent_red = doc.create_box().unwrap();
         let mut red_style = Style::new();
         red_style.color(Color::red());
         doc.set_style(parent_red, &red_style).unwrap();
 
-        let parent_blue = doc.create_box();
+        let parent_blue = doc.create_box().unwrap();
         let mut blue_style = Style::new();
         blue_style.color(Color::blue());
         doc.set_style(parent_blue, &blue_style).unwrap();
 
-        let child = doc.create_text("movable");
+        let child = doc.create_text("movable").unwrap();
         let mut child_style = Style::new();
         child_style.inherit_color();
         doc.set_style(child, &child_style).unwrap();

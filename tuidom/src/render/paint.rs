@@ -215,10 +215,10 @@ mod tests {
 
     #[test]
     fn default_paint_order_matches_dom_order() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let first = doc.create_box();
-        let second = doc.create_box();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background(&doc, first, Color::red());
@@ -233,10 +233,10 @@ mod tests {
 
     #[test]
     fn higher_z_index_paints_above_later_dom_sibling() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let high = doc.create_box();
-        let low = doc.create_box();
+        let high = doc.create_box().unwrap();
+        let low = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background_z(&doc, high, Color::blue(), 10);
@@ -251,10 +251,10 @@ mod tests {
 
     #[test]
     fn lower_z_index_paints_below_earlier_dom_sibling() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let normal = doc.create_box();
-        let low = doc.create_box();
+        let normal = doc.create_box().unwrap();
+        let low = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background_z(&doc, normal, Color::blue(), 0);
@@ -269,11 +269,11 @@ mod tests {
 
     #[test]
     fn descendant_z_index_does_not_escape_parent_subtree() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let parent = doc.create_box();
-        let child = doc.create_box();
-        let sibling = doc.create_box();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        let sibling = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background_z(&doc, parent, Color::red(), 0);
@@ -290,10 +290,10 @@ mod tests {
 
     #[test]
     fn parent_self_paints_before_child_even_with_higher_z_index() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let parent = doc.create_box();
-        let child = doc.create_box();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background_z(&doc, parent, Color::red(), 10);
@@ -308,11 +308,11 @@ mod tests {
 
     #[test]
     fn explicit_stacking_context_subtree_paints_atomically() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let context_root = doc.create_box();
-        let child = doc.create_box();
-        let sibling = doc.create_box();
+        let context_root = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        let sibling = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background_z_context(&doc, context_root, Color::red(), 0);
@@ -329,11 +329,11 @@ mod tests {
 
     #[test]
     fn descendants_sort_inside_parent_subtree() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let context_root = doc.create_box();
-        let high = doc.create_box();
-        let low = doc.create_box();
+        let context_root = doc.create_box().unwrap();
+        let high = doc.create_box().unwrap();
+        let low = doc.create_box().unwrap();
 
         set_background(&doc, root, Color::black());
         set_background_z_context(&doc, context_root, Color::red(), 0);
@@ -350,9 +350,9 @@ mod tests {
 
     #[test]
     fn child_changed_to_display_none_does_not_paint_from_stale_layout() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let text = doc.create_text("hi");
+        let text = doc.create_text("hi").unwrap();
 
         let mut root_style = Style::new();
         root_style.width(Length::Pixels(5));
@@ -360,7 +360,7 @@ mod tests {
         doc.set_style(root, &root_style).unwrap();
 
         doc.append_child(root, text).unwrap();
-        doc.compute_layout(5, 1);
+        doc.compute_layout(5, 1).unwrap();
 
         let mut visible_grid = Grid::new(5, 1);
         paint_doc(&doc, &mut visible_grid);
@@ -369,7 +369,7 @@ mod tests {
         let mut hidden_style = Style::new();
         hidden_style.display(Display::None);
         doc.set_style(text, &hidden_style).unwrap();
-        doc.compute_layout(5, 1);
+        doc.compute_layout(5, 1).unwrap();
         assert!(doc.get_node(text).unwrap().layout.is_none());
 
         set_layout(
@@ -390,10 +390,10 @@ mod tests {
 
     #[test]
     fn translucent_background_color_blends_without_node_opacity_and_preserves_text() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let text = doc.create_text("x");
-        let overlay = doc.create_box();
+        let text = doc.create_text("x").unwrap();
+        let overlay = doc.create_box().unwrap();
 
         let mut root_style = Style::new();
         root_style.background(Color::black());
@@ -430,9 +430,9 @@ mod tests {
 
     #[test]
     fn color_alpha_and_node_opacity_multiply() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let overlay = doc.create_box();
+        let overlay = doc.create_box().unwrap();
 
         let mut root_style = Style::new();
         root_style.background(Color::black());
@@ -462,9 +462,9 @@ mod tests {
 
     #[test]
     fn translucent_foreground_color_blends_with_background() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let text = doc.create_text("x");
+        let text = doc.create_text("x").unwrap();
 
         let mut root_style = Style::new();
         root_style.background(Color::black());
@@ -495,9 +495,9 @@ mod tests {
 
     #[test]
     fn paint_clips_negative_layout_position_without_snapping_to_origin() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let text = doc.create_text("hi");
+        let text = doc.create_text("hi").unwrap();
 
         doc.append_child(root, text).unwrap();
         set_layout(
@@ -529,9 +529,9 @@ mod tests {
 
     #[test]
     fn text_node_paints_multiline_content_clipped_to_layout() {
-        let doc = Document::new();
+        let doc = Document::new().unwrap();
         let root = doc.root();
-        let text = doc.create_text("abcd\nefgh");
+        let text = doc.create_text("abcd\nefgh").unwrap();
         doc.append_child(root, text).unwrap();
 
         set_layout(
