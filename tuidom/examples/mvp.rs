@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tuidom::animation::{Easing, TransitionConfig};
-use tuidom::event::{Event, KeyCode};
+use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, Color, JustifyContent, Length, Style};
 
 fn init_logging() {
@@ -74,22 +74,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let ov = opacity_visible.clone();
 
-    doc.on(doc.root(), move |event: &Event| {
-        let Event::KeyPress(key) = event else {
-            return;
-        };
-
-        match key.code {
-            // Toggle opacity — engine picks up style change and animates
-            KeyCode::Char(' ') => {
-                let was_visible = ov.fetch_not(Ordering::Relaxed);
-                let target = if !was_visible { 1.0 } else { 0.0 };
-                let _ = d.update_style(text, |s| s.opacity(target));
-            }
-            // Quit
-            KeyCode::Char('q') | KeyCode::Esc => d.quit(),
-            _ => {}
+    doc.on_key_press(doc.root(), move |key| match key.code {
+        // Toggle opacity — engine picks up style change and animates
+        KeyCode::Char(' ') => {
+            let was_visible = ov.fetch_not(Ordering::Relaxed);
+            let target = if !was_visible { 1.0 } else { 0.0 };
+            let _ = d.update_style(text, |s| s.opacity(target));
         }
+        // Quit
+        KeyCode::Char('q') | KeyCode::Esc => d.quit(),
+        _ => {}
     })?;
 
     // --- Run ----------------------------------------------------------

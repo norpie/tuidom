@@ -4,26 +4,43 @@ use std::io;
 use std::time::Instant;
 
 use crossterm::event::KeyEventKind;
-use crossterm::event::{Event as CrosstermEvent, EventStream};
+use crossterm::event::{
+    Event as CrosstermEvent, EventStream, MouseButton as CrosstermMouseButton,
+    MouseEvent as CrosstermMouseEvent, MouseEventKind,
+};
 use tokio::task::JoinSet;
 use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
-use crate::event::{Event, KeyEvent, ResizeEvent, convert_key_event};
+use crate::event::{KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent, convert_key_event};
 use crate::lock;
 use crate::render::Renderer;
 
 /// Internal runtime event used by the event queue.
 ///
-/// This is separate from public [`Event`] so runtime coordination can evolve
+/// This is separate from public event structs so runtime coordination can evolve
 /// without exposing renderer/input-loop details as user-facing API.
 #[derive(Debug, Clone)]
 pub(crate) enum RuntimeEvent {
     /// A key press from the terminal input stream.
     KeyPress(KeyEvent),
+    /// A mouse button press from the terminal input stream.
+    MouseDown(MouseEvent),
+    /// A mouse button release from the terminal input stream.
+    MouseUp(MouseEvent),
+    /// A mouse wheel movement from the terminal input stream.
+    Wheel(WheelEvent),
     /// Terminal resize requiring both public dispatch and renderer resize.
     Resize(ResizeEvent),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClickCandidate {
+    target: crate::id::NodeId,
+    x: i32,
+    y: i32,
+    button: MouseButton,
 }
 
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
@@ -93,6 +110,8 @@ async fn input_task(doc: Document) -> io::Result<()> {
 }
 
 async fn event_task(doc: Document) -> io::Result<()> {
+    let mut pending_click = None;
+
     loop {
         if is_shutdown(&doc) {
             break;
@@ -110,7 +129,7 @@ async fn event_task(doc: Document) -> io::Result<()> {
                         "runtime event queue closed",
                     ));
                 };
-                process_runtime_event(&doc, event);
+                process_runtime_event(&doc, event, &mut pending_click);
             }
         }
     }
@@ -221,16 +240,54 @@ async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
 }
 
 /// Process one queued runtime event.
-fn process_runtime_event(doc: &Document, event: RuntimeEvent) {
+fn process_runtime_event(
+    doc: &Document,
+    event: RuntimeEvent,
+    pending_click: &mut Option<ClickCandidate>,
+) {
     match event {
         RuntimeEvent::KeyPress(key) => {
-            doc.dispatch_event(Event::KeyPress(key));
+            doc.dispatch_key_press(key);
+        }
+        RuntimeEvent::MouseDown(mut mouse) => {
+            let target = mouse_target(doc, mouse.x, mouse.y);
+            doc.dispatch_mouse_down_to(target, &mut mouse);
+            *pending_click = Some(ClickCandidate {
+                target,
+                x: mouse.x,
+                y: mouse.y,
+                button: mouse.button,
+            });
+        }
+        RuntimeEvent::MouseUp(mut mouse) => {
+            let target = mouse_target(doc, mouse.x, mouse.y);
+            doc.dispatch_mouse_up_to(target, &mut mouse);
+
+            if pending_click.is_some_and(|down| {
+                down.target == target
+                    && down.x == mouse.x
+                    && down.y == mouse.y
+                    && down.button == mouse.button
+            }) {
+                let mut click = MouseEvent::new(mouse.x, mouse.y, mouse.button);
+                doc.dispatch_click_to(target, &mut click);
+            }
+            *pending_click = None;
+        }
+        RuntimeEvent::Wheel(mut wheel) => {
+            let target = mouse_target(doc, wheel.x, wheel.y);
+            doc.dispatch_wheel_to(target, &mut wheel);
+            *pending_click = None;
         }
         RuntimeEvent::Resize(resize) => {
-            doc.dispatch_event(Event::Resize(resize.clone()));
+            doc.dispatch_resize(resize.clone());
             set_pending_resize(doc, resize);
         }
     }
+}
+
+fn mouse_target(doc: &Document, x: i32, y: i32) -> crate::id::NodeId {
+    doc.node_at(x, y).unwrap_or_else(|| doc.root())
 }
 
 fn set_pending_resize(doc: &Document, resize: ResizeEvent) {
@@ -359,12 +416,55 @@ fn convert_terminal_event(event: CrosstermEvent) -> Option<RuntimeEvent> {
         CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
             Some(RuntimeEvent::KeyPress(convert_key_event(key)))
         }
+        CrosstermEvent::Mouse(mouse) => convert_mouse_event(mouse),
         _ => None,
+    }
+}
+
+fn convert_mouse_event(mouse: CrosstermMouseEvent) -> Option<RuntimeEvent> {
+    match mouse.kind {
+        MouseEventKind::Down(button) => convert_mouse_button(button).map(|button| {
+            RuntimeEvent::MouseDown(MouseEvent::new(
+                i32::from(mouse.column),
+                i32::from(mouse.row),
+                button,
+            ))
+        }),
+        MouseEventKind::Up(button) => convert_mouse_button(button).map(|button| {
+            RuntimeEvent::MouseUp(MouseEvent::new(
+                i32::from(mouse.column),
+                i32::from(mouse.row),
+                button,
+            ))
+        }),
+        MouseEventKind::ScrollUp => Some(RuntimeEvent::Wheel(WheelEvent::new(
+            i32::from(mouse.column),
+            i32::from(mouse.row),
+            1,
+        ))),
+        MouseEventKind::ScrollDown => Some(RuntimeEvent::Wheel(WheelEvent::new(
+            i32::from(mouse.column),
+            i32::from(mouse.row),
+            -1,
+        ))),
+        MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => None,
+        MouseEventKind::Drag(_) | MouseEventKind::Moved => None,
+    }
+}
+
+fn convert_mouse_button(button: CrosstermMouseButton) -> Option<MouseButton> {
+    match button {
+        CrosstermMouseButton::Left => Some(MouseButton::Left),
+        CrosstermMouseButton::Right => Some(MouseButton::Right),
+        CrosstermMouseButton::Middle => Some(MouseButton::Middle),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     #[test]
@@ -388,5 +488,57 @@ mod tests {
 
         assert_eq!(take_pending_resize(&doc), Some((120, 40)));
         assert_eq!(take_pending_resize(&doc), None);
+    }
+
+    #[test]
+    fn click_is_generated_from_matching_down_and_up() {
+        let doc = Document::new().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_handler = calls.clone();
+        doc.on_click(doc.root(), move |_| {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+
+        let mut pending_click = None;
+        process_runtime_event(
+            &doc,
+            RuntimeEvent::MouseDown(MouseEvent::new(1, 2, MouseButton::Left)),
+            &mut pending_click,
+        );
+        process_runtime_event(
+            &doc,
+            RuntimeEvent::MouseUp(MouseEvent::new(1, 2, MouseButton::Left)),
+            &mut pending_click,
+        );
+
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(pending_click.is_none());
+    }
+
+    #[test]
+    fn click_is_not_generated_when_up_cell_differs() {
+        let doc = Document::new().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_handler = calls.clone();
+        doc.on_click(doc.root(), move |_| {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+
+        let mut pending_click = None;
+        process_runtime_event(
+            &doc,
+            RuntimeEvent::MouseDown(MouseEvent::new(1, 2, MouseButton::Left)),
+            &mut pending_click,
+        );
+        process_runtime_event(
+            &doc,
+            RuntimeEvent::MouseUp(MouseEvent::new(2, 2, MouseButton::Left)),
+            &mut pending_click,
+        );
+
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(pending_click.is_none());
     }
 }

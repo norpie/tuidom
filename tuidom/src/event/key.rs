@@ -129,9 +129,7 @@ pub enum KeyCode {
 }
 
 pub(crate) fn convert_key_event(key: CrosstermKeyEvent) -> KeyEvent {
-    KeyEvent {
-        code: convert_key_code(key.code),
-    }
+    KeyEvent::new(convert_key_code(key.code))
 }
 
 fn convert_key_code(code: CrosstermKeyCode) -> KeyCode {

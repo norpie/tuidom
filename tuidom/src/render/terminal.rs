@@ -3,6 +3,7 @@
 use std::io::{self, Stdout, Write};
 
 use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::queue;
 use crossterm::style::{
     Attribute, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
@@ -27,6 +28,7 @@ impl Terminal {
         let mut setup = TerminalSetup::new(io::stdout());
         setup.enable_raw_mode()?;
         setup.enter_alternate_screen()?;
+        setup.enable_mouse_capture()?;
         setup.hide_cursor()?;
 
         Ok(Self {
@@ -92,7 +94,7 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        restore_terminal(&mut self.stdout, true, true, true);
+        restore_terminal(&mut self.stdout, true, true, true, true);
     }
 }
 
@@ -101,6 +103,7 @@ struct TerminalSetup {
     raw_mode_enabled: bool,
     alternate_screen_entered: bool,
     cursor_hidden: bool,
+    mouse_capture_enabled: bool,
 }
 
 impl TerminalSetup {
@@ -110,6 +113,7 @@ impl TerminalSetup {
             raw_mode_enabled: false,
             alternate_screen_entered: false,
             cursor_hidden: false,
+            mouse_capture_enabled: false,
         }
     }
 
@@ -122,6 +126,12 @@ impl TerminalSetup {
     fn enter_alternate_screen(&mut self) -> io::Result<()> {
         queue!(self.stdout()?, EnterAlternateScreen)?;
         self.alternate_screen_entered = true;
+        self.stdout()?.flush()
+    }
+
+    fn enable_mouse_capture(&mut self) -> io::Result<()> {
+        queue!(self.stdout()?, EnableMouseCapture)?;
+        self.mouse_capture_enabled = true;
         self.stdout()?.flush()
     }
 
@@ -141,6 +151,7 @@ impl TerminalSetup {
         self.raw_mode_enabled = false;
         self.alternate_screen_entered = false;
         self.cursor_hidden = false;
+        self.mouse_capture_enabled = false;
         self.stdout
             .take()
             .ok_or_else(|| io::Error::other("terminal setup missing stdout"))
@@ -153,6 +164,7 @@ impl Drop for TerminalSetup {
             restore_terminal(
                 stdout,
                 self.cursor_hidden,
+                self.mouse_capture_enabled,
                 self.alternate_screen_entered,
                 self.raw_mode_enabled,
             );
@@ -163,11 +175,15 @@ impl Drop for TerminalSetup {
 fn restore_terminal(
     stdout: &mut Stdout,
     cursor_hidden: bool,
+    mouse_capture_enabled: bool,
     alternate_screen_entered: bool,
     raw_mode_enabled: bool,
 ) {
     if cursor_hidden {
         let _ = queue!(stdout, Show);
+    }
+    if mouse_capture_enabled {
+        let _ = queue!(stdout, DisableMouseCapture);
     }
     if alternate_screen_entered {
         let _ = queue!(stdout, LeaveAlternateScreen);

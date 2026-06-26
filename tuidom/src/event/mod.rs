@@ -24,27 +24,50 @@ impl ListenerHandle {
     }
 }
 
-/// Shared event callback type used internally for snapshot dispatch.
-pub(crate) type EventHandler = Arc<dyn Fn(&Event) + Send + Sync + 'static>;
-
-/// Registered event listener.
-#[derive(Clone)]
-pub(crate) struct Listener {
-    /// Stable listener id used for removal.
-    pub id: u64,
-    /// Node this listener is attached to.
-    pub node: NodeId,
-    /// Callback invoked for matching events.
-    pub handler: EventHandler,
+/// The current dispatch phase for a targeted event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventPhase {
+    /// Dispatch is invoking listeners on the target node.
+    Target,
+    /// Dispatch is invoking listeners on an ancestor of the target node.
+    Bubble,
 }
 
-/// A terminal event dispatched to user handlers.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// A key was pressed.
-    KeyPress(KeyEvent),
-    /// The terminal was resized.
-    Resize(ResizeEvent),
+/// Mouse buttons reported by terminal mouse input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    /// Primary mouse button.
+    Left,
+    /// Secondary mouse button.
+    Right,
+    /// Middle mouse button.
+    Middle,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TargetedMetadata {
+    target: NodeId,
+    current_target: NodeId,
+    phase: EventPhase,
+    propagation_stopped: bool,
+}
+
+impl TargetedMetadata {
+    fn pending() -> Self {
+        let pending = NodeId::scoped(0, 0);
+        Self {
+            target: pending,
+            current_target: pending,
+            phase: EventPhase::Target,
+            propagation_stopped: false,
+        }
+    }
+
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.target = target;
+        self.current_target = current_target;
+        self.phase = phase;
+    }
 }
 
 /// A keyboard event.
@@ -52,6 +75,139 @@ pub enum Event {
 pub struct KeyEvent {
     /// The key that was pressed.
     pub code: KeyCode,
+    metadata: TargetedMetadata,
+}
+
+impl KeyEvent {
+    pub(crate) fn new(code: KeyCode) -> Self {
+        Self {
+            code,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node this event originally targeted.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
+/// A mouse button event.
+#[derive(Debug, Clone)]
+pub struct MouseEvent {
+    /// X coordinate in terminal cells.
+    pub x: i32,
+    /// Y coordinate in terminal cells.
+    pub y: i32,
+    /// Mouse button involved in the event.
+    pub button: MouseButton,
+    metadata: TargetedMetadata,
+}
+
+impl MouseEvent {
+    /// Create a mouse button event.
+    pub fn new(x: i32, y: i32, button: MouseButton) -> Self {
+        Self {
+            x,
+            y,
+            button,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node this event originally targeted.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
+/// A mouse wheel event.
+#[derive(Debug, Clone)]
+pub struct WheelEvent {
+    /// X coordinate in terminal cells.
+    pub x: i32,
+    /// Y coordinate in terminal cells.
+    pub y: i32,
+    /// Signed wheel delta. Positive values move upward; negative values move downward.
+    pub delta: i16,
+    metadata: TargetedMetadata,
+}
+
+impl WheelEvent {
+    /// Create a wheel event.
+    pub fn new(x: i32, y: i32, delta: i16) -> Self {
+        Self {
+            x,
+            y,
+            delta,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node this event originally targeted.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
 }
 
 /// A terminal resize event.
@@ -61,4 +217,82 @@ pub struct ResizeEvent {
     pub width: u16,
     /// New height in terminal cells.
     pub height: u16,
+}
+
+pub(crate) trait TargetedEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase);
+    fn propagation_stopped(&self) -> bool;
+}
+
+impl TargetedEvent for KeyEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
+impl TargetedEvent for MouseEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
+impl TargetedEvent for WheelEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
+pub(crate) type KeyEventHandler = Arc<dyn Fn(&mut KeyEvent) + Send + Sync + 'static>;
+pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
+pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
+pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TargetedEventKind {
+    KeyPress,
+    MouseDown,
+    MouseUp,
+    Click,
+    Wheel,
+}
+
+/// Registered event listener callback.
+#[derive(Clone)]
+pub(crate) enum ListenerKind {
+    /// Key press listener.
+    KeyPress(KeyEventHandler),
+    /// Mouse down listener.
+    MouseDown(MouseEventHandler),
+    /// Mouse up listener.
+    MouseUp(MouseEventHandler),
+    /// Mouse click listener.
+    Click(MouseEventHandler),
+    /// Mouse wheel listener.
+    Wheel(WheelEventHandler),
+    /// Terminal resize listener.
+    Resize(ResizeEventHandler),
+}
+
+/// Registered event listener.
+#[derive(Clone)]
+pub(crate) struct Listener {
+    /// Stable listener id used for removal.
+    pub id: u64,
+    /// Callback invoked for matching events.
+    pub kind: ListenerKind,
 }

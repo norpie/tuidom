@@ -9,7 +9,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
-use crate::event::Listener;
+use crate::event::{Listener, TargetedEventKind};
 use crate::event_loop::RuntimeEvent;
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
@@ -77,8 +77,11 @@ pub(crate) struct DocumentInner {
     /// Debug overlay — toggled via F1, renders performance stats.
     pub debug_overlay: Mutex<DebugOverlay>,
 
-    /// Event listeners attached to DOM nodes.
-    pub listeners: Mutex<Vec<Listener>>,
+    /// Targeted event listeners keyed by node and event kind.
+    pub targeted_listeners: Mutex<HashMap<(NodeId, TargetedEventKind), Vec<Listener>>>,
+
+    /// Document-level resize listeners.
+    pub resize_listeners: Mutex<Vec<Listener>>,
 }
 
 impl DocumentInner {

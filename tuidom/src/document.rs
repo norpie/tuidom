@@ -11,7 +11,10 @@ use crate::animation::TransitionConfig;
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::error::{Result, TuidomError};
-use crate::event::{Event, Listener, ListenerHandle};
+use crate::event::{
+    EventPhase, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent, ResizeEvent,
+    TargetedEvent, TargetedEventKind, WheelEvent,
+};
 use crate::id::{NodeId, next_document_id};
 use crate::inner::DocumentInner;
 use crate::lock;
@@ -70,7 +73,8 @@ impl Document {
                 layout: Mutex::new(crate::layout::LayoutEngine::new()),
                 layout_rects: RwLock::new(std::collections::HashMap::new()),
                 debug_overlay: Mutex::new(DebugOverlay::new()),
-                listeners: Mutex::new(Vec::new()),
+                targeted_listeners: Mutex::new(std::collections::HashMap::new()),
+                resize_listeners: Mutex::new(Vec::new()),
             }),
         };
         document.register_layout_node(root)?;
@@ -134,33 +138,126 @@ impl Document {
         self.inner.notify.notify_one();
     }
 
-    /// Register an event listener on a node.
+    /// Register a key press listener on a node.
     ///
-    /// The handler is called synchronously when an event is dispatched to this
-    /// node. Until focus and hit-testing are implemented, runtime events target
-    /// the document root. For async work, spawn a task inside the handler.
+    /// Key events currently target the document root until focus management is
+    /// implemented. For async work, spawn a task inside the handler.
     ///
     /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
-    pub fn on<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    pub fn on_key_press<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
     where
-        F: Fn(&Event) + Send + Sync + 'static,
+        F: Fn(&mut KeyEvent) + Send + Sync + 'static,
     {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::KeyPress,
+            ListenerKind::KeyPress(Arc::new(handler)),
+        )
+    }
+
+    /// Register a mouse down listener on a node.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_mouse_down<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut MouseEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::MouseDown,
+            ListenerKind::MouseDown(Arc::new(handler)),
+        )
+    }
+
+    /// Register a mouse up listener on a node.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_mouse_up<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut MouseEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::MouseUp,
+            ListenerKind::MouseUp(Arc::new(handler)),
+        )
+    }
+
+    /// Register a mouse click listener on a node.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_click<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut MouseEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Click,
+            ListenerKind::Click(Arc::new(handler)),
+        )
+    }
+
+    /// Register a mouse wheel listener on a node.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_wheel<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut WheelEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Wheel,
+            ListenerKind::Wheel(Arc::new(handler)),
+        )
+    }
+
+    /// Register a terminal resize listener.
+    ///
+    /// Resize is document-level and does not target or bubble through nodes.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_resize<F>(&self, handler: F) -> ListenerHandle
+    where
+        F: Fn(&mut ResizeEvent) + Send + Sync + 'static,
+    {
+        self.register_document_listener(ListenerKind::Resize(Arc::new(handler)))
+    }
+
+    fn register_targeted_listener(
+        &self,
+        node: NodeId,
+        event_kind: TargetedEventKind,
+        kind: ListenerKind,
+    ) -> Result<ListenerHandle> {
         if !self.inner.nodes.contains_key(&node) {
             return Err(TuidomError::NodeNotFound { id: node });
         }
 
+        let handle = self.next_listener_handle();
+        lock::mutex(&self.inner.targeted_listeners)
+            .entry((node, event_kind))
+            .or_default()
+            .push(Listener {
+                id: handle.id,
+                kind,
+            });
+        Ok(handle)
+    }
+
+    fn register_document_listener(&self, kind: ListenerKind) -> ListenerHandle {
+        let handle = self.next_listener_handle();
+        lock::mutex(&self.inner.resize_listeners).push(Listener {
+            id: handle.id,
+            kind,
+        });
+        handle
+    }
+
+    fn next_listener_handle(&self) -> ListenerHandle {
         let id = self
             .inner
             .next_listener_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let listener = Listener {
-            id,
-            node,
-            handler: Arc::new(handler),
-        };
-
-        lock::mutex(&self.inner.listeners).push(listener);
-        Ok(ListenerHandle::new(self.inner.document_id, id))
+        ListenerHandle::new(self.inner.document_id, id)
     }
 
     /// Remove an event listener.
@@ -168,34 +265,162 @@ impl Document {
     /// Returns `true` if a listener was removed, or `false` if the handle was
     /// unknown or had already been removed.
     pub fn remove_listener(&self, handle: ListenerHandle) -> bool {
-        let mut listeners = lock::mutex(&self.inner.listeners);
-        let old_len = listeners.len();
-        listeners.retain(|listener| {
-            listener.id != handle.id || handle.document_id != self.inner.document_id
-        });
-        listeners.len() != old_len
-    }
+        if handle.document_id != self.inner.document_id {
+            return false;
+        }
 
-    /// Dispatch an event to the document root-targeted event path.
-    pub(crate) fn dispatch_event(&self, event: Event) {
-        self.dispatch_event_to(self.root(), event);
-    }
+        let mut removed = false;
 
-    fn dispatch_event_to(&self, target: NodeId, event: Event) {
-        let listeners = lock::mutex(&self.inner.listeners).clone();
-
-        for listener in listeners
-            .into_iter()
-            .filter(|listener| listener.node == target)
         {
+            let mut targeted = lock::mutex(&self.inner.targeted_listeners);
+            for listeners in targeted.values_mut() {
+                let old_len = listeners.len();
+                listeners.retain(|listener| listener.id != handle.id);
+                removed |= listeners.len() != old_len;
+            }
+            targeted.retain(|_, listeners| !listeners.is_empty());
+        }
+
+        {
+            let mut resize = lock::mutex(&self.inner.resize_listeners);
+            let old_len = resize.len();
+            resize.retain(|listener| listener.id != handle.id);
+            removed |= resize.len() != old_len;
+        }
+
+        removed
+    }
+
+    /// Dispatch a key press from the current keyboard target.
+    pub(crate) fn dispatch_key_press(&self, mut event: KeyEvent) {
+        self.dispatch_key_press_to(self.root(), &mut event);
+    }
+
+    pub(crate) fn dispatch_key_press_to(&self, target: NodeId, event: &mut KeyEvent) {
+        self.dispatch_targeted_event(target, event, TargetedEventKind::KeyPress, |kind, event| {
+            if let ListenerKind::KeyPress(handler) = kind {
+                handler(event);
+            }
+        });
+    }
+
+    pub(crate) fn dispatch_mouse_down_to(&self, target: NodeId, event: &mut MouseEvent) {
+        self.dispatch_targeted_event(
+            target,
+            event,
+            TargetedEventKind::MouseDown,
+            |kind, event| {
+                if let ListenerKind::MouseDown(handler) = kind {
+                    handler(event);
+                }
+            },
+        );
+    }
+
+    pub(crate) fn dispatch_mouse_up_to(&self, target: NodeId, event: &mut MouseEvent) {
+        self.dispatch_targeted_event(target, event, TargetedEventKind::MouseUp, |kind, event| {
+            if let ListenerKind::MouseUp(handler) = kind {
+                handler(event);
+            }
+        });
+    }
+
+    pub(crate) fn dispatch_click_to(&self, target: NodeId, event: &mut MouseEvent) {
+        self.dispatch_targeted_event(target, event, TargetedEventKind::Click, |kind, event| {
+            if let ListenerKind::Click(handler) = kind {
+                handler(event);
+            }
+        });
+    }
+
+    pub(crate) fn dispatch_wheel_to(&self, target: NodeId, event: &mut WheelEvent) {
+        self.dispatch_targeted_event(target, event, TargetedEventKind::Wheel, |kind, event| {
+            if let ListenerKind::Wheel(handler) = kind {
+                handler(event);
+            }
+        });
+    }
+
+    pub(crate) fn dispatch_resize(&self, mut event: ResizeEvent) {
+        let listeners = lock::mutex(&self.inner.resize_listeners).clone();
+        for listener in listeners {
             let result = catch_unwind(AssertUnwindSafe(|| {
-                (listener.handler)(&event);
+                if let ListenerKind::Resize(handler) = &listener.kind {
+                    handler(&mut event);
+                }
             }));
 
             if result.is_err() {
                 log::error!("event listener {} panicked", listener.id);
             }
         }
+    }
+
+    fn dispatch_targeted_event<E>(
+        &self,
+        target: NodeId,
+        event: &mut E,
+        event_kind: TargetedEventKind,
+        invoke: impl Fn(&ListenerKind, &mut E),
+    ) where
+        E: TargetedEvent,
+    {
+        let path = self.event_path(target);
+        if path.is_empty() {
+            return;
+        }
+
+        let listener_snapshots = {
+            let listeners = lock::mutex(&self.inner.targeted_listeners);
+            path.iter()
+                .map(|node| {
+                    (
+                        *node,
+                        listeners
+                            .get(&(*node, event_kind))
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (index, (current_target, listeners)) in listener_snapshots.into_iter().enumerate() {
+            let phase = if index == 0 {
+                EventPhase::Target
+            } else {
+                EventPhase::Bubble
+            };
+            event.set_dispatch_state(target, current_target, phase);
+
+            for listener in listeners {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    invoke(&listener.kind, event);
+                }));
+
+                if result.is_err() {
+                    log::error!("event listener {} panicked", listener.id);
+                }
+            }
+
+            if event.propagation_stopped() {
+                break;
+            }
+        }
+    }
+
+    fn event_path(&self, target: NodeId) -> Vec<NodeId> {
+        if !self.inner.nodes.contains_key(&target) {
+            return Vec::new();
+        }
+
+        let mut path = vec![target];
+        let mut current = target;
+        while let Some(parent) = self.get_parent(current) {
+            path.push(parent);
+            current = parent;
+        }
+        path
     }
 
     /// Record rendering metrics for the debug overlay.
@@ -731,7 +956,7 @@ impl Document {
 
     fn remove_node_side_state(&self, id: NodeId) -> Result<()> {
         self.remove_layout_node(id)?;
-        lock::mutex(&self.inner.listeners).retain(|listener| listener.node != id);
+        lock::mutex(&self.inner.targeted_listeners).retain(|(node, _), _| *node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
         Ok(())
     }
@@ -820,7 +1045,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::event::{Event, KeyCode, KeyEvent};
+    use crate::event::{
+        EventPhase, KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
+    };
     use crate::node::LayoutRect;
     use crate::style::{Color, Display, Length};
 
@@ -993,10 +1220,8 @@ mod tests {
         assert_eq!(doc.layout_children(root), Vec::<NodeId>::new());
     }
 
-    fn key_event() -> Event {
-        Event::KeyPress(KeyEvent {
-            code: KeyCode::Char('x'),
-        })
+    fn key_event() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('x'))
     }
 
     fn set_layout(doc: &Document, node: NodeId, layout: LayoutRect) {
@@ -1021,6 +1246,13 @@ mod tests {
     fn set_z_index(doc: &Document, node: NodeId, z_index: i32) {
         doc.update_style(node, |style| style.z_index(z_index))
             .unwrap();
+    }
+
+    fn targeted_listener_count(doc: &Document) -> usize {
+        lock::mutex(&doc.inner.targeted_listeners)
+            .values()
+            .map(Vec::len)
+            .sum()
     }
 
     #[test]
@@ -1149,18 +1381,18 @@ mod tests {
         let calls_for_handler = calls.clone();
 
         let handle = doc
-            .on(root, move |_| {
+            .on_key_press(root, move |_| {
                 calls_for_handler.fetch_add(1, Ordering::Relaxed);
             })
             .unwrap();
 
-        doc.dispatch_event(key_event());
+        doc.dispatch_key_press(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
 
         assert!(doc.remove_listener(handle));
         assert!(!doc.remove_listener(handle));
 
-        doc.dispatch_event(key_event());
+        doc.dispatch_key_press(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 
@@ -1173,22 +1405,22 @@ mod tests {
 
         let first_calls_for_handler = first_calls.clone();
         let first_handle = first
-            .on(first.root(), move |_| {
+            .on_key_press(first.root(), move |_| {
                 first_calls_for_handler.fetch_add(1, Ordering::Relaxed);
             })
             .unwrap();
 
         let second_calls_for_handler = second_calls.clone();
         second
-            .on(second.root(), move |_| {
+            .on_key_press(second.root(), move |_| {
                 second_calls_for_handler.fetch_add(1, Ordering::Relaxed);
             })
             .unwrap();
 
         assert!(!second.remove_listener(first_handle));
 
-        first.dispatch_event(key_event());
-        second.dispatch_event(key_event());
+        first.dispatch_key_press(key_event());
+        second.dispatch_key_press(key_event());
         assert_eq!(first_calls.load(Ordering::Relaxed), 1);
         assert_eq!(second_calls.load(Ordering::Relaxed), 1);
     }
@@ -1201,21 +1433,21 @@ mod tests {
         let doc_for_handler = doc.clone();
         let calls_for_handler = calls.clone();
 
-        doc.on(root, move |_| {
+        doc.on_key_press(root, move |_| {
             calls_for_handler.fetch_add(1, Ordering::Relaxed);
             let calls_for_new_handler = calls_for_handler.clone();
             doc_for_handler
-                .on(root, move |_| {
+                .on_key_press(root, move |_| {
                     calls_for_new_handler.fetch_add(10, Ordering::Relaxed);
                 })
                 .unwrap();
         })
         .unwrap();
 
-        doc.dispatch_event(key_event());
+        doc.dispatch_key_press(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
 
-        doc.dispatch_event(key_event());
+        doc.dispatch_key_press(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 12);
     }
 
@@ -1226,18 +1458,18 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
 
-        doc.on(root, |_| panic!("listener boom")).unwrap();
-        doc.on(root, move |_| {
+        doc.on_key_press(root, |_| panic!("listener boom")).unwrap();
+        doc.on_key_press(root, move |_| {
             calls_for_handler.fetch_add(1, Ordering::Relaxed);
         })
         .unwrap();
 
-        doc.dispatch_event(key_event());
+        doc.dispatch_key_press(key_event());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]
-    fn dispatch_targets_root_listeners_only_for_now() {
+    fn key_dispatch_targets_root_until_focus_exists() {
         let doc = Document::new().unwrap();
         let root = doc.root();
         let child = doc.create_box().unwrap();
@@ -1247,18 +1479,18 @@ mod tests {
         let child_calls = Arc::new(AtomicUsize::new(0));
 
         let root_calls_for_handler = root_calls.clone();
-        doc.on(root, move |_| {
+        doc.on_key_press(root, move |_| {
             root_calls_for_handler.fetch_add(1, Ordering::Relaxed);
         })
         .unwrap();
 
         let child_calls_for_handler = child_calls.clone();
-        doc.on(child, move |_| {
+        doc.on_key_press(child, move |_| {
             child_calls_for_handler.fetch_add(1, Ordering::Relaxed);
         })
         .unwrap();
 
-        doc.dispatch_event(key_event());
+        doc.dispatch_key_press(key_event());
 
         assert_eq!(root_calls.load(Ordering::Relaxed), 1);
         assert_eq!(child_calls.load(Ordering::Relaxed), 0);
@@ -1267,8 +1499,188 @@ mod tests {
     #[test]
     fn registering_listener_on_missing_node_returns_error() {
         let doc = Document::new().unwrap();
-        let result = doc.on(NodeId::new(999), |_| {});
+        let result = doc.on_key_press(NodeId::new(999), |_| {});
         assert!(matches!(result, Err(TuidomError::NodeNotFound { .. })));
+    }
+
+    #[test]
+    fn targeted_event_bubbles_from_target_to_root() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        doc.append_child(root, parent).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        for node in [root, parent, child] {
+            let calls_for_handler = calls.clone();
+            doc.on_key_press(node, move |event| {
+                calls_for_handler
+                    .lock()
+                    .unwrap()
+                    .push((event.current_target(), event.phase()));
+            })
+            .unwrap();
+        }
+
+        let mut event = key_event();
+        doc.dispatch_key_press_to(child, &mut event);
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                (child, EventPhase::Target),
+                (parent, EventPhase::Bubble),
+                (root, EventPhase::Bubble),
+            ]
+        );
+        assert_eq!(event.target(), child);
+    }
+
+    #[test]
+    fn stop_propagation_prevents_ancestor_dispatch_after_current_node() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        doc.append_child(root, parent).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let calls_for_child = calls.clone();
+        doc.on_key_press(child, move |_| {
+            calls_for_child.lock().unwrap().push("child");
+        })
+        .unwrap();
+
+        let calls_for_parent_first = calls.clone();
+        doc.on_key_press(parent, move |event| {
+            calls_for_parent_first.lock().unwrap().push("parent-first");
+            event.stop_propagation();
+        })
+        .unwrap();
+
+        let calls_for_parent_second = calls.clone();
+        doc.on_key_press(parent, move |_| {
+            calls_for_parent_second
+                .lock()
+                .unwrap()
+                .push("parent-second");
+        })
+        .unwrap();
+
+        let calls_for_root = calls.clone();
+        doc.on_key_press(root, move |_| {
+            calls_for_root.lock().unwrap().push("root");
+        })
+        .unwrap();
+
+        let mut event = key_event();
+        doc.dispatch_key_press_to(child, &mut event);
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["child", "parent-first", "parent-second"]
+        );
+        assert!(event.propagation_stopped());
+    }
+
+    #[test]
+    fn resize_listener_is_document_level() {
+        let doc = Document::new().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let seen_for_handler = seen.clone();
+
+        doc.on_resize(move |event| {
+            *seen_for_handler.lock().unwrap() = Some((event.width, event.height));
+        });
+
+        doc.dispatch_resize(ResizeEvent {
+            width: 80,
+            height: 24,
+        });
+
+        assert_eq!(*seen.lock().unwrap(), Some((80, 24)));
+    }
+
+    #[test]
+    fn mouse_button_listeners_dispatch_by_event_type() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let calls_for_down = calls.clone();
+        doc.on_mouse_down(root, move |event| {
+            calls_for_down
+                .lock()
+                .unwrap()
+                .push(("down", event.x, event.y, event.button));
+        })
+        .unwrap();
+
+        let calls_for_up = calls.clone();
+        doc.on_mouse_up(root, move |event| {
+            calls_for_up
+                .lock()
+                .unwrap()
+                .push(("up", event.x, event.y, event.button));
+        })
+        .unwrap();
+
+        let calls_for_click = calls.clone();
+        doc.on_click(root, move |event| {
+            calls_for_click
+                .lock()
+                .unwrap()
+                .push(("click", event.x, event.y, event.button));
+        })
+        .unwrap();
+
+        let mut down = MouseEvent::new(3, 4, MouseButton::Left);
+        doc.dispatch_mouse_down_to(root, &mut down);
+        let mut up = MouseEvent::new(3, 4, MouseButton::Left);
+        doc.dispatch_mouse_up_to(root, &mut up);
+        let mut click = MouseEvent::new(3, 4, MouseButton::Left);
+        doc.dispatch_click_to(root, &mut click);
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                ("down", 3, 4, MouseButton::Left),
+                ("up", 3, 4, MouseButton::Left),
+                ("click", 3, 4, MouseButton::Left),
+            ]
+        );
+    }
+
+    #[test]
+    fn wheel_listener_dispatches_wheel_event() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let seen_for_handler = seen.clone();
+
+        doc.on_wheel(root, move |event| {
+            *seen_for_handler.lock().unwrap() = Some((
+                event.x,
+                event.y,
+                event.delta,
+                event.target(),
+                event.current_target(),
+                event.phase(),
+            ));
+        })
+        .unwrap();
+
+        let mut event = WheelEvent::new(5, 6, -1);
+        doc.dispatch_wheel_to(root, &mut event);
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((5, 6, -1, root, root, EventPhase::Target))
+        );
     }
 
     #[test]
@@ -1470,13 +1882,13 @@ mod tests {
 
         doc.append_child(root, child).unwrap();
         doc.append_child(child, grandchild).unwrap();
-        doc.on(child, |_| {}).unwrap();
-        doc.on(grandchild, |_| {}).unwrap();
-        assert_eq!(lock::mutex(&doc.inner.listeners).len(), 2);
+        doc.on_key_press(child, |_| {}).unwrap();
+        doc.on_key_press(grandchild, |_| {}).unwrap();
+        assert_eq!(targeted_listener_count(&doc), 2);
 
         doc.remove_child(root, child).unwrap();
 
-        assert!(lock::mutex(&doc.inner.listeners).is_empty());
+        assert_eq!(targeted_listener_count(&doc), 0);
     }
 
     #[test]
