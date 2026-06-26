@@ -10,7 +10,7 @@ use tokio::sync::{Notify, mpsc};
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::event::Listener;
-use crate::event_loop::{RenderCommand, RuntimeEvent};
+use crate::event_loop::RuntimeEvent;
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
 use crate::node::{LayoutRect, NodeData};
@@ -50,11 +50,11 @@ pub(crate) struct DocumentInner {
     /// Receiver for queued runtime events, consumed sequentially by the event loop.
     pub event_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<RuntimeEvent>>,
 
-    /// Sender for render-task commands.
-    pub render_tx: mpsc::UnboundedSender<RenderCommand>,
+    /// Latest pending terminal resize for the render task.
+    pub pending_resize: Mutex<Option<(u16, u16)>>,
 
-    /// Receiver for render-task commands.
-    pub render_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<RenderCommand>>,
+    /// Wakeup for render-task resize handling.
+    pub resize_notify: Notify,
 
     /// Broadcast wakeup for runtime shutdown.
     pub shutdown_notify: Arc<Notify>,

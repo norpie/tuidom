@@ -44,7 +44,6 @@ impl Document {
     /// Create a new document with a permanent root node.
     pub fn new() -> Result<Self> {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (render_tx, render_rx) = tokio::sync::mpsc::unbounded_channel();
         let document_id = next_document_id();
         let root = NodeId::scoped(document_id, 0);
         let nodes = dashmap::DashMap::new();
@@ -62,8 +61,8 @@ impl Document {
                 shutdown: std::sync::RwLock::new(false),
                 event_tx,
                 event_rx: tokio::sync::Mutex::new(event_rx),
-                render_tx,
-                render_rx: tokio::sync::Mutex::new(render_rx),
+                pending_resize: Mutex::new(None),
+                resize_notify: Notify::new(),
                 shutdown_notify: Arc::new(Notify::new()),
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
@@ -123,12 +122,9 @@ impl Document {
     pub fn quit(&self) {
         *lock::rw_write(&self.inner.shutdown) = true;
         self.inner.notify.notify_waiters();
+        self.inner.resize_notify.notify_waiters();
         self.inner.anim_config_changed.notify_waiters();
         self.inner.shutdown_notify.notify_waiters();
-        let _ = self
-            .inner
-            .render_tx
-            .send(crate::event_loop::RenderCommand::Shutdown);
     }
 
     /// Toggle the debug overlay on/off.

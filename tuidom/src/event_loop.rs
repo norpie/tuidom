@@ -26,15 +26,6 @@ pub(crate) enum RuntimeEvent {
     Resize(ResizeEvent),
 }
 
-/// Internal render-task command.
-#[derive(Debug, Clone)]
-pub(crate) enum RenderCommand {
-    /// Resize terminal buffers and perform a full redraw.
-    Resize { width: u16, height: u16 },
-    /// Stop the render task.
-    Shutdown,
-}
-
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
     let mut tasks = JoinSet::new();
@@ -119,7 +110,7 @@ async fn event_task(doc: Document) -> io::Result<()> {
                         "runtime event queue closed",
                     ));
                 };
-                process_runtime_event(&doc, event)?;
+                process_runtime_event(&doc, event);
             }
         }
     }
@@ -144,32 +135,22 @@ async fn render_task(doc: Document) -> io::Result<()> {
         tokio::select! {
             _ = doc.inner.shutdown_notify.notified() => break,
 
-            maybe_command = recv_render_command(&doc) => {
-                let Some(command) = maybe_command else {
-                    if is_shutdown(&doc) {
-                        break;
-                    }
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "render command queue closed",
-                    ));
-                };
-
-                match command {
-                    RenderCommand::Resize { width, height } => {
-                        screen_w = width;
-                        screen_h = height;
-                        renderer.resize(width, height);
-                        render_full_timed_capped(
-                            &doc,
-                            &mut renderer,
-                            screen_w,
-                            screen_h,
-                            &mut next_frame_at,
-                        )
-                        .await?;
-                    }
-                    RenderCommand::Shutdown => break,
+            _ = doc.inner.resize_notify.notified() => {
+                if is_shutdown(&doc) {
+                    break;
+                }
+                if let Some((width, height)) = take_pending_resize(&doc) {
+                    screen_w = width;
+                    screen_h = height;
+                    renderer.resize(width, height);
+                    render_full_timed_capped(
+                        &doc,
+                        &mut renderer,
+                        screen_w,
+                        screen_h,
+                        &mut next_frame_at,
+                    )
+                    .await?;
                 }
             }
 
@@ -239,33 +220,26 @@ async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
     doc.inner.event_rx.lock().await.recv().await
 }
 
-async fn recv_render_command(doc: &Document) -> Option<RenderCommand> {
-    doc.inner.render_rx.lock().await.recv().await
-}
-
 /// Process one queued runtime event.
-fn process_runtime_event(doc: &Document, event: RuntimeEvent) -> io::Result<()> {
+fn process_runtime_event(doc: &Document, event: RuntimeEvent) {
     match event {
         RuntimeEvent::KeyPress(key) => {
             doc.dispatch_event(Event::KeyPress(key));
-            Ok(())
         }
         RuntimeEvent::Resize(resize) => {
             doc.dispatch_event(Event::Resize(resize.clone()));
-            doc.inner
-                .render_tx
-                .send(RenderCommand::Resize {
-                    width: resize.width,
-                    height: resize.height,
-                })
-                .map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "render command queue receiver is closed",
-                    )
-                })
+            set_pending_resize(doc, resize);
         }
     }
+}
+
+fn set_pending_resize(doc: &Document, resize: ResizeEvent) {
+    *lock::mutex(&doc.inner.pending_resize) = Some((resize.width, resize.height));
+    doc.inner.resize_notify.notify_one();
+}
+
+fn take_pending_resize(doc: &Document) -> Option<(u16, u16)> {
+    lock::mutex(&doc.inner.pending_resize).take()
 }
 
 /// Render a diffed frame with timing for the debug overlay.
@@ -386,5 +360,33 @@ fn convert_terminal_event(event: CrosstermEvent) -> Option<RuntimeEvent> {
             Some(RuntimeEvent::KeyPress(convert_key_event(key)))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_resize_keeps_latest_size() {
+        let doc = Document::new().unwrap();
+
+        set_pending_resize(
+            &doc,
+            ResizeEvent {
+                width: 80,
+                height: 24,
+            },
+        );
+        set_pending_resize(
+            &doc,
+            ResizeEvent {
+                width: 120,
+                height: 40,
+            },
+        );
+
+        assert_eq!(take_pending_resize(&doc), Some((120, 40)));
+        assert_eq!(take_pending_resize(&doc), None);
     }
 }
