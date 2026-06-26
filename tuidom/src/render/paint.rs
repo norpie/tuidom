@@ -3,12 +3,10 @@
 use std::time::{Duration, Instant};
 
 use crate::document::Document;
-use crate::id::NodeId;
-use crate::node::{LayoutRect, NodeKindView};
+use crate::node::NodeKindView;
+use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::grid::{Cell, Grid, GridRect};
-use crate::style::Display;
 use crate::style::color::RgbCache;
-use crate::style::resolution::ResolvedStyle;
 
 /// DOM painting stage timings.
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,20 +19,15 @@ pub(crate) struct DomPaintStats {
 
 /// Paint the visible portion of the DOM tree into the grid.
 pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -> DomPaintStats {
-    let root = doc.root();
-
-    let mut sequence = 0;
-
     let collect_start = Instant::now();
-    let context = collect_context(doc, root, &mut sequence);
+    let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
 
-    let mut paint_time = Duration::ZERO;
-    if let Some(context) = context {
-        let paint_start = Instant::now();
-        paint_context(grid, &context, rgb_cache);
-        paint_time = paint_start.elapsed();
+    let paint_start = Instant::now();
+    for entry in &entries {
+        paint_entry(grid, entry, rgb_cache);
     }
+    let paint_time = paint_start.elapsed();
 
     DomPaintStats {
         collect_time,
@@ -42,61 +35,7 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -
     }
 }
 
-#[derive(Debug)]
-struct PaintNode {
-    kind: NodeKindView,
-    layout: LayoutRect,
-    resolved: ResolvedStyle,
-    sequence: u64,
-    children: Vec<PaintNode>,
-}
-
-fn collect_context(doc: &Document, root: NodeId, sequence: &mut u64) -> Option<PaintNode> {
-    collect_node_tree(doc, root, sequence, 0)
-}
-
-fn collect_node_tree(
-    doc: &Document,
-    node_id: NodeId,
-    sequence: &mut u64,
-    node_sequence: u64,
-) -> Option<PaintNode> {
-    let view = doc.get_node(node_id)?;
-    let resolved = doc.resolved_style(node_id).ok()?;
-    if resolved.display == Display::None || resolved.opacity <= 0.0 {
-        return None;
-    }
-    let layout = view.layout?;
-
-    let mut children = Vec::new();
-    for child in doc.get_children(node_id) {
-        *sequence += 1;
-        if let Some(child_node) = collect_node_tree(doc, child, sequence, *sequence) {
-            children.push(child_node);
-        }
-    }
-
-    Some(PaintNode {
-        kind: view.kind,
-        layout,
-        resolved,
-        sequence: node_sequence,
-        children,
-    })
-}
-
-fn paint_context(grid: &mut Grid, root: &PaintNode, rgb_cache: &mut RgbCache) {
-    paint_node_self(grid, root, rgb_cache);
-
-    let mut children = root.children.iter().collect::<Vec<_>>();
-    children.sort_by_key(|child| (child.resolved.z_index, child.sequence));
-
-    for child in children {
-        paint_context(grid, child, rgb_cache);
-    }
-}
-
-fn paint_node_self(grid: &mut Grid, node: &PaintNode, rgb_cache: &mut RgbCache) {
+fn paint_entry(grid: &mut Grid, node: &PaintEntry, rgb_cache: &mut RgbCache) {
     let alpha = node.resolved.opacity;
     let bg_rgb = node.resolved.background.map(|c| rgb_cache.resolve(c));
     let fg_rgb = rgb_cache.resolve(node.resolved.color);
@@ -146,6 +85,7 @@ fn paint_node_self(grid: &mut Grid, node: &PaintNode, rgb_cache: &mut RgbCache) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::id::NodeId;
     use crate::node::LayoutRect;
     use crate::style::color::Rgb;
     use crate::style::{Color, Display, Length, Style};

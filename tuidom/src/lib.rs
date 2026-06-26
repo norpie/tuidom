@@ -26,6 +26,7 @@ pub(crate) mod layout;
 mod lock;
 /// Node data storage and views.
 mod node;
+mod paint_order;
 /// Screen buffer and rendering.
 pub(crate) mod render;
 

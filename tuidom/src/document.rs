@@ -686,6 +686,19 @@ impl Document {
         self.get_node_unlocked(id)
     }
 
+    /// Get the topmost node at the given screen coordinate.
+    ///
+    /// Uses the latest committed layout snapshot. If layout has not been
+    /// computed yet, or no visible node contains the coordinate, returns
+    /// `None`.
+    pub fn node_at(&self, x: i32, y: i32) -> Option<NodeId> {
+        crate::paint_order::paint_order(self)
+            .into_iter()
+            .rev()
+            .find(|entry| layout_contains(entry.layout, x, y))
+            .map(|entry| entry.id)
+    }
+
     fn get_node_unlocked(&self, id: NodeId) -> Option<NodeView> {
         let layout = lock::rw_read(&self.inner.layout_rects).get(&id).copied();
         self.inner.nodes.get(&id).map(|r| NodeView {
@@ -794,6 +807,13 @@ impl Document {
     }
 }
 
+fn layout_contains(layout: crate::node::LayoutRect, x: i32, y: i32) -> bool {
+    let right = layout.x.saturating_add(i32::from(layout.width));
+    let bottom = layout.y.saturating_add(i32::from(layout.height));
+
+    x >= layout.x && x < right && y >= layout.y && y < bottom
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -801,7 +821,8 @@ mod tests {
 
     use super::*;
     use crate::event::{Event, KeyCode, KeyEvent};
-    use crate::style::{Color, Length};
+    use crate::node::LayoutRect;
+    use crate::style::{Color, Display, Length};
 
     #[test]
     fn create_nodes() {
@@ -976,6 +997,117 @@ mod tests {
         Event::KeyPress(KeyEvent {
             code: KeyCode::Char('x'),
         })
+    }
+
+    fn set_layout(doc: &Document, node: NodeId, layout: LayoutRect) {
+        lock::rw_write(&doc.inner.layout_rects).insert(node, layout);
+    }
+
+    fn one_cell() -> LayoutRect {
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        }
+    }
+
+    fn set_one_cell_layouts(doc: &Document, nodes: &[NodeId]) {
+        for node in nodes {
+            set_layout(doc, *node, one_cell());
+        }
+    }
+
+    fn set_z_index(doc: &Document, node: NodeId, z_index: i32) {
+        doc.update_style(node, |style| style.z_index(z_index))
+            .unwrap();
+    }
+
+    #[test]
+    fn node_at_returns_none_before_layout_is_available() {
+        let doc = Document::new().unwrap();
+        assert_eq!(doc.node_at(0, 0), None);
+    }
+
+    #[test]
+    fn node_at_uses_layout_bounds() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        set_layout(&doc, root, one_cell());
+
+        assert_eq!(doc.node_at(0, 0), Some(root));
+        assert_eq!(doc.node_at(1, 0), None);
+        assert_eq!(doc.node_at(0, 1), None);
+        assert_eq!(doc.node_at(-1, 0), None);
+    }
+
+    #[test]
+    fn node_at_uses_dom_order_for_equal_z_index() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        doc.append_child(root, first).unwrap();
+        doc.append_child(root, second).unwrap();
+        set_one_cell_layouts(&doc, &[root, first, second]);
+
+        assert_eq!(doc.node_at(0, 0), Some(second));
+    }
+
+    #[test]
+    fn node_at_uses_z_index_over_dom_order() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let high = doc.create_box().unwrap();
+        let low = doc.create_box().unwrap();
+
+        set_z_index(&doc, high, 10);
+        set_z_index(&doc, low, 0);
+        doc.append_child(root, high).unwrap();
+        doc.append_child(root, low).unwrap();
+        set_one_cell_layouts(&doc, &[root, high, low]);
+
+        assert_eq!(doc.node_at(0, 0), Some(high));
+    }
+
+    #[test]
+    fn node_at_skips_display_none_and_opacity_zero_nodes() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let visible = doc.create_box().unwrap();
+        let hidden = doc.create_box().unwrap();
+        let transparent = doc.create_box().unwrap();
+
+        doc.update_style(hidden, |style| style.display(Display::None))
+            .unwrap();
+        doc.update_style(transparent, |style| style.opacity(0.0))
+            .unwrap();
+        doc.append_child(root, visible).unwrap();
+        doc.append_child(root, hidden).unwrap();
+        doc.append_child(root, transparent).unwrap();
+        set_one_cell_layouts(&doc, &[root, visible, hidden, transparent]);
+
+        assert_eq!(doc.node_at(0, 0), Some(visible));
+    }
+
+    #[test]
+    fn node_at_keeps_descendant_z_index_inside_parent_subtree() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        let sibling = doc.create_box().unwrap();
+
+        set_z_index(&doc, parent, 0);
+        set_z_index(&doc, child, 999);
+        set_z_index(&doc, sibling, 1);
+        doc.append_child(root, parent).unwrap();
+        doc.append_child(parent, child).unwrap();
+        doc.append_child(root, sibling).unwrap();
+        set_one_cell_layouts(&doc, &[root, parent, child, sibling]);
+
+        assert_eq!(doc.node_at(0, 0), Some(sibling));
     }
 
     #[test]
