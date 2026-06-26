@@ -26,6 +26,7 @@ Plans live in `.plans/` directory (gitignored).
 3. Agree on implementation strategy
 4. Write the plan in `.plans/` with checkboxes to track progress
 5. Keep checkboxes updated as you work — don't add "implementation details" sections after implementing
+6. After implementing a step, introduce the next step in the plan.
 
 **When hitting snags or blockers:**
 - **Discuss with user** instead of working around or taking shortcuts
