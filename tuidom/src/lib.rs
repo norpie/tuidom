@@ -17,6 +17,8 @@ mod error;
 pub mod event;
 /// Render + event loop.
 mod event_loop;
+/// Headless runtime and screen inspection APIs.
+pub mod headless;
 /// Node handle types.
 mod id;
 /// Internal document state.
