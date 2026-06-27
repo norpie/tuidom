@@ -202,6 +202,9 @@ impl Document {
     pub(crate) fn dispatch_key_press(&self, mut event: KeyEvent) {
         let target = self.focused().unwrap_or_else(|| self.root());
         self.dispatch_key_press_to(target, &mut event);
+        if !event.default_prevented() {
+            self.apply_focus_default_action(event.code);
+        }
     }
 
     pub(crate) fn dispatch_key_press_to(&self, target: NodeId, event: &mut KeyEvent) {

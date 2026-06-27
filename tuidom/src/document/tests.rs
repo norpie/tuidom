@@ -557,6 +557,252 @@ fn focus_keys_are_configurable() {
 }
 
 #[test]
+fn escape_dispatches_normally_when_no_node_is_focused() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_handler = calls.clone();
+    doc.on_key_press(root, move |event| {
+        if event.code == KeyCode::Esc {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        }
+    })
+    .unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Esc));
+
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn focus_default_action_blurs_on_configured_key() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    doc.focus(node).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Esc));
+
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn prevent_default_skips_focus_default_action() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    doc.focus(node).unwrap();
+
+    doc.on_key_press(node, |event| {
+        if event.code == KeyCode::Esc {
+            event.prevent_default();
+        }
+    })
+    .unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Esc));
+
+    assert_eq!(doc.focused(), Some(node));
+}
+
+#[test]
+fn configured_focus_keys_drive_default_actions() {
+    let doc = Document::new().unwrap();
+    let first = doc.create_box().unwrap();
+    let second = doc.create_box().unwrap();
+    doc.append_child(doc.root(), first).unwrap();
+    doc.append_child(doc.root(), second).unwrap();
+    doc.set_focusable(first, true).unwrap();
+    doc.set_focusable(second, true).unwrap();
+
+    let keys = FocusKeys {
+        next: vec![KeyCode::Char('n')],
+        previous: vec![KeyCode::Char('p')],
+        up: Vec::new(),
+        down: Vec::new(),
+        left: Vec::new(),
+        right: Vec::new(),
+        blur: vec![KeyCode::Char('q')],
+    };
+    doc.set_focus_keys(keys);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('n')));
+    assert_eq!(doc.focused(), Some(first));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('n')));
+    assert_eq!(doc.focused(), Some(second));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('p')));
+    assert_eq!(doc.focused(), Some(first));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('q')));
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn tab_navigation_uses_dom_order_without_wrapping() {
+    let doc = Document::new().unwrap();
+    let first = doc.create_box().unwrap();
+    let parent = doc.create_box().unwrap();
+    let nested = doc.create_box().unwrap();
+    doc.append_child(doc.root(), first).unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    doc.append_child(parent, nested).unwrap();
+    for node in [first, parent, nested] {
+        doc.set_focusable(node, true).unwrap();
+    }
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(first));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(parent));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(nested));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(nested));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
+    assert_eq!(doc.focused(), Some(parent));
+}
+
+#[test]
+fn backtab_from_none_focuses_last_focusable_node() {
+    let doc = Document::new().unwrap();
+    let first = doc.create_box().unwrap();
+    let second = doc.create_box().unwrap();
+    doc.append_child(doc.root(), first).unwrap();
+    doc.append_child(doc.root(), second).unwrap();
+    doc.set_focusable(first, true).unwrap();
+    doc.set_focusable(second, true).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
+
+    assert_eq!(doc.focused(), Some(second));
+}
+
+#[test]
+fn spatial_navigation_chooses_nearest_focusable_node() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let current = doc.create_box().unwrap();
+    let near_right = doc.create_box().unwrap();
+    let far_right = doc.create_box().unwrap();
+    doc.append_child(root, current).unwrap();
+    doc.append_child(root, near_right).unwrap();
+    doc.append_child(root, far_right).unwrap();
+    for node in [current, near_right, far_right] {
+        doc.set_focusable(node, true).unwrap();
+    }
+    set_layout(
+        &doc,
+        root,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 10,
+        },
+    );
+    set_layout(
+        &doc,
+        current,
+        LayoutRect {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 2,
+        },
+    );
+    set_layout(
+        &doc,
+        near_right,
+        LayoutRect {
+            x: 4,
+            y: 1,
+            width: 2,
+            height: 2,
+        },
+    );
+    set_layout(
+        &doc,
+        far_right,
+        LayoutRect {
+            x: 10,
+            y: 1,
+            width: 2,
+            height: 2,
+        },
+    );
+    doc.focus(current).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+
+    assert_eq!(doc.focused(), Some(near_right));
+}
+
+#[test]
+fn spatial_navigation_uses_topmost_tiebreaker_and_does_not_wrap() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let current = doc.create_box().unwrap();
+    let low = doc.create_box().unwrap();
+    let high = doc.create_box().unwrap();
+    doc.append_child(root, current).unwrap();
+    doc.append_child(root, low).unwrap();
+    doc.append_child(root, high).unwrap();
+    for node in [current, low, high] {
+        doc.set_focusable(node, true).unwrap();
+    }
+    set_z_index(&doc, low, 1);
+    set_z_index(&doc, high, 2);
+    set_layout(
+        &doc,
+        root,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 10,
+        },
+    );
+    set_layout(
+        &doc,
+        current,
+        LayoutRect {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 2,
+        },
+    );
+    for node in [low, high] {
+        set_layout(
+            &doc,
+            node,
+            LayoutRect {
+                x: 4,
+                y: 1,
+                width: 2,
+                height: 2,
+            },
+        );
+    }
+    doc.focus(current).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+    assert_eq!(doc.focused(), Some(high));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+    assert_eq!(doc.focused(), Some(high));
+}
+
+#[test]
 fn focus_and_blur_events_bubble_with_relation() {
     let doc = Document::new().unwrap();
     let root = doc.root();
