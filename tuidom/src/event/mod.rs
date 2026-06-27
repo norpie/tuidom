@@ -11,6 +11,39 @@ pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
 
 use crate::id::NodeId;
 
+/// Keyboard bindings used by document-level focus default actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusKeys {
+    /// Keys that move focus to the next focusable node in DOM order.
+    pub next: Vec<KeyCode>,
+    /// Keys that move focus to the previous focusable node in DOM order.
+    pub previous: Vec<KeyCode>,
+    /// Keys that move focus spatially upward.
+    pub up: Vec<KeyCode>,
+    /// Keys that move focus spatially downward.
+    pub down: Vec<KeyCode>,
+    /// Keys that move focus spatially left.
+    pub left: Vec<KeyCode>,
+    /// Keys that move focus spatially right.
+    pub right: Vec<KeyCode>,
+    /// Keys that clear the current focus.
+    pub blur: Vec<KeyCode>,
+}
+
+impl Default for FocusKeys {
+    fn default() -> Self {
+        Self {
+            next: vec![KeyCode::Tab],
+            previous: vec![KeyCode::BackTab],
+            up: vec![KeyCode::Up],
+            down: vec![KeyCode::Down],
+            left: vec![KeyCode::Left],
+            right: vec![KeyCode::Right],
+            blur: vec![KeyCode::Esc],
+        }
+    }
+}
+
 /// Opaque handle returned when registering an event listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ListenerHandle {

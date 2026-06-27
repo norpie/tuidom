@@ -10,6 +10,7 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::error::Result;
+use crate::event::FocusKeys;
 use crate::event_loop;
 use crate::id::{NodeId, next_document_id};
 use crate::inner::DocumentInner;
@@ -66,6 +67,7 @@ impl Document {
                 root,
                 focused_node: Mutex::new(None),
                 focusable_nodes: Mutex::new(HashSet::new()),
+                focus_keys: Mutex::new(FocusKeys::default()),
                 tree_mutation: RwLock::new(()),
                 notify: Notify::new(),
                 shutdown: RwLock::new(false),

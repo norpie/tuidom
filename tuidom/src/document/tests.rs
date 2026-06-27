@@ -7,8 +7,8 @@ use super::*;
 use crate::TuidomError;
 use crate::animation::{Easing, TransitionConfig};
 use crate::event::{
-    EventPhase, FocusEventRelation, KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent,
-    WheelEvent,
+    EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, MouseButton, MouseEvent,
+    ResizeEvent, WheelEvent,
 };
 use crate::node::{LayoutRect, NodeKindView};
 use crate::style::{Color, Display, Length, Style};
@@ -518,6 +518,42 @@ fn focusable_state_and_manual_focus_api_work() {
 
     doc.blur();
     assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn focus_keys_default_to_standard_navigation_keys() {
+    let doc = Document::new().unwrap();
+
+    assert_eq!(
+        doc.focus_keys(),
+        FocusKeys {
+            next: vec![KeyCode::Tab],
+            previous: vec![KeyCode::BackTab],
+            up: vec![KeyCode::Up],
+            down: vec![KeyCode::Down],
+            left: vec![KeyCode::Left],
+            right: vec![KeyCode::Right],
+            blur: vec![KeyCode::Esc],
+        }
+    );
+}
+
+#[test]
+fn focus_keys_are_configurable() {
+    let doc = Document::new().unwrap();
+    let keys = FocusKeys {
+        next: vec![KeyCode::Char('n')],
+        previous: vec![KeyCode::Char('p')],
+        up: vec![KeyCode::Char('k')],
+        down: vec![KeyCode::Char('j')],
+        left: vec![KeyCode::Char('h')],
+        right: vec![KeyCode::Char('l')],
+        blur: vec![KeyCode::Char('q')],
+    };
+
+    doc.set_focus_keys(keys.clone());
+
+    assert_eq!(doc.focus_keys(), keys);
 }
 
 #[test]

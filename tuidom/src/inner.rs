@@ -9,7 +9,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
-use crate::event::{Listener, TargetedEventKind};
+use crate::event::{FocusKeys, Listener, TargetedEventKind};
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
 use crate::node::{LayoutRect, NodeData};
@@ -40,6 +40,9 @@ pub(crate) struct DocumentInner {
 
     /// Nodes that are allowed to receive focus.
     pub focusable_nodes: Mutex<HashSet<NodeId>>,
+
+    /// Keyboard bindings for document-level focus default actions.
+    pub focus_keys: Mutex<FocusKeys>,
 
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,

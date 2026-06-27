@@ -1,5 +1,6 @@
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
+use crate::event::FocusKeys;
 use crate::id::NodeId;
 use crate::lock;
 
@@ -81,6 +82,16 @@ impl Document {
     /// Return the currently focused node, if one exists.
     pub fn focused(&self) -> Option<NodeId> {
         *lock::mutex(&self.inner.focused_node)
+    }
+
+    /// Replace the document-level focus key bindings.
+    pub fn set_focus_keys(&self, keys: FocusKeys) {
+        *lock::mutex(&self.inner.focus_keys) = keys;
+    }
+
+    /// Return the document-level focus key bindings.
+    pub fn focus_keys(&self) -> FocusKeys {
+        lock::mutex(&self.inner.focus_keys).clone()
     }
 
     pub(super) fn remove_focus_side_state(&self, node: NodeId) {
