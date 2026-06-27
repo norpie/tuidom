@@ -1,8 +1,9 @@
 use crate::document::Document;
 use crate::error::Result;
-use crate::event::ResizeEvent;
+use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
 use crate::render::grid::{Cell, Grid};
 use crate::render::render_to_grid;
+use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
 use crate::style::color::{Rgb, RgbCache};
 
 /// A terminal-free runtime harness for deterministic layout, paint, and input tests.
@@ -12,6 +13,7 @@ pub struct HeadlessRuntime {
     height: u16,
     grid: Option<Grid>,
     rgb_cache: RgbCache,
+    event_state: RuntimeEventState,
 }
 
 impl HeadlessRuntime {
@@ -23,6 +25,7 @@ impl HeadlessRuntime {
             height,
             grid: None,
             rgb_cache: RgbCache::new(),
+            event_state: RuntimeEventState::default(),
         }
     }
 
@@ -92,6 +95,70 @@ impl HeadlessRuntime {
             height,
             cells,
         }
+    }
+
+    /// Dispatch a simulated key press through the shared runtime-event path.
+    pub fn simulate_key(&mut self, code: KeyCode) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::KeyPress(KeyEvent::new(code)),
+            &mut self.event_state,
+        );
+    }
+
+    /// Dispatch a simulated mouse button press at a screen coordinate.
+    ///
+    /// Mouse targeting uses the latest committed layout snapshot. Call
+    /// [`render`](Self::render) first when the DOM or styles have changed.
+    pub fn simulate_mouse_down(&mut self, x: i32, y: i32, button: MouseButton) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::MouseDown(MouseEvent::new(x, y, button)),
+            &mut self.event_state,
+        );
+    }
+
+    /// Dispatch a simulated mouse button release at a screen coordinate.
+    ///
+    /// If it matches the previous simulated mouse down by target, cell, and
+    /// button, this also synthesizes a click through the shared runtime path.
+    pub fn simulate_mouse_up(&mut self, x: i32, y: i32, button: MouseButton) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::MouseUp(MouseEvent::new(x, y, button)),
+            &mut self.event_state,
+        );
+    }
+
+    /// Dispatch a left-button down/up pair at a screen coordinate.
+    pub fn simulate_click(&mut self, x: i32, y: i32) {
+        self.simulate_mouse_down(x, y, MouseButton::Left);
+        self.simulate_mouse_up(x, y, MouseButton::Left);
+    }
+
+    /// Dispatch a simulated mouse wheel event at a screen coordinate.
+    pub fn simulate_scroll(&mut self, x: i32, y: i32, delta: i16) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::Wheel(WheelEvent::new(x, y, delta)),
+            &mut self.event_state,
+        );
+    }
+
+    /// Dispatch each character in `text` as a simulated key press.
+    pub fn simulate_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.simulate_key(KeyCode::Char(ch));
+        }
+    }
+
+    /// Dispatch a left-button press at `start` followed by a release at `end`.
+    ///
+    /// Drag movement events are not modeled yet, so this only exercises the
+    /// currently supported press/release and click-suppression behavior.
+    pub fn simulate_mouse_drag(&mut self, start: (i32, i32), end: (i32, i32)) {
+        self.simulate_mouse_down(start.0, start.1, MouseButton::Left);
+        self.simulate_mouse_up(end.0, end.1, MouseButton::Left);
     }
 }
 
@@ -252,5 +319,111 @@ mod tests {
         assert_eq!(runtime.width(), 20);
         assert_eq!(runtime.height(), 5);
         assert_eq!(*seen.lock().unwrap(), Some((20, 5)));
+    }
+
+    #[test]
+    fn simulated_click_targets_rendered_node() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("A").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let seen = Arc::new(Mutex::new(None));
+        let seen_for_handler = seen.clone();
+        doc.on_click(text, move |event| {
+            *seen_for_handler.lock().unwrap() = Some(event.target());
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_click(0, 0);
+
+        assert_eq!(*seen.lock().unwrap(), Some(text));
+    }
+
+    #[test]
+    fn simulated_click_uses_stop_propagation() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let text = doc.create_text("A").unwrap();
+        doc.append_child(root, text).unwrap();
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let child_calls = calls.clone();
+        doc.on_click(text, move |event| {
+            child_calls.lock().unwrap().push("child");
+            event.stop_propagation();
+        })
+        .unwrap();
+
+        let root_calls = calls.clone();
+        doc.on_click(root, move |_| {
+            root_calls.lock().unwrap().push("root");
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_click(0, 0);
+
+        assert_eq!(*calls.lock().unwrap(), vec!["child"]);
+    }
+
+    #[test]
+    fn simulated_mouse_drag_does_not_synthesize_click_when_release_differs() {
+        let doc = Document::new().unwrap();
+        let calls = Arc::new(Mutex::new(0));
+        let calls_for_handler = calls.clone();
+        doc.on_click(doc.root(), move |_| {
+            *calls_for_handler.lock().unwrap() += 1;
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (1, 0));
+
+        assert_eq!(*calls.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn simulated_scroll_targets_and_bubbles() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let text = doc.create_text("A").unwrap();
+        doc.append_child(root, text).unwrap();
+
+        let seen = Arc::new(Mutex::new(None));
+        let seen_for_handler = seen.clone();
+        doc.on_wheel(root, move |event| {
+            *seen_for_handler.lock().unwrap() =
+                Some((event.target(), event.current_target(), event.delta));
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_scroll(0, 0, -2);
+
+        assert_eq!(*seen.lock().unwrap(), Some((text, root, -2)));
+    }
+
+    #[test]
+    fn simulated_key_and_text_dispatch_key_presses() {
+        let doc = Document::new().unwrap();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let seen_for_handler = seen.clone();
+        doc.on_key_press(doc.root(), move |event| {
+            if let KeyCode::Char(ch) = event.code {
+                seen_for_handler.lock().unwrap().push(ch);
+            }
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.simulate_key(KeyCode::Char('a'));
+        runtime.simulate_text("bc");
+
+        assert_eq!(&*seen.lock().unwrap(), "abc");
     }
 }
