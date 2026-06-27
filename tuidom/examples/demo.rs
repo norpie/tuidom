@@ -6,8 +6,9 @@
 //! Tab / Shift-Tab   — move focus in DOM order
 //! Arrows / hjkl     — move focus spatially
 //! Esc               — blur focused node
+//! Hover text        — focus text
 //! Space             — toggle text opacity (fade in/out)
-//! Click text        — focus text, toggle text background, stop propagation
+//! Click first text  — toggle text background, stop propagation
 //! Click background  — toggle container background
 //! Wheel anywhere    — adjust text opacity via container wheel handler
 //! q                 — quit
@@ -154,7 +155,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let text_bg = text_background_alt.clone();
     doc.on_click(text, move |event| {
         event.stop_propagation();
-        let _ = d.focus(text);
         let use_alt = text_bg.fetch_not(Ordering::Relaxed);
         let color = if use_alt {
             Color::blue()
@@ -162,18 +162,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Color::oklch(0.65, 0.2, 140.0)
         };
         let _ = d.update_style(text, |s| s.background(color));
-    })?;
-
-    let d = doc.clone();
-    doc.on_click(second, move |event| {
-        event.stop_propagation();
-        let _ = d.focus(second);
-    })?;
-
-    let d = doc.clone();
-    doc.on_click(third, move |event| {
-        event.stop_propagation();
-        let _ = d.focus(third);
     })?;
 
     let d = doc.clone();
