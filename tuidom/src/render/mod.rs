@@ -47,6 +47,53 @@ impl RenderStats {
     }
 }
 
+/// Timings for backend-neutral grid rendering.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct GridRenderStats {
+    /// Time spent creating the frame grid.
+    pub grid_time: Duration,
+    /// Time spent collecting the visible DOM tree into a paintable snapshot.
+    pub dom_collect_time: Duration,
+    /// Time spent painting DOM nodes into the grid.
+    pub dom_paint_time: Duration,
+    /// Time spent painting the debug overlay into the grid.
+    pub overlay_paint_time: Duration,
+}
+
+/// Paint a laid-out document into a fresh grid without flushing to a terminal.
+pub(crate) fn render_to_grid(
+    doc: &Document,
+    width: u16,
+    height: u16,
+    rgb_cache: &mut RgbCache,
+) -> (grid::Grid, GridRenderStats) {
+    let grid_start = std::time::Instant::now();
+    let mut grid = grid::Grid::new(width, height);
+    let grid_time = grid_start.elapsed();
+
+    let dom_stats = paint::paint(doc, &mut grid, rgb_cache);
+
+    let mut overlay_paint_time = Duration::ZERO;
+    {
+        let overlay = lock::mutex(&doc.inner.debug_overlay);
+        if overlay.enabled {
+            let overlay_paint_start = std::time::Instant::now();
+            overlay.render(&mut grid);
+            overlay_paint_time = overlay_paint_start.elapsed();
+        }
+    }
+
+    (
+        grid,
+        GridRenderStats {
+            grid_time,
+            dom_collect_time: dom_stats.collect_time,
+            dom_paint_time: dom_stats.paint_time,
+            overlay_paint_time,
+        },
+    )
+}
+
 /// Orchestrates the render pipeline: paint, diff, and flush to terminal.
 pub(crate) struct Renderer {
     terminal: Terminal,
@@ -68,45 +115,31 @@ impl Renderer {
 
     /// Render a single frame: layout (already done), paint, diff, flush.
     pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderStats> {
-        // 1. Create/clear frame grid
-        let grid_start = std::time::Instant::now();
-        self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
-        let grid_time = grid_start.elapsed();
+        let (grid, grid_stats) = render_to_grid(
+            doc,
+            self.old_grid.width,
+            self.old_grid.height,
+            &mut self.rgb_cache,
+        );
+        self.new_grid = grid;
 
-        // 2. Paint DOM
-        let dom_stats = paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
-
-        // 3. Paint debug overlay
-        let mut overlay_paint_time = Duration::ZERO;
-        {
-            let overlay = lock::mutex(&doc.inner.debug_overlay);
-            if overlay.enabled {
-                let overlay_paint_start = std::time::Instant::now();
-                overlay.render(&mut self.new_grid);
-                overlay_paint_time = overlay_paint_start.elapsed();
-            }
-        }
-
-        // 4. Diff
         let diff_start = std::time::Instant::now();
         let changes = diff::diff(&self.old_grid, &self.new_grid);
         let diff_time = diff_start.elapsed();
 
-        // 5. Flush
         let flush_start = std::time::Instant::now();
         self.terminal.flush_changes(&changes)?;
         let flush_time = flush_start.elapsed();
 
-        // 6. Swap grids for next frame
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
 
         Ok(RenderStats {
             cells_changed: changes.len(),
             full_redraw: false,
-            grid_time,
-            dom_collect_time: dom_stats.collect_time,
-            dom_paint_time: dom_stats.paint_time,
-            overlay_paint_time,
+            grid_time: grid_stats.grid_time,
+            dom_collect_time: grid_stats.dom_collect_time,
+            dom_paint_time: grid_stats.dom_paint_time,
+            overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time,
             flush_time,
         })
@@ -120,21 +153,13 @@ impl Renderer {
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
     pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderStats> {
-        let grid_start = std::time::Instant::now();
-        self.new_grid = grid::Grid::new(self.old_grid.width, self.old_grid.height);
-        let grid_time = grid_start.elapsed();
-
-        let dom_stats = paint::paint(doc, &mut self.new_grid, &mut self.rgb_cache);
-
-        let mut overlay_paint_time = Duration::ZERO;
-        {
-            let overlay = lock::mutex(&doc.inner.debug_overlay);
-            if overlay.enabled {
-                let overlay_paint_start = std::time::Instant::now();
-                overlay.render(&mut self.new_grid);
-                overlay_paint_time = overlay_paint_start.elapsed();
-            }
-        }
+        let (grid, grid_stats) = render_to_grid(
+            doc,
+            self.old_grid.width,
+            self.old_grid.height,
+            &mut self.rgb_cache,
+        );
+        self.new_grid = grid;
 
         let flush_start = std::time::Instant::now();
         self.terminal.flush_full(&self.new_grid)?;
@@ -146,10 +171,10 @@ impl Renderer {
         Ok(RenderStats {
             cells_changed: cells,
             full_redraw: true,
-            grid_time,
-            dom_collect_time: dom_stats.collect_time,
-            dom_paint_time: dom_stats.paint_time,
-            overlay_paint_time,
+            grid_time: grid_stats.grid_time,
+            dom_collect_time: grid_stats.dom_collect_time,
+            dom_paint_time: grid_stats.dom_paint_time,
+            overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time: Duration::ZERO,
             flush_time,
         })

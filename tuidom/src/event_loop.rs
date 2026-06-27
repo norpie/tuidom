@@ -13,35 +13,12 @@ use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
-use crate::event::{KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent, convert_key_event};
+use crate::event::{MouseButton, MouseEvent, ResizeEvent, WheelEvent, convert_key_event};
 use crate::lock;
 use crate::render::Renderer;
-
-/// Internal runtime event used by the event queue.
-///
-/// This is separate from public event structs so runtime coordination can evolve
-/// without exposing renderer/input-loop details as user-facing API.
-#[derive(Debug, Clone)]
-pub(crate) enum RuntimeEvent {
-    /// A key press from the terminal input stream.
-    KeyPress(KeyEvent),
-    /// A mouse button press from the terminal input stream.
-    MouseDown(MouseEvent),
-    /// A mouse button release from the terminal input stream.
-    MouseUp(MouseEvent),
-    /// A mouse wheel movement from the terminal input stream.
-    Wheel(WheelEvent),
-    /// Terminal resize requiring both public dispatch and renderer resize.
-    Resize(ResizeEvent),
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ClickCandidate {
-    target: crate::id::NodeId,
-    x: i32,
-    y: i32,
-    button: MouseButton,
-}
+use crate::runtime_event::{
+    RuntimeEvent, RuntimeEventState, process_runtime_event, take_pending_resize,
+};
 
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
@@ -110,7 +87,7 @@ async fn input_task(doc: Document) -> io::Result<()> {
 }
 
 async fn event_task(doc: Document) -> io::Result<()> {
-    let mut pending_click = None;
+    let mut event_state = RuntimeEventState::default();
 
     loop {
         if is_shutdown(&doc) {
@@ -129,7 +106,7 @@ async fn event_task(doc: Document) -> io::Result<()> {
                         "runtime event queue closed",
                     ));
                 };
-                process_runtime_event(&doc, event, &mut pending_click);
+                process_runtime_event(&doc, event, &mut event_state);
             }
         }
     }
@@ -237,66 +214,6 @@ fn enqueue_runtime_event(doc: &Document, event: RuntimeEvent) -> io::Result<()> 
 /// Receive the next queued runtime event.
 async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
     doc.inner.event_rx.lock().await.recv().await
-}
-
-/// Process one queued runtime event.
-fn process_runtime_event(
-    doc: &Document,
-    event: RuntimeEvent,
-    pending_click: &mut Option<ClickCandidate>,
-) {
-    match event {
-        RuntimeEvent::KeyPress(key) => {
-            doc.dispatch_key_press(key);
-        }
-        RuntimeEvent::MouseDown(mut mouse) => {
-            let target = mouse_target(doc, mouse.x, mouse.y);
-            doc.dispatch_mouse_down_to(target, &mut mouse);
-            *pending_click = Some(ClickCandidate {
-                target,
-                x: mouse.x,
-                y: mouse.y,
-                button: mouse.button,
-            });
-        }
-        RuntimeEvent::MouseUp(mut mouse) => {
-            let target = mouse_target(doc, mouse.x, mouse.y);
-            doc.dispatch_mouse_up_to(target, &mut mouse);
-
-            if pending_click.is_some_and(|down| {
-                down.target == target
-                    && down.x == mouse.x
-                    && down.y == mouse.y
-                    && down.button == mouse.button
-            }) {
-                let mut click = MouseEvent::new(mouse.x, mouse.y, mouse.button);
-                doc.dispatch_click_to(target, &mut click);
-            }
-            *pending_click = None;
-        }
-        RuntimeEvent::Wheel(mut wheel) => {
-            let target = mouse_target(doc, wheel.x, wheel.y);
-            doc.dispatch_wheel_to(target, &mut wheel);
-            *pending_click = None;
-        }
-        RuntimeEvent::Resize(resize) => {
-            doc.dispatch_resize(resize.clone());
-            set_pending_resize(doc, resize);
-        }
-    }
-}
-
-fn mouse_target(doc: &Document, x: i32, y: i32) -> crate::id::NodeId {
-    doc.node_at(x, y).unwrap_or_else(|| doc.root())
-}
-
-fn set_pending_resize(doc: &Document, resize: ResizeEvent) {
-    *lock::mutex(&doc.inner.pending_resize) = Some((resize.width, resize.height));
-    doc.inner.resize_notify.notify_one();
-}
-
-fn take_pending_resize(doc: &Document) -> Option<(u16, u16)> {
-    lock::mutex(&doc.inner.pending_resize).take()
 }
 
 /// Render a diffed frame with timing for the debug overlay.
@@ -457,88 +374,5 @@ fn convert_mouse_button(button: CrosstermMouseButton) -> Option<MouseButton> {
         CrosstermMouseButton::Left => Some(MouseButton::Left),
         CrosstermMouseButton::Right => Some(MouseButton::Right),
         CrosstermMouseButton::Middle => Some(MouseButton::Middle),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use super::*;
-
-    #[test]
-    fn pending_resize_keeps_latest_size() {
-        let doc = Document::new().unwrap();
-
-        set_pending_resize(
-            &doc,
-            ResizeEvent {
-                width: 80,
-                height: 24,
-            },
-        );
-        set_pending_resize(
-            &doc,
-            ResizeEvent {
-                width: 120,
-                height: 40,
-            },
-        );
-
-        assert_eq!(take_pending_resize(&doc), Some((120, 40)));
-        assert_eq!(take_pending_resize(&doc), None);
-    }
-
-    #[test]
-    fn click_is_generated_from_matching_down_and_up() {
-        let doc = Document::new().unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_for_handler = calls.clone();
-        doc.on_click(doc.root(), move |_| {
-            calls_for_handler.fetch_add(1, Ordering::Relaxed);
-        })
-        .unwrap();
-
-        let mut pending_click = None;
-        process_runtime_event(
-            &doc,
-            RuntimeEvent::MouseDown(MouseEvent::new(1, 2, MouseButton::Left)),
-            &mut pending_click,
-        );
-        process_runtime_event(
-            &doc,
-            RuntimeEvent::MouseUp(MouseEvent::new(1, 2, MouseButton::Left)),
-            &mut pending_click,
-        );
-
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-        assert!(pending_click.is_none());
-    }
-
-    #[test]
-    fn click_is_not_generated_when_up_cell_differs() {
-        let doc = Document::new().unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_for_handler = calls.clone();
-        doc.on_click(doc.root(), move |_| {
-            calls_for_handler.fetch_add(1, Ordering::Relaxed);
-        })
-        .unwrap();
-
-        let mut pending_click = None;
-        process_runtime_event(
-            &doc,
-            RuntimeEvent::MouseDown(MouseEvent::new(1, 2, MouseButton::Left)),
-            &mut pending_click,
-        );
-        process_runtime_event(
-            &doc,
-            RuntimeEvent::MouseUp(MouseEvent::new(2, 2, MouseButton::Left)),
-            &mut pending_click,
-        );
-
-        assert_eq!(calls.load(Ordering::Relaxed), 0);
-        assert!(pending_click.is_none());
     }
 }

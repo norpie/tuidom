@@ -10,10 +10,10 @@ use tokio::sync::{Notify, mpsc};
 use crate::animation::driver::AnimationDriver;
 use crate::debug::DebugOverlay;
 use crate::event::{Listener, TargetedEventKind};
-use crate::event_loop::RuntimeEvent;
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
 use crate::node::{LayoutRect, NodeData};
+use crate::runtime_event::RuntimeEvent;
 
 /// Internal state of a [`Document`](crate::Document).
 ///

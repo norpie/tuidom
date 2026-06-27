@@ -29,6 +29,7 @@ mod node;
 mod paint_order;
 /// Screen buffer and rendering.
 pub(crate) mod render;
+mod runtime_event;
 
 /// The [`Document`] type and public API.
 pub mod document;
