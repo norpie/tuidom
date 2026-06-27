@@ -10,6 +10,7 @@ use crate::event::{
     EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, MouseButton, MouseEvent,
     ResizeEvent, WheelEvent,
 };
+use crate::headless::HeadlessRuntime;
 use crate::node::{LayoutRect, NodeKindView};
 use crate::style::{Color, Display, Length, Style};
 
@@ -573,6 +574,88 @@ fn escape_dispatches_normally_when_no_node_is_focused() {
 
     assert_eq!(calls.load(Ordering::Relaxed), 1);
     assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn focus_style_merges_into_focused_node_style() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut base = Style::new();
+    base.width(Length::Pixels(1));
+    base.height(Length::Pixels(1));
+    base.color(Color::blue());
+    doc.set_style(node, &base).unwrap();
+
+    let mut focus = Style::new();
+    focus.color(Color::red());
+    focus.background(Color::green());
+    doc.set_focus_style(node, &focus).unwrap();
+
+    assert_eq!(doc.resolved_style(node).unwrap().color, Color::blue());
+    assert_eq!(doc.resolved_style(node).unwrap().background, None);
+
+    doc.focus(node).unwrap();
+    let focused = doc.resolved_style(node).unwrap();
+    assert_eq!(focused.width, Length::Pixels(1));
+    assert_eq!(focused.height, Length::Pixels(1));
+    assert_eq!(focused.color, Color::red());
+    assert_eq!(focused.background, Some(Color::green()));
+
+    doc.clear_focus_style(node).unwrap();
+    let cleared = doc.resolved_style(node).unwrap();
+    assert_eq!(cleared.color, Color::blue());
+    assert_eq!(cleared.background, None);
+}
+
+#[test]
+fn focus_style_affects_rendered_output() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_text("A").unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut focus = Style::new();
+    focus.color(Color::red());
+    doc.set_focus_style(node, &focus).unwrap();
+    doc.focus(node).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 5, 2);
+    runtime.render().unwrap();
+
+    let fg = runtime.get_cell(0, 0).unwrap().fg.unwrap();
+    assert!(fg.r > fg.g);
+    assert!(fg.r > fg.b);
+}
+
+#[test]
+fn focus_style_layout_effect_refreshes_on_focus_change() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut base = Style::new();
+    base.width(Length::Pixels(1));
+    base.height(Length::Pixels(1));
+    doc.set_style(node, &base).unwrap();
+
+    let mut focus = Style::new();
+    focus.width(Length::Pixels(4));
+    doc.set_focus_style(node, &focus).unwrap();
+
+    doc.compute_layout(10, 3).unwrap();
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().width, 1);
+
+    doc.focus(node).unwrap();
+    doc.compute_layout(10, 3).unwrap();
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().width, 4);
+
+    doc.blur();
+    doc.compute_layout(10, 3).unwrap();
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().width, 1);
 }
 
 #[test]

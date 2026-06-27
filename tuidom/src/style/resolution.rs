@@ -4,7 +4,7 @@
 //! been resolved from explicit values, explicit parent inheritance, or document defaults.
 
 use crate::node::NodeData;
-use crate::style::{AlignItems, Color, Display, JustifyContent, Length, StyleValue};
+use crate::style::{AlignItems, Color, Display, JustifyContent, Length, Style, StyleValue};
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
 #[derive(Debug, Clone)]
@@ -154,6 +154,74 @@ impl ResolvedStyle {
             ),
         }
     }
+
+    pub(crate) fn apply_overrides(
+        &mut self,
+        style: &Style,
+        parent: Option<&ResolvedStyle>,
+        defaults: &StyleDefaults,
+    ) {
+        apply_override(
+            &mut self.width,
+            &style.width,
+            parent.map(|p| &p.width),
+            &defaults.width,
+        );
+        apply_override(
+            &mut self.height,
+            &style.height,
+            parent.map(|p| &p.height),
+            &defaults.height,
+        );
+        apply_override(
+            &mut self.display,
+            &style.display,
+            parent.map(|p| &p.display),
+            &defaults.display,
+        );
+        apply_override(
+            &mut self.opacity,
+            &style.opacity,
+            parent.map(|p| &p.opacity),
+            &defaults.opacity,
+        );
+        apply_override(
+            &mut self.color,
+            &style.color,
+            parent.map(|p| &p.color),
+            &defaults.color,
+        );
+        apply_opt_override(
+            &mut self.background,
+            &style.background,
+            parent.and_then(|p| p.background),
+            defaults.background,
+        );
+        apply_override(
+            &mut self.align_items,
+            &style.align_items,
+            parent.map(|p| &p.align_items),
+            &defaults.align_items,
+        );
+        apply_override(
+            &mut self.justify_content,
+            &style.justify_content,
+            parent.map(|p| &p.justify_content),
+            &defaults.justify_content,
+        );
+        apply_override(
+            &mut self.z_index,
+            &style.z_index,
+            parent.map(|p| &p.z_index),
+            &defaults.z_index,
+        );
+        apply_override(
+            &mut self.stacking_context,
+            &style.stacking_context,
+            parent.map(|p| &p.stacking_context),
+            &defaults.stacking_context,
+        );
+    }
 }
 
 /// Resolve a single [`StyleValue`] given the parent's resolved value and a default.
@@ -178,5 +246,31 @@ fn resolve_opt(
         StyleValue::Unset => default,
         StyleValue::Inherit => parent.or(default),
         StyleValue::Set(v) => Some(*v),
+    }
+}
+
+fn apply_override<T: Clone>(
+    target: &mut T,
+    value: &StyleValue<T>,
+    parent: Option<&T>,
+    default: &T,
+) {
+    match value {
+        StyleValue::Unset => {}
+        StyleValue::Inherit => *target = parent.cloned().unwrap_or_else(|| default.clone()),
+        StyleValue::Set(v) => *target = v.clone(),
+    }
+}
+
+fn apply_opt_override(
+    target: &mut Option<Color>,
+    value: &StyleValue<Color>,
+    parent: Option<Color>,
+    default: Option<Color>,
+) {
+    match value {
+        StyleValue::Unset => {}
+        StyleValue::Inherit => *target = parent.or(default),
+        StyleValue::Set(v) => *target = Some(*v),
     }
 }

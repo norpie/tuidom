@@ -44,6 +44,9 @@ pub(crate) struct DocumentInner {
     /// Keyboard bindings for document-level focus default actions.
     pub focus_keys: Mutex<FocusKeys>,
 
+    /// Per-node style merged when the node is focused.
+    pub focus_styles: Mutex<HashMap<NodeId, crate::style::Style>>,
+
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,
 

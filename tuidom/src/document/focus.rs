@@ -7,6 +7,7 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::LayoutRect;
 use crate::paint_order::paint_order;
+use crate::style::Style;
 
 impl Document {
     /// Set whether a node can receive focus.
@@ -65,8 +66,10 @@ impl Document {
         };
 
         if let Some(previous) = previous {
+            self.refresh_focus_style_effect(previous)?;
             self.dispatch_blur_to(previous);
         }
+        self.refresh_focus_style_effect(node)?;
         self.dispatch_focus_to(node);
         self.inner.notify.notify_one();
         Ok(())
@@ -78,6 +81,9 @@ impl Document {
     pub fn blur(&self) {
         let previous = lock::mutex(&self.inner.focused_node).take();
         if let Some(previous) = previous {
+            if let Err(err) = self.refresh_focus_style_effect(previous) {
+                log::error!("failed to refresh focus style after blur: {err}");
+            }
             self.dispatch_blur_to(previous);
             self.inner.notify.notify_one();
         }
@@ -98,6 +104,36 @@ impl Document {
         lock::mutex(&self.inner.focus_keys).clone()
     }
 
+    /// Set the style merged into a node's resolved style while it is focused.
+    ///
+    /// Unset properties do not override the node's base style. Inherited
+    /// properties resolve from the focused node's parent, matching normal style
+    /// inheritance semantics.
+    pub fn set_focus_style(&self, node: NodeId, style: &Style) -> Result<()> {
+        self.ensure_focus_node_exists(node)?;
+        lock::mutex(&self.inner.focus_styles).insert(node, style.clone());
+        if self.focused() == Some(node) {
+            self.refresh_focus_style_effect(node)?;
+            self.inner.notify.notify_one();
+        }
+        Ok(())
+    }
+
+    /// Clear a node's focus style.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn clear_focus_style(&self, node: NodeId) -> Result<()> {
+        self.ensure_focus_node_exists(node)?;
+        lock::mutex(&self.inner.focus_styles).remove(&node);
+        if self.focused() == Some(node) {
+            self.refresh_focus_style_effect(node)?;
+            self.inner.notify.notify_one();
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply_focus_default_action(&self, code: KeyCode) {
         let Some(action) = self.focus_action_for_key(code) else {
             return;
@@ -116,6 +152,7 @@ impl Document {
 
     pub(super) fn remove_focus_side_state(&self, node: NodeId) {
         lock::mutex(&self.inner.focusable_nodes).remove(&node);
+        lock::mutex(&self.inner.focus_styles).remove(&node);
         let removed_focus = {
             let mut focused = lock::mutex(&self.inner.focused_node);
             if *focused == Some(node) {
@@ -137,6 +174,14 @@ impl Document {
         } else {
             Err(TuidomError::NodeNotFound { id: node })
         }
+    }
+
+    fn refresh_focus_style_effect(&self, node: NodeId) -> Result<()> {
+        if !self.inner.nodes.contains_key(&node) {
+            return Ok(());
+        }
+        self.invalidate_resolved_style(node);
+        self.sync_layout_subtree_styles(node)
     }
 
     fn focus_action_for_key(&self, code: KeyCode) -> Option<FocusAction> {

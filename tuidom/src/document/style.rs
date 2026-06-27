@@ -135,19 +135,31 @@ impl Document {
             .map(|pid| self.resolved_base_style_unlocked(pid))
             .transpose()?;
 
+        let defaults = if id == self.root() {
+            StyleDefaults::root()
+        } else {
+            StyleDefaults::default()
+        };
+        let mut resolved = {
+            let Some(node) = self.inner.nodes.get(&id) else {
+                return Err(TuidomError::NodeNotFound { id });
+            };
+            if id == self.root() {
+                ResolvedStyle::compute_with_defaults(&node, parent_resolved.as_ref(), &defaults)
+            } else {
+                ResolvedStyle::compute(&node, parent_resolved.as_ref())
+            }
+        };
+
+        if self.focused() == Some(id)
+            && let Some(focus_style) = lock::mutex(&self.inner.focus_styles).get(&id)
+        {
+            resolved.apply_overrides(focus_style, parent_resolved.as_ref(), &defaults);
+        }
+
         let Some(node) = self.inner.nodes.get(&id) else {
             return Err(TuidomError::NodeNotFound { id });
         };
-        let resolved = if id == self.root() {
-            ResolvedStyle::compute_with_defaults(
-                &node,
-                parent_resolved.as_ref(),
-                &StyleDefaults::root(),
-            )
-        } else {
-            ResolvedStyle::compute(&node, parent_resolved.as_ref())
-        };
-
         *lock::rw_write(&node.resolved_style) = Some(resolved.clone());
         Ok(resolved)
     }
