@@ -38,6 +38,13 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node exists but has not been marked focusable.
+    #[error("node {id:?} is not focusable")]
+    NodeNotFocusable {
+        /// The node that cannot receive focus.
+        id: NodeId,
+    },
+
     /// The underlying layout engine reported an error.
     #[error("layout engine error: {0}")]
     Layout(#[from] taffy::tree::TaffyError),

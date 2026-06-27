@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
@@ -19,6 +19,7 @@ use crate::node::NodeData;
 use crate::render::RenderStats;
 
 mod events;
+mod focus;
 mod layout;
 mod style;
 mod tree;
@@ -63,6 +64,8 @@ impl Document {
                 next_id: AtomicU64::new(1),
                 next_listener_id: AtomicU64::new(0),
                 root,
+                focused_node: Mutex::new(None),
+                focusable_nodes: Mutex::new(HashSet::new()),
                 tree_mutation: RwLock::new(()),
                 notify: Notify::new(),
                 shutdown: RwLock::new(false),

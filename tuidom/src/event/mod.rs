@@ -33,6 +33,15 @@ pub enum EventPhase {
     Bubble,
 }
 
+/// Relation between the focused/blurred target and the listener currently receiving the event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FocusEventRelation {
+    /// The current listener node is the node that gained or lost focus.
+    SelfNode,
+    /// The current listener node is an ancestor of the node that gained or lost focus.
+    Descendant,
+}
+
 /// Mouse buttons reported by terminal mouse input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseButton {
@@ -99,6 +108,52 @@ impl KeyEvent {
     /// The current dispatch phase.
     pub fn phase(&self) -> EventPhase {
         self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
+/// A focus or blur event.
+#[derive(Debug, Clone)]
+pub struct FocusEvent {
+    metadata: TargetedMetadata,
+    relation: FocusEventRelation,
+}
+
+impl FocusEvent {
+    pub(crate) fn new() -> Self {
+        Self {
+            metadata: TargetedMetadata::pending(),
+            relation: FocusEventRelation::SelfNode,
+        }
+    }
+
+    /// The node that gained or lost focus.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Whether the current listener node is the focused/blurred node or an ancestor.
+    pub fn relation(&self) -> FocusEventRelation {
+        self.relation
     }
 
     /// Stop this event from bubbling to ancestor nodes.
@@ -235,6 +290,22 @@ impl TargetedEvent for KeyEvent {
     }
 }
 
+impl TargetedEvent for FocusEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+        self.relation = if current_target == target {
+            FocusEventRelation::SelfNode
+        } else {
+            FocusEventRelation::Descendant
+        };
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
 impl TargetedEvent for MouseEvent {
     fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
         self.metadata
@@ -258,6 +329,7 @@ impl TargetedEvent for WheelEvent {
 }
 
 pub(crate) type KeyEventHandler = Arc<dyn Fn(&mut KeyEvent) + Send + Sync + 'static>;
+pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 'static>;
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
@@ -265,6 +337,8 @@ pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TargetedEventKind {
     KeyPress,
+    Focus,
+    Blur,
     MouseDown,
     MouseUp,
     Click,
@@ -276,6 +350,10 @@ pub(crate) enum TargetedEventKind {
 pub(crate) enum ListenerKind {
     /// Key press listener.
     KeyPress(KeyEventHandler),
+    /// Focus listener.
+    Focus(FocusEventHandler),
+    /// Blur listener.
+    Blur(FocusEventHandler),
     /// Mouse down listener.
     MouseDown(MouseEventHandler),
     /// Mouse up listener.

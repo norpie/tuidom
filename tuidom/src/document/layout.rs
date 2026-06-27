@@ -77,6 +77,7 @@ impl Document {
 
     pub(super) fn remove_node_side_state(&self, id: NodeId) -> Result<()> {
         self.remove_layout_node(id)?;
+        self.remove_focus_side_state(id);
         lock::mutex(&self.inner.targeted_listeners).retain(|(node, _), _| *node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
         Ok(())

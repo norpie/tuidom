@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
-    EventPhase, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent, ResizeEvent,
-    TargetedEvent, TargetedEventKind, WheelEvent,
+    EventPhase, FocusEvent, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent,
+    ResizeEvent, TargetedEvent, TargetedEventKind, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -14,8 +14,8 @@ use crate::lock;
 impl Document {
     /// Register a key press listener on a node.
     ///
-    /// Key events currently target the document root until focus management is
-    /// implemented. For async work, spawn a task inside the handler.
+    /// Key events target the focused node when one exists; otherwise they target
+    /// the document root. For async work, spawn a task inside the handler.
     ///
     /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
     pub fn on_key_press<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
@@ -26,6 +26,42 @@ impl Document {
             node,
             TargetedEventKind::KeyPress,
             ListenerKind::KeyPress(Arc::new(handler)),
+        )
+    }
+
+    /// Register a focus listener on a node.
+    ///
+    /// Focus events bubble from the node that gained focus through its ancestors.
+    /// Use [`FocusEvent::relation`](crate::event::FocusEvent::relation) to distinguish
+    /// self focus from descendant focus.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_focus<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut FocusEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Focus,
+            ListenerKind::Focus(Arc::new(handler)),
+        )
+    }
+
+    /// Register a blur listener on a node.
+    ///
+    /// Blur events bubble from the node that lost focus through its ancestors.
+    /// Use [`FocusEvent::relation`](crate::event::FocusEvent::relation) to distinguish
+    /// self blur from descendant blur.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_blur<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut FocusEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Blur,
+            ListenerKind::Blur(Arc::new(handler)),
         )
     }
 
@@ -164,7 +200,8 @@ impl Document {
 
     /// Dispatch a key press from the current keyboard target.
     pub(crate) fn dispatch_key_press(&self, mut event: KeyEvent) {
-        self.dispatch_key_press_to(self.root(), &mut event);
+        let target = self.focused().unwrap_or_else(|| self.root());
+        self.dispatch_key_press_to(target, &mut event);
     }
 
     pub(crate) fn dispatch_key_press_to(&self, target: NodeId, event: &mut KeyEvent) {
@@ -173,6 +210,34 @@ impl Document {
                 handler(event);
             }
         });
+    }
+
+    pub(crate) fn dispatch_focus_to(&self, target: NodeId) {
+        let mut event = FocusEvent::new();
+        self.dispatch_targeted_event(
+            target,
+            &mut event,
+            TargetedEventKind::Focus,
+            |kind, event| {
+                if let ListenerKind::Focus(handler) = kind {
+                    handler(event);
+                }
+            },
+        );
+    }
+
+    pub(crate) fn dispatch_blur_to(&self, target: NodeId) {
+        let mut event = FocusEvent::new();
+        self.dispatch_targeted_event(
+            target,
+            &mut event,
+            TargetedEventKind::Blur,
+            |kind, event| {
+                if let ListenerKind::Blur(handler) = kind {
+                    handler(event);
+                }
+            },
+        );
     }
 
     pub(crate) fn dispatch_mouse_down_to(&self, target: NodeId, event: &mut MouseEvent) {

@@ -1,6 +1,6 @@
 //! Internal document state behind `Arc`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -34,6 +34,12 @@ pub(crate) struct DocumentInner {
 
     /// The permanent document root node.
     pub root: NodeId,
+
+    /// The currently focused node, if any.
+    pub focused_node: Mutex<Option<NodeId>>,
+
+    /// Nodes that are allowed to receive focus.
+    pub focusable_nodes: Mutex<HashSet<NodeId>>,
 
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,

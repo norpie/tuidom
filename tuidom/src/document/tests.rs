@@ -7,7 +7,8 @@ use super::*;
 use crate::TuidomError;
 use crate::animation::{Easing, TransitionConfig};
 use crate::event::{
-    EventPhase, KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
+    EventPhase, FocusEventRelation, KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent,
+    WheelEvent,
 };
 use crate::node::{LayoutRect, NodeKindView};
 use crate::style::{Color, Display, Length, Style};
@@ -452,6 +453,189 @@ fn key_dispatch_targets_root_until_focus_exists() {
 
     assert_eq!(root_calls.load(Ordering::Relaxed), 1);
     assert_eq!(child_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn key_dispatch_targets_focused_node_when_present() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let child = doc.create_box().unwrap();
+    doc.append_child(root, child).unwrap();
+    doc.set_focusable(child, true).unwrap();
+    doc.focus(child).unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+
+    let root_calls = calls.clone();
+    doc.on_key_press(root, move |event| {
+        root_calls.lock().unwrap().push((
+            "root",
+            event.target(),
+            event.current_target(),
+            event.phase(),
+        ));
+    })
+    .unwrap();
+
+    let child_calls = calls.clone();
+    doc.on_key_press(child, move |event| {
+        child_calls.lock().unwrap().push((
+            "child",
+            event.target(),
+            event.current_target(),
+            event.phase(),
+        ));
+    })
+    .unwrap();
+
+    doc.dispatch_key_press(key_event());
+
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            ("child", child, child, EventPhase::Target),
+            ("root", child, root, EventPhase::Bubble),
+        ]
+    );
+}
+
+#[test]
+fn focusable_state_and_manual_focus_api_work() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+
+    assert_eq!(doc.focused(), None);
+    assert!(!doc.is_focusable(node).unwrap());
+    assert_eq!(
+        doc.focus(node),
+        Err(TuidomError::NodeNotFocusable { id: node })
+    );
+
+    doc.set_focusable(node, true).unwrap();
+    assert!(doc.is_focusable(node).unwrap());
+    doc.focus(node).unwrap();
+    assert_eq!(doc.focused(), Some(node));
+
+    doc.blur();
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn focus_and_blur_events_bubble_with_relation() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let parent = doc.create_box().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(root, parent).unwrap();
+    doc.append_child(parent, child).unwrap();
+    doc.set_focusable(child, true).unwrap();
+
+    let focus_calls = Arc::new(Mutex::new(Vec::new()));
+    for node in [root, parent, child] {
+        let calls = focus_calls.clone();
+        doc.on_focus(node, move |event| {
+            calls.lock().unwrap().push((
+                event.target(),
+                event.current_target(),
+                event.phase(),
+                event.relation(),
+            ));
+        })
+        .unwrap();
+    }
+
+    let blur_calls = Arc::new(Mutex::new(Vec::new()));
+    for node in [root, parent, child] {
+        let calls = blur_calls.clone();
+        doc.on_blur(node, move |event| {
+            calls.lock().unwrap().push((
+                event.target(),
+                event.current_target(),
+                event.phase(),
+                event.relation(),
+            ));
+        })
+        .unwrap();
+    }
+
+    doc.focus(child).unwrap();
+    doc.blur();
+
+    let expected = vec![
+        (
+            child,
+            child,
+            EventPhase::Target,
+            FocusEventRelation::SelfNode,
+        ),
+        (
+            child,
+            parent,
+            EventPhase::Bubble,
+            FocusEventRelation::Descendant,
+        ),
+        (
+            child,
+            root,
+            EventPhase::Bubble,
+            FocusEventRelation::Descendant,
+        ),
+    ];
+    assert_eq!(*focus_calls.lock().unwrap(), expected);
+    assert_eq!(*blur_calls.lock().unwrap(), expected);
+}
+
+#[test]
+fn stop_propagation_prevents_focus_event_from_reaching_ancestors() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let parent = doc.create_box().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(root, parent).unwrap();
+    doc.append_child(parent, child).unwrap();
+    doc.set_focusable(child, true).unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let child_calls = calls.clone();
+    doc.on_focus(child, move |event| {
+        child_calls.lock().unwrap().push("child");
+        event.stop_propagation();
+    })
+    .unwrap();
+
+    let parent_calls = calls.clone();
+    doc.on_focus(parent, move |_| {
+        parent_calls.lock().unwrap().push("parent");
+    })
+    .unwrap();
+
+    let root_calls = calls.clone();
+    doc.on_focus(root, move |_| {
+        root_calls.lock().unwrap().push("root");
+    })
+    .unwrap();
+
+    doc.focus(child).unwrap();
+
+    assert_eq!(*calls.lock().unwrap(), vec!["child"]);
+}
+
+#[test]
+fn focus_state_is_cleared_when_focused_node_is_removed() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let child = doc.create_box().unwrap();
+    doc.append_child(root, child).unwrap();
+    doc.set_focusable(child, true).unwrap();
+    doc.focus(child).unwrap();
+
+    doc.remove_child(root, child).unwrap();
+
+    assert_eq!(doc.focused(), None);
+    assert_eq!(
+        doc.is_focusable(child),
+        Err(TuidomError::NodeNotFound { id: child })
+    );
 }
 
 #[test]
