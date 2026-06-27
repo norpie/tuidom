@@ -150,6 +150,18 @@ impl Document {
         }
     }
 
+    pub(crate) fn focus_target_from_hit(&self, hit: NodeId) -> Option<NodeId> {
+        let focusable = lock::mutex(&self.inner.focusable_nodes).clone();
+        let mut current = Some(hit);
+        while let Some(node) = current {
+            if focusable.contains(&node) && self.inner.nodes.contains_key(&node) {
+                return Some(node);
+            }
+            current = self.get_parent(node);
+        }
+        None
+    }
+
     pub(super) fn remove_focus_side_state(&self, node: NodeId) {
         lock::mutex(&self.inner.focusable_nodes).remove(&node);
         lock::mutex(&self.inner.focus_styles).remove(&node);

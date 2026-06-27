@@ -13,6 +13,8 @@ pub(crate) enum RuntimeEvent {
     KeyPress(KeyEvent),
     /// A mouse button press from the input stream.
     MouseDown(MouseEvent),
+    /// A mouse pointer movement from the input stream.
+    MouseMove { x: i32, y: i32 },
     /// A mouse button release from the input stream.
     MouseUp(MouseEvent),
     /// A mouse wheel movement from the input stream.
@@ -55,6 +57,9 @@ pub(crate) fn process_runtime_event(
                 button: mouse.button,
             });
         }
+        RuntimeEvent::MouseMove { x, y } => {
+            focus_hover_target(doc, x, y);
+        }
         RuntimeEvent::MouseUp(mut mouse) => {
             let target = mouse_target(doc, mouse.x, mouse.y);
             doc.dispatch_mouse_up_to(target, &mut mouse);
@@ -84,6 +89,20 @@ pub(crate) fn process_runtime_event(
 
 fn mouse_target(doc: &Document, x: i32, y: i32) -> NodeId {
     doc.node_at(x, y).unwrap_or_else(|| doc.root())
+}
+
+fn focus_hover_target(doc: &Document, x: i32, y: i32) {
+    let Some(hit) = doc.node_at(x, y) else {
+        return;
+    };
+    let Some(target) = doc.focus_target_from_hit(hit) else {
+        return;
+    };
+    if doc.focused() != Some(target)
+        && let Err(err) = doc.focus(target)
+    {
+        log::error!("hover focus failed: {err}");
+    }
 }
 
 fn set_pending_resize(doc: &Document, resize: ResizeEvent) {

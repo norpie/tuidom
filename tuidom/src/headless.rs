@@ -118,6 +118,17 @@ impl HeadlessRuntime {
         );
     }
 
+    /// Dispatch a simulated mouse pointer move at a screen coordinate.
+    ///
+    /// Moving over a focusable node focuses it through the shared runtime path.
+    pub fn simulate_mouse_move(&mut self, x: i32, y: i32) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::MouseMove { x, y },
+            &mut self.event_state,
+        );
+    }
+
     /// Dispatch a simulated mouse button release at a screen coordinate.
     ///
     /// If it matches the previous simulated mouse down by target, cell, and
@@ -158,6 +169,7 @@ impl HeadlessRuntime {
     /// currently supported press/release and click-suppression behavior.
     pub fn simulate_mouse_drag(&mut self, start: (i32, i32), end: (i32, i32)) {
         self.simulate_mouse_down(start.0, start.1, MouseButton::Left);
+        self.simulate_mouse_move(end.0, end.1);
         self.simulate_mouse_up(end.0, end.1, MouseButton::Left);
     }
 }
@@ -319,6 +331,36 @@ mod tests {
         assert_eq!(runtime.width(), 20);
         assert_eq!(runtime.height(), 5);
         assert_eq!(*seen.lock().unwrap(), Some((20, 5)));
+    }
+
+    #[test]
+    fn simulated_mouse_move_focuses_focusable_node_under_pointer() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("A").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+        doc.set_focusable(text, true).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_move(0, 0);
+
+        assert_eq!(runtime.document().focused(), Some(text));
+    }
+
+    #[test]
+    fn simulated_mouse_move_focuses_focusable_ancestor_of_hit_node() {
+        let doc = Document::new().unwrap();
+        let parent = doc.create_box().unwrap();
+        let text = doc.create_text("A").unwrap();
+        doc.append_child(doc.root(), parent).unwrap();
+        doc.append_child(parent, text).unwrap();
+        doc.set_focusable(parent, true).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_move(0, 0);
+
+        assert_eq!(runtime.document().focused(), Some(parent));
     }
 
     #[test]
