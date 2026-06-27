@@ -730,6 +730,36 @@ fn stop_propagation_prevents_ancestor_dispatch_after_current_node() {
 }
 
 #[test]
+fn key_prevent_default_does_not_stop_propagation() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let child = doc.create_box().unwrap();
+    doc.append_child(root, child).unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+
+    let child_calls = calls.clone();
+    doc.on_key_press(child, move |event| {
+        child_calls.lock().unwrap().push("child");
+        event.prevent_default();
+    })
+    .unwrap();
+
+    let root_calls = calls.clone();
+    doc.on_key_press(root, move |_| {
+        root_calls.lock().unwrap().push("root");
+    })
+    .unwrap();
+
+    let mut event = key_event();
+    doc.dispatch_key_press_to(child, &mut event);
+
+    assert_eq!(*calls.lock().unwrap(), vec!["child", "root"]);
+    assert!(event.default_prevented());
+    assert!(!event.propagation_stopped());
+}
+
+#[test]
 fn resize_listener_is_document_level() {
     let doc = Document::new().unwrap();
     let seen = Arc::new(Mutex::new(None));

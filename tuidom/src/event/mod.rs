@@ -85,6 +85,7 @@ pub struct KeyEvent {
     /// The key that was pressed.
     pub code: KeyCode,
     metadata: TargetedMetadata,
+    default_prevented: bool,
 }
 
 impl KeyEvent {
@@ -92,6 +93,7 @@ impl KeyEvent {
         Self {
             code,
             metadata: TargetedMetadata::pending(),
+            default_prevented: false,
         }
     }
 
@@ -118,6 +120,19 @@ impl KeyEvent {
     /// Whether propagation to ancestor nodes has been stopped.
     pub fn propagation_stopped(&self) -> bool {
         self.metadata.propagation_stopped
+    }
+
+    /// Prevent document-level default handling for this key press.
+    ///
+    /// This does not stop propagation. Use [`stop_propagation`](Self::stop_propagation)
+    /// when ancestor listeners should not receive the event.
+    pub fn prevent_default(&mut self) {
+        self.default_prevented = true;
+    }
+
+    /// Whether document-level default handling has been prevented.
+    pub fn default_prevented(&self) -> bool {
+        self.default_prevented
     }
 }
 
