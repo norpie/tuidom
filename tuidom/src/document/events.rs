@@ -202,7 +202,7 @@ impl Document {
     pub(crate) fn dispatch_key_press(&self, mut event: KeyEvent) {
         let target = self.focused().unwrap_or_else(|| self.root());
         self.dispatch_key_press_to(target, &mut event);
-        if !event.default_prevented() {
+        if !event.default_prevented() && !self.apply_input_default_action(event.code) {
             self.apply_focus_default_action(event.code);
         }
     }

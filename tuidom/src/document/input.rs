@@ -4,6 +4,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
+use crate::event::KeyCode;
 use crate::id::NodeId;
 use crate::node::{InputState, NodeKind};
 
@@ -204,6 +205,82 @@ impl Document {
         self.refresh_input_node(node)
     }
 
+    pub(crate) fn apply_input_default_action(&self, code: KeyCode) -> bool {
+        let Some(node) = self.focused() else {
+            return false;
+        };
+
+        match self.apply_input_default_action_to(node, code) {
+            Ok(handled) => handled,
+            Err(err) => {
+                log::error!("input default action failed: {err}");
+                false
+            }
+        }
+    }
+
+    fn apply_input_default_action_to(&self, node: NodeId, code: KeyCode) -> Result<bool> {
+        let mut refresh_layout = false;
+        let handled = {
+            let Some(mut data) = self.inner.nodes.get_mut(&node) else {
+                return Ok(false);
+            };
+            let Ok(state) = input_state_mut(&mut data.kind, node) else {
+                return Ok(false);
+            };
+
+            match code {
+                KeyCode::Char(ch) if !ch.is_control() => {
+                    replace_selection_or_insert(state, &ch.to_string());
+                    refresh_layout = true;
+                    true
+                }
+                KeyCode::Backspace => {
+                    refresh_layout = delete_selection_or_previous_grapheme(state);
+                    true
+                }
+                KeyCode::Delete => {
+                    refresh_layout = delete_selection_or_next_grapheme(state);
+                    true
+                }
+                KeyCode::Left => {
+                    move_cursor_left(state);
+                    true
+                }
+                KeyCode::Right => {
+                    move_cursor_right(state);
+                    true
+                }
+                KeyCode::Home => {
+                    move_cursor_to_line_start(state);
+                    true
+                }
+                KeyCode::End => {
+                    move_cursor_to_line_end(state);
+                    true
+                }
+                KeyCode::Up | KeyCode::Down => true,
+                KeyCode::Enter => {
+                    if state.multiline {
+                        replace_selection_or_insert(state, "\n");
+                        refresh_layout = true;
+                    }
+                    true
+                }
+                _ => false,
+            }
+        };
+
+        if handled {
+            if refresh_layout {
+                self.register_layout_node(node)?;
+            }
+            self.inner.notify.notify_one();
+        }
+
+        Ok(handled)
+    }
+
     fn refresh_input_node(&self, node: NodeId) -> Result<()> {
         self.register_layout_node(node)?;
         self.inner.notify.notify_one();
@@ -223,6 +300,76 @@ fn input_state_mut(kind: &mut NodeKind, node: NodeId) -> Result<&mut InputState>
         NodeKind::Input { state } => Ok(state),
         _ => Err(TuidomError::NodeNotInput { id: node }),
     }
+}
+
+fn replace_selection_or_insert(state: &mut InputState, text: &str) {
+    let range = state.selection.take().unwrap_or(state.cursor..state.cursor);
+    state.content.replace_range(range.clone(), text);
+    state.cursor = range.start + text.len();
+    normalize_input_state(state);
+}
+
+fn delete_selection_or_previous_grapheme(state: &mut InputState) -> bool {
+    if let Some(selection) = state.selection.take() {
+        state.content.replace_range(selection.clone(), "");
+        state.cursor = selection.start;
+        normalize_input_state(state);
+        return true;
+    }
+
+    let Some(previous) = previous_grapheme_boundary(&state.content, state.cursor) else {
+        return false;
+    };
+    state.content.replace_range(previous..state.cursor, "");
+    state.cursor = previous;
+    normalize_input_state(state);
+    true
+}
+
+fn delete_selection_or_next_grapheme(state: &mut InputState) -> bool {
+    if let Some(selection) = state.selection.take() {
+        state.content.replace_range(selection.clone(), "");
+        state.cursor = selection.start;
+        normalize_input_state(state);
+        return true;
+    }
+
+    let Some(next) = next_grapheme_boundary(&state.content, state.cursor) else {
+        return false;
+    };
+    state.content.replace_range(state.cursor..next, "");
+    normalize_input_state(state);
+    true
+}
+
+fn move_cursor_left(state: &mut InputState) {
+    if let Some(selection) = state.selection.take() {
+        state.cursor = selection.start;
+        return;
+    }
+    if let Some(previous) = previous_grapheme_boundary(&state.content, state.cursor) {
+        state.cursor = previous;
+    }
+}
+
+fn move_cursor_right(state: &mut InputState) {
+    if let Some(selection) = state.selection.take() {
+        state.cursor = selection.end;
+        return;
+    }
+    if let Some(next) = next_grapheme_boundary(&state.content, state.cursor) {
+        state.cursor = next;
+    }
+}
+
+fn move_cursor_to_line_start(state: &mut InputState) {
+    state.selection = None;
+    state.cursor = line_start(&state.content, state.cursor);
+}
+
+fn move_cursor_to_line_end(state: &mut InputState) {
+    state.selection = None;
+    state.cursor = line_end(&state.content, state.cursor);
 }
 
 fn normalize_input_state(state: &mut InputState) {
@@ -251,4 +398,47 @@ fn clamp_to_grapheme_boundary(content: &str, offset: usize) -> usize {
         .take_while(|index| *index <= offset)
         .last()
         .unwrap_or(0)
+}
+
+fn previous_grapheme_boundary(content: &str, cursor: usize) -> Option<usize> {
+    if cursor == 0 {
+        return None;
+    }
+
+    let cursor = clamp_to_grapheme_boundary(content, cursor);
+    content
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .take_while(|index| *index < cursor)
+        .last()
+        .or(Some(0))
+}
+
+fn next_grapheme_boundary(content: &str, cursor: usize) -> Option<usize> {
+    let cursor = clamp_to_grapheme_boundary(content, cursor);
+    if cursor >= content.len() {
+        return None;
+    }
+
+    content
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .find(|index| *index > cursor)
+        .or(Some(content.len()))
+}
+
+fn line_start(content: &str, cursor: usize) -> usize {
+    let cursor = clamp_to_grapheme_boundary(content, cursor);
+    content[..cursor]
+        .rfind('\n')
+        .map(|index| index + '\n'.len_utf8())
+        .unwrap_or(0)
+}
+
+fn line_end(content: &str, cursor: usize) -> usize {
+    let cursor = clamp_to_grapheme_boundary(content, cursor);
+    content[cursor..]
+        .find('\n')
+        .map(|index| cursor + index)
+        .unwrap_or(content.len())
 }

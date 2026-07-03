@@ -123,6 +123,132 @@ fn cursor_style_fields_resolve_and_focus_style_overrides_them() {
 }
 
 #[test]
+fn input_default_action_inserts_text_and_replaces_selection() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("ac").unwrap();
+    doc.focus(input).unwrap();
+
+    doc.set_input_cursor(input, 1).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('b')));
+    assert_eq!(doc.input_value(input).unwrap(), "abc");
+    assert_eq!(doc.input_cursor(input).unwrap(), 2);
+
+    doc.set_input_selection(input, 1..3).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('z')));
+    assert_eq!(doc.input_value(input).unwrap(), "az");
+    assert_eq!(doc.input_cursor(input).unwrap(), 2);
+    assert_eq!(doc.input_selection(input).unwrap(), None);
+}
+
+#[test]
+fn input_default_action_deletes_by_grapheme() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("a\u{301}b").unwrap();
+    doc.focus(input).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Backspace));
+    assert_eq!(doc.input_value(input).unwrap(), "a\u{301}");
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}".len());
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Backspace));
+    assert_eq!(doc.input_value(input).unwrap(), "");
+    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+
+    doc.set_input_value(input, "a\u{301}b").unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Delete));
+    assert_eq!(doc.input_value(input).unwrap(), "b");
+    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+}
+
+#[test]
+fn input_default_action_moves_cursor_by_grapheme_and_line() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("a\u{301}b\ncd").unwrap();
+    doc.focus(input).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Left));
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}b\nc".len());
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Left));
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}b\n".len());
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Home));
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}b\n".len());
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::End));
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}b\ncd".len());
+
+    doc.set_input_cursor(input, "a\u{301}b".len()).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Left));
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}".len());
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Left));
+    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}".len());
+}
+
+#[test]
+fn input_default_action_handles_enter_by_multiline_flag() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("ab").unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 1).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Enter));
+    assert_eq!(doc.input_value(input).unwrap(), "ab");
+
+    doc.set_input_multiline(input, true).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Enter));
+    assert_eq!(doc.input_value(input).unwrap(), "a\nb");
+}
+
+#[test]
+fn prevent_default_skips_input_default_action() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("").unwrap();
+    doc.focus(input).unwrap();
+    doc.on_key_press(input, |event| event.prevent_default())
+        .unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+
+    assert_eq!(doc.input_value(input).unwrap(), "");
+}
+
+#[test]
+fn input_default_action_takes_precedence_over_focus_navigation() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("a").unwrap();
+    let right = doc.create_box().unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.append_child(doc.root(), right).unwrap();
+    doc.set_focusable(right, true).unwrap();
+    set_layout(
+        &doc,
+        input,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        },
+    );
+    set_layout(
+        &doc,
+        right,
+        LayoutRect {
+            x: 2,
+            y: 0,
+            width: 1,
+            height: 1,
+        },
+    );
+    doc.focus(input).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+
+    assert_eq!(doc.focused(), Some(input));
+}
+
+#[test]
 fn node_ids_are_scoped_to_their_document() {
     let first = Document::new().unwrap();
     let second = Document::new().unwrap();
