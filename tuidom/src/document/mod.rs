@@ -21,6 +21,7 @@ use crate::render::RenderStats;
 
 mod events;
 mod focus;
+mod input;
 mod layout;
 mod style;
 mod tree;
@@ -112,6 +113,20 @@ impl Document {
             self.inner.nodes.remove(&id);
             return Err(err);
         }
+        Ok(id)
+    }
+
+    /// Create a new editable input node with the given content.
+    ///
+    /// Returns the [`NodeId`] of the created node. Input nodes are focusable
+    /// by default.
+    pub fn create_input(&self, content: impl Into<String>) -> Result<NodeId> {
+        let id = self.inner.alloc(NodeData::input(content));
+        if let Err(err) = self.register_layout_node(id) {
+            self.inner.nodes.remove(&id);
+            return Err(err);
+        }
+        lock::mutex(&self.inner.focusable_nodes).insert(id);
         Ok(id)
     }
 

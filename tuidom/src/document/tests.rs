@@ -12,7 +12,7 @@ use crate::event::{
 };
 use crate::headless::HeadlessRuntime;
 use crate::node::{LayoutRect, NodeKindView};
-use crate::style::{Color, Display, Length, Style};
+use crate::style::{Color, CursorBlink, CursorShape, Display, Length, Style};
 
 #[test]
 fn create_nodes() {
@@ -27,6 +27,99 @@ fn create_nodes() {
     assert!(matches!(text_view.kind, NodeKindView::Text { .. }));
 
     assert!(doc.get_node(NodeId::new(999)).is_none());
+}
+
+#[test]
+fn create_input_node_is_focusable_by_default() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("hello").unwrap();
+
+    assert!(doc.is_focusable(input).unwrap());
+    assert!(matches!(
+        doc.get_node(input).unwrap().kind,
+        NodeKindView::Input {
+            value,
+            cursor: 5,
+            selection: None,
+            multiline: false,
+            mask: None,
+        } if value == "hello"
+    ));
+}
+
+#[test]
+fn input_state_apis_read_write_and_normalize_offsets() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("a\u{301}b").unwrap();
+
+    assert_eq!(doc.input_value(input).unwrap(), "a\u{301}b");
+    assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}b".len());
+
+    doc.set_input_cursor(input, 1).unwrap();
+    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+
+    let reversed_selection = std::ops::Range { start: 4, end: 1 };
+    doc.set_input_selection(input, reversed_selection).unwrap();
+    assert_eq!(doc.input_selection(input).unwrap(), Some(0..4));
+
+    doc.clear_input_selection(input).unwrap();
+    assert_eq!(doc.input_selection(input).unwrap(), None);
+
+    doc.set_input_multiline(input, true).unwrap();
+    assert!(doc.input_multiline(input).unwrap());
+
+    doc.set_input_mask(input, Some('*')).unwrap();
+    assert_eq!(doc.input_mask(input).unwrap(), Some('*'));
+
+    doc.set_input_value(input, "xy").unwrap();
+    assert_eq!(doc.input_value(input).unwrap(), "xy");
+    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+}
+
+#[test]
+fn input_state_apis_reject_non_input_nodes() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hello").unwrap();
+
+    assert_eq!(
+        doc.input_value(text).unwrap_err(),
+        TuidomError::NodeNotInput { id: text }
+    );
+    assert_eq!(
+        doc.set_input_value(text, "new").unwrap_err(),
+        TuidomError::NodeNotInput { id: text }
+    );
+}
+
+#[test]
+fn cursor_style_fields_resolve_and_focus_style_overrides_them() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("hello").unwrap();
+
+    let mut base = Style::new();
+    base.cursor_shape(CursorShape::Bar);
+    base.cursor_fg(Color::red());
+    base.cursor_bg(Color::blue());
+    base.cursor_blink(CursorBlink::Blink);
+    doc.set_style(input, &base).unwrap();
+
+    let resolved = doc.resolved_style(input).unwrap();
+    assert_eq!(resolved.cursor_shape, CursorShape::Bar);
+    assert_eq!(resolved.cursor_fg, Color::red());
+    assert_eq!(resolved.cursor_bg, Color::blue());
+    assert_eq!(resolved.cursor_blink, CursorBlink::Blink);
+
+    let mut focus = Style::new();
+    focus.cursor_shape(CursorShape::Underline);
+    focus.cursor_bg(Color::yellow());
+    doc.set_focus_style(input, &focus).unwrap();
+    doc.focus(input).unwrap();
+
+    let focused = doc.resolved_style(input).unwrap();
+    assert_eq!(focused.cursor_shape, CursorShape::Underline);
+    assert_eq!(focused.cursor_fg, Color::red());
+    assert_eq!(focused.cursor_bg, Color::yellow());
+    assert_eq!(focused.cursor_blink, CursorBlink::Blink);
 }
 
 #[test]

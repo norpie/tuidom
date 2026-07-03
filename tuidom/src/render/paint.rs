@@ -6,7 +6,7 @@ use crate::document::Document;
 use crate::node::NodeKindView;
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::grid::{Cell, Grid, GridRect};
-use crate::style::color::RgbCache;
+use crate::style::color::{Rgb, RgbCache};
 
 /// DOM painting stage timings.
 #[derive(Debug, Clone, Copy, Default)]
@@ -56,30 +56,45 @@ fn paint_entry(grid: &mut Grid, node: &PaintEntry, rgb_cache: &mut RgbCache) {
         }
 
         NodeKindView::Text { content } => {
-            if let Some(bg) = bg_rgb {
-                let bg_cell = Cell::empty_with_bg(bg);
-                grid.fill_rect(
-                    node.layout.x,
-                    node.layout.y,
-                    node.layout.width,
-                    node.layout.height,
-                    bg_cell,
-                    alpha,
-                );
-            }
-            grid.write_text_clipped(
-                GridRect {
-                    x: node.layout.x,
-                    y: node.layout.y,
-                    width: node.layout.width,
-                    height: node.layout.height,
-                },
-                content,
-                Some(fg_rgb),
-                alpha,
-            );
+            paint_text(grid, node, bg_rgb, fg_rgb, alpha, content);
+        }
+
+        NodeKindView::Input { value, .. } => {
+            paint_text(grid, node, bg_rgb, fg_rgb, alpha, value);
         }
     }
+}
+
+fn paint_text(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    bg_rgb: Option<Rgb>,
+    fg_rgb: Rgb,
+    alpha: f64,
+    content: &str,
+) {
+    if let Some(bg) = bg_rgb {
+        let bg_cell = Cell::empty_with_bg(bg);
+        grid.fill_rect(
+            node.layout.x,
+            node.layout.y,
+            node.layout.width,
+            node.layout.height,
+            bg_cell,
+            alpha,
+        );
+    }
+    grid.write_text_clipped(
+        GridRect {
+            x: node.layout.x,
+            y: node.layout.y,
+            width: node.layout.width,
+            height: node.layout.height,
+        },
+        content,
+        Some(fg_rgb),
+        alpha,
+    );
 }
 
 #[cfg(test)]

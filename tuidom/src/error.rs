@@ -45,6 +45,13 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node exists but is not an input node.
+    #[error("node {id:?} is not an input")]
+    NodeNotInput {
+        /// The node that is not an input.
+        id: NodeId,
+    },
+
     /// The underlying layout engine reported an error.
     #[error("layout engine error: {0}")]
     Layout(#[from] taffy::tree::TaffyError),

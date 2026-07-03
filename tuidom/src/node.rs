@@ -1,6 +1,7 @@
 //! Node data storage and public view types.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::RwLock;
 
 use crate::animation::TransitionConfig;
@@ -30,6 +31,36 @@ pub struct LayoutRect {
 // Internal node storage
 // ---------------------------------------------------------------------------
 
+/// Editable text input state.
+#[derive(Debug, Clone)]
+pub(crate) struct InputState {
+    /// Stored input content. Rendering may mask this, but storage remains unmasked.
+    pub content: String,
+    /// Cursor byte offset into `content`, always normalized to a grapheme boundary.
+    pub cursor: usize,
+    /// Selected byte range in `content`, normalized to grapheme boundaries.
+    pub selection: Option<Range<usize>>,
+    /// Whether Enter inserts newlines.
+    pub multiline: bool,
+    /// Optional display mask for password-like fields.
+    pub mask: Option<char>,
+}
+
+impl InputState {
+    /// Create input state with the cursor at the end of the initial content.
+    pub(crate) fn new(content: impl Into<String>) -> Self {
+        let content = content.into();
+        let cursor = content.len();
+        Self {
+            content,
+            cursor,
+            selection: None,
+            multiline: false,
+            mask: None,
+        }
+    }
+}
+
 /// The kind of a DOM node.
 #[derive(Debug, Clone)]
 pub(crate) enum NodeKind {
@@ -37,7 +68,9 @@ pub(crate) enum NodeKind {
     Box,
     /// Static text content.
     Text { content: String },
-    // Future: Input, Frames, Canvas
+    /// Editable text input.
+    Input { state: InputState },
+    // Future: Frames, Canvas
 }
 
 /// Internal representation of a DOM node, stored in the arena.
@@ -87,6 +120,21 @@ impl NodeData {
             attrs: HashMap::new(),
         }
     }
+
+    /// Create a new input node.
+    pub fn input(content: impl Into<String>) -> Self {
+        Self {
+            kind: NodeKind::Input {
+                state: InputState::new(content),
+            },
+            parent: None,
+            children: Vec::new(),
+            style: Style::default(),
+            resolved_style: RwLock::new(None),
+            transition_configs: HashMap::new(),
+            attrs: HashMap::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +168,19 @@ pub enum NodeKindView {
         /// The text content.
         content: String,
     },
+    /// Editable text input state snapshot.
+    Input {
+        /// Stored input value.
+        value: String,
+        /// Cursor byte offset into `value`.
+        cursor: usize,
+        /// Selected byte range in `value`, if any.
+        selection: Option<Range<usize>>,
+        /// Whether the input accepts newlines.
+        multiline: bool,
+        /// Optional display mask for password-like fields.
+        mask: Option<char>,
+    },
 }
 
 impl NodeKind {
@@ -129,6 +190,13 @@ impl NodeKind {
             NodeKind::Box => NodeKindView::Box,
             NodeKind::Text { content } => NodeKindView::Text {
                 content: content.clone(),
+            },
+            NodeKind::Input { state } => NodeKindView::Input {
+                value: state.content.clone(),
+                cursor: state.cursor,
+                selection: state.selection.clone(),
+                multiline: state.multiline,
+                mask: state.mask,
             },
         }
     }
