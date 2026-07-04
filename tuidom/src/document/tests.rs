@@ -12,7 +12,7 @@ use crate::event::{
 };
 use crate::headless::HeadlessRuntime;
 use crate::node::{LayoutRect, NodeKindView};
-use crate::style::{Color, CursorBlink, CursorShape, Display, Length, Style};
+use crate::style::{AlignItems, Color, CursorBlink, CursorShape, Display, Length, Style};
 
 #[test]
 fn create_nodes() {
@@ -120,6 +120,66 @@ fn cursor_style_fields_resolve_and_focus_style_overrides_them() {
     assert_eq!(focused.cursor_fg, Color::red());
     assert_eq!(focused.cursor_bg, Color::yellow());
     assert_eq!(focused.cursor_blink, CursorBlink::Blink);
+}
+
+#[test]
+fn input_layout_measures_displayed_single_line_multiline_and_masked_content() {
+    let doc = Document::new().unwrap();
+    doc.update_style(doc.root(), |style| {
+        style.align_items(AlignItems::FlexStart);
+    })
+    .unwrap();
+    let input = doc.create_input("ab\ncdef").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+
+    doc.compute_layout(20, 5).unwrap();
+    let single_line = doc.get_node(input).unwrap().layout.unwrap();
+    assert_eq!(single_line.width, 7);
+    assert_eq!(single_line.height, 1);
+
+    doc.set_input_multiline(input, true).unwrap();
+    doc.compute_layout(20, 5).unwrap();
+    let multiline = doc.get_node(input).unwrap().layout.unwrap();
+    assert_eq!(multiline.width, 4);
+    assert_eq!(multiline.height, 2);
+
+    doc.set_input_value(input, "abcd").unwrap();
+    doc.set_input_mask(input, Some('界')).unwrap();
+    doc.compute_layout(20, 5).unwrap();
+    let masked = doc.get_node(input).unwrap().layout.unwrap();
+    assert_eq!(masked.width, 8);
+    assert_eq!(masked.height, 1);
+}
+
+#[test]
+fn input_rendering_uses_display_content_without_changing_stored_value() {
+    let doc = Document::new().unwrap();
+    doc.update_style(doc.root(), |style| {
+        style.align_items(AlignItems::FlexStart);
+    })
+    .unwrap();
+    let input = doc.create_input("ab\ncd").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 10, 4);
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "a");
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, "b");
+    assert_eq!(runtime.get_cell(2, 0).unwrap().text, " ");
+    assert_eq!(runtime.get_cell(3, 0).unwrap().text, "c");
+
+    runtime.document().set_input_multiline(input, true).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "a");
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, "b");
+    assert_eq!(runtime.get_cell(0, 1).unwrap().text, "c");
+
+    runtime.document().set_input_mask(input, Some('*')).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "*");
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, "*");
+    assert_eq!(runtime.get_cell(0, 1).unwrap().text, "*");
+    assert_eq!(runtime.document().input_value(input).unwrap(), "ab\ncd");
 }
 
 #[test]

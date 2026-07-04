@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use crate::document::Document;
-use crate::node::NodeKindView;
+use crate::node::{NodeKindView, input_display_content};
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
@@ -59,8 +59,14 @@ fn paint_entry(grid: &mut Grid, node: &PaintEntry, rgb_cache: &mut RgbCache) {
             paint_text(grid, node, bg_rgb, fg_rgb, alpha, content);
         }
 
-        NodeKindView::Input { value, .. } => {
-            paint_text(grid, node, bg_rgb, fg_rgb, alpha, value);
+        NodeKindView::Input {
+            value,
+            multiline,
+            mask,
+            ..
+        } => {
+            let content = input_display_content(value, *multiline, *mask);
+            paint_text(grid, node, bg_rgb, fg_rgb, alpha, &content);
         }
     }
 }

@@ -72,7 +72,7 @@ impl LayoutEngine {
             NodeKind::Input { state } => self.taffy.new_leaf_with_context(
                 style,
                 MeasureContext::Text {
-                    content: state.content.clone(),
+                    content: state.display_content(),
                 },
             )?,
             NodeKind::Box => self.taffy.new_leaf(style)?,
@@ -125,7 +125,7 @@ impl LayoutEngine {
                 content: content.clone(),
             }),
             NodeKind::Input { state } => Some(MeasureContext::Text {
-                content: state.content.clone(),
+                content: state.display_content(),
             }),
             NodeKind::Box => None,
         };

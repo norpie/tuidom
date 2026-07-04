@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::RwLock;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::animation::TransitionConfig;
 use crate::animation::TransitionProperty;
 use crate::id::NodeId;
@@ -59,6 +61,35 @@ impl InputState {
             mask: None,
         }
     }
+
+    /// Return the content that should be measured and painted.
+    pub(crate) fn display_content(&self) -> String {
+        input_display_content(&self.content, self.multiline, self.mask)
+    }
+}
+
+/// Build the text displayed for an input value.
+pub(crate) fn input_display_content(value: &str, multiline: bool, mask: Option<char>) -> String {
+    let value = if multiline {
+        value.to_owned()
+    } else {
+        value.replace('\n', " ")
+    };
+
+    let Some(mask) = mask else {
+        return value;
+    };
+
+    value
+        .graphemes(true)
+        .map(|grapheme| {
+            if grapheme == "\n" {
+                "\n".to_owned()
+            } else {
+                mask.to_string()
+            }
+        })
+        .collect()
 }
 
 /// The kind of a DOM node.
