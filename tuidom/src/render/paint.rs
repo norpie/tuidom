@@ -9,6 +9,7 @@ use crate::document::Document;
 use crate::node::{NodeKindView, input_display_content};
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::grid::{Cell, Grid, GridRect};
+use crate::style::CursorBlink;
 use crate::style::color::{Rgb, RgbCache};
 
 /// DOM painting stage timings.
@@ -21,7 +22,12 @@ pub(crate) struct DomPaintStats {
 }
 
 /// Paint the visible portion of the DOM tree into the grid.
-pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -> DomPaintStats {
+pub(crate) fn paint(
+    doc: &Document,
+    grid: &mut Grid,
+    rgb_cache: &mut RgbCache,
+    cursor_visible: bool,
+) -> DomPaintStats {
     let collect_start = Instant::now();
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
@@ -29,7 +35,7 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -
     let focused = doc.focused();
     let paint_start = Instant::now();
     for entry in &entries {
-        paint_entry(grid, entry, focused, rgb_cache);
+        paint_entry(grid, entry, focused, rgb_cache, cursor_visible);
     }
     let paint_time = paint_start.elapsed();
 
@@ -44,6 +50,7 @@ fn paint_entry(
     node: &PaintEntry,
     focused: Option<crate::id::NodeId>,
     rgb_cache: &mut RgbCache,
+    cursor_visible: bool,
 ) {
     let alpha = node.resolved.opacity;
     let bg_rgb = node.resolved.background.map(|c| rgb_cache.resolve(c));
@@ -77,7 +84,9 @@ fn paint_entry(
         } => {
             let content = input_display_content(value, *multiline, *mask);
             paint_text(grid, node, bg_rgb, fg_rgb, alpha, &content);
-            if focused == Some(node.id) {
+            if focused == Some(node.id)
+                && (node.resolved.cursor_blink == CursorBlink::None || cursor_visible)
+            {
                 paint_input_cursor(grid, node, value, *cursor, *multiline, *mask, rgb_cache);
             }
         }
@@ -262,7 +271,7 @@ mod tests {
 
     fn paint_doc(doc: &Document, grid: &mut Grid) {
         let mut rgb_cache = RgbCache::new();
-        paint(doc, grid, &mut rgb_cache);
+        paint(doc, grid, &mut rgb_cache, true);
     }
 
     fn painted_bg(doc: &Document) -> Option<Rgb> {

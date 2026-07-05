@@ -14,6 +14,7 @@ pub struct HeadlessRuntime {
     grid: Option<Grid>,
     rgb_cache: RgbCache,
     event_state: RuntimeEventState,
+    cursor_visible: bool,
 }
 
 impl HeadlessRuntime {
@@ -26,6 +27,7 @@ impl HeadlessRuntime {
             grid: None,
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
+            cursor_visible: true,
         }
     }
 
@@ -52,10 +54,23 @@ impl HeadlessRuntime {
         self.doc.dispatch_resize(ResizeEvent { width, height });
     }
 
+    /// Set whether blinking cursors are visible on the next render.
+    ///
+    /// Headless rendering defaults to visible for deterministic snapshots.
+    pub fn set_cursor_visible(&mut self, visible: bool) {
+        self.cursor_visible = visible;
+    }
+
     /// Compute layout and paint the document into the inspectable screen buffer.
     pub fn render(&mut self) -> Result<()> {
         self.doc.compute_layout(self.width, self.height)?;
-        let (grid, _) = render_to_grid(&self.doc, self.width, self.height, &mut self.rgb_cache);
+        let (grid, _) = render_to_grid(
+            &self.doc,
+            self.width,
+            self.height,
+            &mut self.rgb_cache,
+            self.cursor_visible,
+        );
         self.grid = Some(grid);
         Ok(())
     }

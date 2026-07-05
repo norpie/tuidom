@@ -1,7 +1,7 @@
 //! Render + event loop — the main `Document::run()` implementation.
 
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEventKind;
 use crossterm::event::{
@@ -9,7 +9,7 @@ use crossterm::event::{
     MouseEvent as CrosstermMouseEvent, MouseEventKind,
 };
 use tokio::task::JoinSet;
-use tokio::time::{Instant as TokioInstant, sleep_until};
+use tokio::time::{Instant as TokioInstant, sleep, sleep_until};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
@@ -19,6 +19,8 @@ use crate::render::Renderer;
 use crate::runtime_event::{
     RuntimeEvent, RuntimeEventState, process_runtime_event, take_pending_resize,
 };
+
+const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
@@ -118,8 +120,17 @@ async fn render_task(doc: Document) -> io::Result<()> {
     let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
     let mut renderer = Renderer::new(screen_w, screen_h)?;
     let mut next_frame_at = None;
+    let mut cursor_visible = true;
 
-    render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at).await?;
+    render_frame_timed_capped(
+        &doc,
+        &mut renderer,
+        screen_w,
+        screen_h,
+        &mut next_frame_at,
+        cursor_visible,
+    )
+    .await?;
 
     loop {
         if is_shutdown(&doc) {
@@ -127,6 +138,7 @@ async fn render_task(doc: Document) -> io::Result<()> {
         }
 
         let animation_frame_needed = animations_active(&doc);
+        let cursor_blink_needed = doc.cursor_blink_active();
 
         tokio::select! {
             _ = doc.inner.shutdown_notify.notified() => break,
@@ -139,12 +151,14 @@ async fn render_task(doc: Document) -> io::Result<()> {
                     screen_w = width;
                     screen_h = height;
                     renderer.resize(width, height);
+                    cursor_visible = true;
                     render_full_timed_capped(
                         &doc,
                         &mut renderer,
                         screen_w,
                         screen_h,
                         &mut next_frame_at,
+                        cursor_visible,
                     )
                     .await?;
                 }
@@ -154,12 +168,14 @@ async fn render_task(doc: Document) -> io::Result<()> {
                 if is_shutdown(&doc) {
                     break;
                 }
+                cursor_visible = true;
                 render_frame_timed_capped(
                     &doc,
                     &mut renderer,
                     screen_w,
                     screen_h,
                     &mut next_frame_at,
+                    cursor_visible,
                 )
                 .await?;
             }
@@ -169,12 +185,14 @@ async fn render_task(doc: Document) -> io::Result<()> {
                     break;
                 }
                 if animations_active(&doc) {
+                    cursor_visible = true;
                     render_frame_timed_capped(
                         &doc,
                         &mut renderer,
                         screen_w,
                         screen_h,
                         &mut next_frame_at,
+                        cursor_visible,
                     )
                     .await?;
                 }
@@ -188,6 +206,20 @@ async fn render_task(doc: Document) -> io::Result<()> {
                     screen_w,
                     screen_h,
                     &mut next_frame_at,
+                    cursor_visible,
+                )
+                .await?;
+            }
+
+            _ = sleep(CURSOR_BLINK_INTERVAL), if cursor_blink_needed => {
+                cursor_visible = !cursor_visible;
+                render_frame_timed_capped(
+                    &doc,
+                    &mut renderer,
+                    screen_w,
+                    screen_h,
+                    &mut next_frame_at,
+                    cursor_visible,
                 )
                 .await?;
             }
@@ -217,14 +249,20 @@ async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
 }
 
 /// Render a diffed frame with timing for the debug overlay.
-fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
+fn render_frame_timed(
+    doc: &Document,
+    renderer: &mut Renderer,
+    sw: u16,
+    sh: u16,
+    cursor_visible: bool,
+) -> io::Result<()> {
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
     doc.compute_layout(sw, sh).map_err(io::Error::other)?;
     let layout_time = layout_start.elapsed();
 
-    let stats = renderer.render_frame(doc)?;
+    let stats = renderer.render_frame(doc, cursor_visible)?;
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
@@ -232,14 +270,20 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
 }
 
 /// Render a full redraw with timing for the debug overlay.
-fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
+fn render_full_timed(
+    doc: &Document,
+    renderer: &mut Renderer,
+    sw: u16,
+    sh: u16,
+    cursor_visible: bool,
+) -> io::Result<()> {
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
     doc.compute_layout(sw, sh).map_err(io::Error::other)?;
     let layout_time = layout_start.elapsed();
 
-    let stats = renderer.render_full(doc)?;
+    let stats = renderer.render_full(doc, cursor_visible)?;
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
@@ -252,13 +296,14 @@ async fn render_frame_timed_capped(
     sw: u16,
     sh: u16,
     next_frame_at: &mut Option<TokioInstant>,
+    cursor_visible: bool,
 ) -> io::Result<()> {
     if !wait_for_frame_slot(doc, *next_frame_at).await {
         return Ok(());
     }
 
     let started_at = TokioInstant::now();
-    render_frame_timed(doc, renderer, sw, sh)?;
+    render_frame_timed(doc, renderer, sw, sh, cursor_visible)?;
     advance_frame_slot(doc, next_frame_at, started_at);
     Ok(())
 }
@@ -269,13 +314,14 @@ async fn render_full_timed_capped(
     sw: u16,
     sh: u16,
     next_frame_at: &mut Option<TokioInstant>,
+    cursor_visible: bool,
 ) -> io::Result<()> {
     if !wait_for_frame_slot(doc, *next_frame_at).await {
         return Ok(());
     }
 
     let started_at = TokioInstant::now();
-    render_full_timed(doc, renderer, sw, sh)?;
+    render_full_timed(doc, renderer, sw, sh, cursor_visible)?;
     advance_frame_slot(doc, next_frame_at, started_at);
     Ok(())
 }

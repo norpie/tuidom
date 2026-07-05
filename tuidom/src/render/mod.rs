@@ -66,12 +66,13 @@ pub(crate) fn render_to_grid(
     width: u16,
     height: u16,
     rgb_cache: &mut RgbCache,
+    cursor_visible: bool,
 ) -> (grid::Grid, GridRenderStats) {
     let grid_start = std::time::Instant::now();
     let mut grid = grid::Grid::new(width, height);
     let grid_time = grid_start.elapsed();
 
-    let dom_stats = paint::paint(doc, &mut grid, rgb_cache);
+    let dom_stats = paint::paint(doc, &mut grid, rgb_cache, cursor_visible);
 
     let mut overlay_paint_time = Duration::ZERO;
     {
@@ -114,12 +115,17 @@ impl Renderer {
     }
 
     /// Render a single frame: layout (already done), paint, diff, flush.
-    pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderStats> {
+    pub fn render_frame(
+        &mut self,
+        doc: &Document,
+        cursor_visible: bool,
+    ) -> io::Result<RenderStats> {
         let (grid, grid_stats) = render_to_grid(
             doc,
             self.old_grid.width,
             self.old_grid.height,
             &mut self.rgb_cache,
+            cursor_visible,
         );
         self.new_grid = grid;
 
@@ -152,12 +158,13 @@ impl Renderer {
     }
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
-    pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderStats> {
+    pub fn render_full(&mut self, doc: &Document, cursor_visible: bool) -> io::Result<RenderStats> {
         let (grid, grid_stats) = render_to_grid(
             doc,
             self.old_grid.width,
             self.old_grid.height,
             &mut self.rgb_cache,
+            cursor_visible,
         );
         self.new_grid = grid;
 

@@ -209,6 +209,43 @@ fn focused_input_renders_block_cursor_with_per_node_colors() {
 }
 
 #[test]
+fn blinking_cursor_respects_headless_visibility_phase() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("A").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut style = Style::new();
+    style.width(Length::Pixels(3));
+    style.cursor_blink(CursorBlink::Blink);
+    style.cursor_bg(Color::yellow());
+    doc.set_style(input, &style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 5, 2);
+    runtime.set_cursor_visible(false);
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(1, 0).unwrap().bg, None);
+
+    runtime.set_cursor_visible(true);
+    runtime.render().unwrap();
+    assert_eq!(
+        runtime.get_cell(1, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
+
+    runtime
+        .document()
+        .update_style(input, |s| s.cursor_blink(CursorBlink::None))
+        .unwrap();
+    runtime.set_cursor_visible(false);
+    runtime.render().unwrap();
+    assert_eq!(
+        runtime.get_cell(1, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
+}
+
+#[test]
 fn input_cursor_shapes_render_distinct_overlays() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("A").unwrap();
