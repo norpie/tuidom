@@ -12,7 +12,9 @@ use crate::event::{
 };
 use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
-use crate::style::{AlignItems, Color, CursorShape, Display, Length, Style};
+use crate::style::{
+    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, Length, Style,
+};
 
 #[test]
 fn create_nodes() {
@@ -2093,10 +2095,16 @@ fn set_style_gets_resolved() {
 
     let mut style = Style::new();
     style.width(Length::Pixels(42));
+    style.padding(EdgeInsets::symmetric(2, 1));
+    style.margin(EdgeInsets::new(1, 2, 3, 4));
+    style.flex_direction(FlexDirection::Column);
     doc.set_style(node, &style).unwrap();
 
     let resolved = doc.resolved_style(node).unwrap();
     assert_eq!(resolved.width, Length::Pixels(42));
+    assert_eq!(resolved.padding, EdgeInsets::symmetric(2, 1));
+    assert_eq!(resolved.margin, EdgeInsets::new(1, 2, 3, 4));
+    assert_eq!(resolved.flex_direction, FlexDirection::Column);
     assert_eq!(resolved.opacity, 1.0); // Inherit → default
     assert_eq!(resolved.color, Color::white()); // Inherit → default
 }
@@ -2201,6 +2209,9 @@ fn unset_properties_use_defaults_not_parent_values() {
     let child_resolved = doc.resolved_style(child).unwrap();
     assert_eq!(child_resolved.color, Color::white());
     assert_eq!(child_resolved.width, Length::Auto);
+    assert_eq!(child_resolved.padding, EdgeInsets::ZERO);
+    assert_eq!(child_resolved.margin, EdgeInsets::ZERO);
+    assert_eq!(child_resolved.flex_direction, FlexDirection::Row);
 }
 
 #[test]
@@ -2210,16 +2221,25 @@ fn explicitly_inherits_from_parent() {
     let parent = doc.create_box().unwrap();
     let mut parent_style = Style::new();
     parent_style.color(Color::red());
+    parent_style.padding(EdgeInsets::all(2));
+    parent_style.margin(EdgeInsets::new(1, 2, 3, 4));
+    parent_style.flex_direction(FlexDirection::Column);
     doc.set_style(parent, &parent_style).unwrap();
 
     let child = doc.create_text("hi").unwrap();
     let mut child_style = Style::new();
     child_style.inherit_color();
+    child_style.inherit_padding();
+    child_style.inherit_margin();
+    child_style.inherit_flex_direction();
     doc.set_style(child, &child_style).unwrap();
     doc.append_child(parent, child).unwrap();
 
     let child_resolved = doc.resolved_style(child).unwrap();
     assert_eq!(child_resolved.color, Color::red());
+    assert_eq!(child_resolved.padding, EdgeInsets::all(2));
+    assert_eq!(child_resolved.margin, EdgeInsets::new(1, 2, 3, 4));
+    assert_eq!(child_resolved.flex_direction, FlexDirection::Column);
     assert_eq!(child_resolved.width, Length::Auto);
 }
 

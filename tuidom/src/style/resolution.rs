@@ -5,7 +5,8 @@
 
 use crate::node::NodeData;
 use crate::style::{
-    AlignItems, Color, CursorShape, Display, JustifyContent, Length, Style, StyleValue,
+    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, JustifyContent, Length,
+    Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -15,6 +16,10 @@ pub struct ResolvedStyle {
     pub width: Length,
     /// Resolved height.
     pub height: Length,
+    /// Resolved inner spacing.
+    pub padding: EdgeInsets,
+    /// Resolved outer spacing.
+    pub margin: EdgeInsets,
     /// Resolved display mode.
     pub display: Display,
     /// Resolved opacity (0–1).
@@ -23,6 +28,8 @@ pub struct ResolvedStyle {
     pub color: Color,
     /// Resolved background color. `None` means transparent (terminal default shows through).
     pub background: Option<Color>,
+    /// Resolved main-axis direction.
+    pub flex_direction: FlexDirection,
     /// Resolved cross-axis alignment.
     pub align_items: AlignItems,
     /// Resolved main-axis alignment.
@@ -46,10 +53,13 @@ impl Default for ResolvedStyle {
 pub(crate) struct StyleDefaults {
     width: Length,
     height: Length,
+    padding: EdgeInsets,
+    margin: EdgeInsets,
     display: Display,
     opacity: f64,
     color: Color,
     background: Option<Color>,
+    flex_direction: FlexDirection,
     align_items: AlignItems,
     justify_content: JustifyContent,
     z_index: i32,
@@ -62,10 +72,13 @@ impl Default for StyleDefaults {
         Self {
             width: Length::Auto,
             height: Length::Auto,
+            padding: EdgeInsets::ZERO,
+            margin: EdgeInsets::ZERO,
             display: Display::Flex,
             opacity: 1.0,
             color: Color::white(),
             background: None,
+            flex_direction: FlexDirection::Row,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::FlexStart,
             z_index: 0,
@@ -89,10 +102,13 @@ impl StyleDefaults {
         ResolvedStyle {
             width: self.width,
             height: self.height,
+            padding: self.padding,
+            margin: self.margin,
             display: self.display,
             opacity: self.opacity,
             color: self.color,
             background: self.background,
+            flex_direction: self.flex_direction,
             align_items: self.align_items,
             justify_content: self.justify_content,
             z_index: self.z_index,
@@ -123,6 +139,16 @@ impl ResolvedStyle {
                 parent.map(|p| &p.height),
                 &defaults.height,
             ),
+            padding: resolve(
+                &data.style.padding,
+                parent.map(|p| &p.padding),
+                &defaults.padding,
+            ),
+            margin: resolve(
+                &data.style.margin,
+                parent.map(|p| &p.margin),
+                &defaults.margin,
+            ),
             display: resolve(
                 &data.style.display,
                 parent.map(|p| &p.display),
@@ -138,6 +164,11 @@ impl ResolvedStyle {
                 &data.style.background,
                 parent.and_then(|p| p.background),
                 defaults.background,
+            ),
+            flex_direction: resolve(
+                &data.style.flex_direction,
+                parent.map(|p| &p.flex_direction),
+                &defaults.flex_direction,
             ),
             align_items: resolve(
                 &data.style.align_items,
@@ -186,6 +217,18 @@ impl ResolvedStyle {
             &defaults.height,
         );
         apply_override(
+            &mut self.padding,
+            &style.padding,
+            parent.map(|p| &p.padding),
+            &defaults.padding,
+        );
+        apply_override(
+            &mut self.margin,
+            &style.margin,
+            parent.map(|p| &p.margin),
+            &defaults.margin,
+        );
+        apply_override(
             &mut self.display,
             &style.display,
             parent.map(|p| &p.display),
@@ -208,6 +251,12 @@ impl ResolvedStyle {
             &style.background,
             parent.and_then(|p| p.background),
             defaults.background,
+        );
+        apply_override(
+            &mut self.flex_direction,
+            &style.flex_direction,
+            parent.map(|p| &p.flex_direction),
+            &defaults.flex_direction,
         );
         apply_override(
             &mut self.align_items,

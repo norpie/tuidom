@@ -40,6 +40,10 @@ Terms and concepts used throughout the tuidom codebase.
 
 **StyleValue** — Wrapper for style properties. `Unset` uses the document/default style, `Inherit` resolves from the parent, and `Set(value)` uses an explicit value.
 
+**EdgeInsets** — Terminal-cell spacing for the top, right, bottom, and left edges of a node. Used by padding and margin style fields.
+
+**FlexDirection** — Main-axis direction for flex containers. Currently supports row and column.
+
 **Custom Style Property** — Raw inline style metadata stored on `Style`. Custom properties do not inherit, do not resolve into `ResolvedStyle`, and do not affect layout or rendering.
 
 **Attribute** — Raw string key/value metadata stored on a node. Attribute keys cannot be empty.

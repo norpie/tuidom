@@ -41,6 +41,54 @@ pub enum Length {
     Auto,
 }
 
+/// Edge spacing in terminal cells.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeInsets {
+    /// Top edge size.
+    pub top: u16,
+    /// Right edge size.
+    pub right: u16,
+    /// Bottom edge size.
+    pub bottom: u16,
+    /// Left edge size.
+    pub left: u16,
+}
+
+impl EdgeInsets {
+    /// No edge spacing.
+    pub const ZERO: Self = Self::all(0);
+
+    /// Create edge spacing with the same value on every side.
+    pub const fn all(value: u16) -> Self {
+        Self {
+            top: value,
+            right: value,
+            bottom: value,
+            left: value,
+        }
+    }
+
+    /// Create edge spacing with horizontal and vertical values.
+    pub const fn symmetric(horizontal: u16, vertical: u16) -> Self {
+        Self {
+            top: vertical,
+            right: horizontal,
+            bottom: vertical,
+            left: horizontal,
+        }
+    }
+
+    /// Create edge spacing with explicit top, right, bottom, and left values.
+    pub const fn new(top: u16, right: u16, bottom: u16, left: u16) -> Self {
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Display
 // ---------------------------------------------------------------------------
@@ -69,6 +117,20 @@ pub enum CursorShape {
     Underline,
     /// Vertical bar cursor.
     Bar,
+}
+
+// ---------------------------------------------------------------------------
+// Flex layout
+// ---------------------------------------------------------------------------
+
+/// Main-axis direction for flex containers.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum FlexDirection {
+    /// Lay children out horizontally from left to right.
+    #[default]
+    Row,
+    /// Lay children out vertically from top to bottom.
+    Column,
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +173,7 @@ pub enum JustifyContent {
 
 /// Inline style for a node.
 ///
-/// Known properties are typed; unknown properties fall back to a string map.
+/// Known properties are typed; custom properties are stored as raw inline metadata.
 /// Use the builder methods for construction:
 ///
 /// ```ignore
@@ -133,6 +195,10 @@ pub struct Style {
     pub(crate) width: StyleValue<Length>,
     /// Height of the node.
     pub(crate) height: StyleValue<Length>,
+    /// Inner spacing in terminal cells.
+    pub(crate) padding: StyleValue<EdgeInsets>,
+    /// Outer spacing in terminal cells.
+    pub(crate) margin: StyleValue<EdgeInsets>,
     /// Display mode.
     pub(crate) display: StyleValue<Display>,
     /// Opacity (0–1).
@@ -141,6 +207,8 @@ pub struct Style {
     pub(crate) color: StyleValue<Color>,
     /// Background color.
     pub(crate) background: StyleValue<Color>,
+    /// Main-axis direction for flex containers.
+    pub(crate) flex_direction: StyleValue<FlexDirection>,
     /// Cross-axis alignment (flex container).
     pub(crate) align_items: StyleValue<AlignItems>,
     /// Main-axis alignment (flex container).
@@ -169,10 +237,13 @@ impl Style {
         Self {
             width: StyleValue::Unset,
             height: StyleValue::Unset,
+            padding: StyleValue::Unset,
+            margin: StyleValue::Unset,
             display: StyleValue::Unset,
             opacity: StyleValue::Unset,
             color: StyleValue::Unset,
             background: StyleValue::Unset,
+            flex_direction: StyleValue::Unset,
             align_items: StyleValue::Unset,
             justify_content: StyleValue::Unset,
             z_index: StyleValue::Unset,
@@ -214,6 +285,40 @@ impl Style {
     /// Reset height to the document/default style.
     pub fn unset_height(&mut self) {
         self.height = StyleValue::Unset;
+    }
+
+    // -- Padding --------------------------------------------------------
+
+    /// Set the inner spacing.
+    pub fn padding(&mut self, value: EdgeInsets) {
+        self.padding = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit inner spacing from the parent node.
+    pub fn inherit_padding(&mut self) {
+        self.padding = StyleValue::Inherit;
+    }
+
+    /// Reset inner spacing to the document/default style.
+    pub fn unset_padding(&mut self) {
+        self.padding = StyleValue::Unset;
+    }
+
+    // -- Margin ---------------------------------------------------------
+
+    /// Set the outer spacing.
+    pub fn margin(&mut self, value: EdgeInsets) {
+        self.margin = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit outer spacing from the parent node.
+    pub fn inherit_margin(&mut self) {
+        self.margin = StyleValue::Inherit;
+    }
+
+    /// Reset outer spacing to the document/default style.
+    pub fn unset_margin(&mut self) {
+        self.margin = StyleValue::Unset;
     }
 
     // -- Display --------------------------------------------------------
@@ -282,6 +387,23 @@ impl Style {
     /// Reset background color to the document/default style.
     pub fn unset_background(&mut self) {
         self.background = StyleValue::Unset;
+    }
+
+    // -- Flex Direction -------------------------------------------------
+
+    /// Set the main-axis direction for flex containers.
+    pub fn flex_direction(&mut self, value: FlexDirection) {
+        self.flex_direction = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit flex direction from the parent node.
+    pub fn inherit_flex_direction(&mut self) {
+        self.flex_direction = StyleValue::Inherit;
+    }
+
+    /// Reset flex direction to the document/default style.
+    pub fn unset_flex_direction(&mut self) {
+        self.flex_direction = StyleValue::Unset;
     }
 
     // -- Align Items ----------------------------------------------------
@@ -399,9 +521,12 @@ mod tests {
         let mut style = Style::new();
         style.width(Length::Percent(100.0));
         style.height(Length::Pixels(20));
+        style.padding(EdgeInsets::symmetric(2, 1));
+        style.margin(EdgeInsets::new(1, 2, 3, 4));
         style.color(Color::white());
         style.background(Color::blue());
         style.opacity(0.5);
+        style.flex_direction(FlexDirection::Column);
 
         style.z_index(10);
         style.stacking_context(true);
@@ -410,7 +535,10 @@ mod tests {
 
         assert_eq!(style.width, StyleValue::Set(Length::Percent(100.0)));
         assert_eq!(style.height, StyleValue::Set(Length::Pixels(20)));
+        assert_eq!(style.padding, StyleValue::Set(EdgeInsets::symmetric(2, 1)));
+        assert_eq!(style.margin, StyleValue::Set(EdgeInsets::new(1, 2, 3, 4)));
         assert_eq!(style.opacity, StyleValue::Set(0.5));
+        assert_eq!(style.flex_direction, StyleValue::Set(FlexDirection::Column));
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
@@ -421,8 +549,11 @@ mod tests {
     fn default_is_all_unset() {
         let style = Style::new();
         assert_eq!(style.width, StyleValue::Unset);
+        assert_eq!(style.padding, StyleValue::Unset);
+        assert_eq!(style.margin, StyleValue::Unset);
         assert_eq!(style.opacity, StyleValue::Unset);
         assert_eq!(style.color, StyleValue::Unset);
+        assert_eq!(style.flex_direction, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
@@ -447,15 +578,21 @@ mod tests {
         let mut style = Style::new();
 
         style.inherit_width();
+        style.inherit_padding();
+        style.inherit_margin();
         style.inherit_opacity();
         style.inherit_color();
+        style.inherit_flex_direction();
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_cursor_shape();
 
         assert_eq!(style.width, StyleValue::Inherit);
+        assert_eq!(style.padding, StyleValue::Inherit);
+        assert_eq!(style.margin, StyleValue::Inherit);
         assert_eq!(style.opacity, StyleValue::Inherit);
         assert_eq!(style.color, StyleValue::Inherit);
+        assert_eq!(style.flex_direction, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);
