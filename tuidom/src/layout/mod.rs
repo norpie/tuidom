@@ -15,7 +15,7 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::{LayoutRect, NodeKind};
 use crate::style::resolution::ResolvedStyle;
-use crate::style::{AlignItems, Display, JustifyContent, Length};
+use crate::style::{AlignItems, Display, EdgeInsets, FlexDirection, JustifyContent, Length};
 
 // ---------------------------------------------------------------------------
 // Persistent layout engine
@@ -386,6 +386,9 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
             width: to_dimension(resolved.width),
             height: to_dimension(resolved.height),
         },
+        margin: to_taffy_margin(resolved.margin),
+        padding: to_taffy_padding(resolved.padding),
+        flex_direction: to_taffy_flex_direction(resolved.flex_direction),
         align_items: Some(to_align_items(resolved.align_items)),
         justify_content: Some(to_justify_content(resolved.justify_content)),
         ..Default::default()
@@ -397,6 +400,31 @@ fn to_dimension(length: Length) -> Dimension {
         Length::Pixels(n) => Dimension::length(n as f32),
         Length::Percent(p) => Dimension::percent(p as f32 / 100.0),
         Length::Auto => Dimension::auto(),
+    }
+}
+
+fn to_taffy_margin(insets: EdgeInsets) -> Rect<LengthPercentageAuto> {
+    Rect {
+        left: LengthPercentageAuto::length(insets.left as f32),
+        right: LengthPercentageAuto::length(insets.right as f32),
+        top: LengthPercentageAuto::length(insets.top as f32),
+        bottom: LengthPercentageAuto::length(insets.bottom as f32),
+    }
+}
+
+fn to_taffy_padding(insets: EdgeInsets) -> Rect<LengthPercentage> {
+    Rect {
+        left: LengthPercentage::length(insets.left as f32),
+        right: LengthPercentage::length(insets.right as f32),
+        top: LengthPercentage::length(insets.top as f32),
+        bottom: LengthPercentage::length(insets.bottom as f32),
+    }
+}
+
+fn to_taffy_flex_direction(direction: FlexDirection) -> taffy::style::FlexDirection {
+    match direction {
+        FlexDirection::Row => taffy::style::FlexDirection::Row,
+        FlexDirection::Column => taffy::style::FlexDirection::Column,
     }
 }
 
@@ -539,6 +567,92 @@ mod tests {
             second_layout.x + i32::from(second_layout.width)
         );
         assert_eq!(third_layout.x + i32::from(third_layout.width), 10);
+    }
+
+    #[test]
+    fn padding_offsets_children_inside_content_box() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let child = doc.create_text("A").unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(4));
+        root_style.padding(EdgeInsets::new(1, 2, 0, 3));
+        root_style.align_items(AlignItems::FlexStart);
+        doc.set_style(root, &root_style).unwrap();
+        doc.append_child(root, child).unwrap();
+
+        compute_layout(&doc, 10, 4).unwrap();
+
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!((child_layout.x, child_layout.y), (3, 1));
+    }
+
+    #[test]
+    fn margin_offsets_siblings_in_flex_layout() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut first_style = DomStyle::new();
+        first_style.width(Length::Pixels(2));
+        first_style.height(Length::Pixels(1));
+        first_style.margin(EdgeInsets::new(0, 1, 0, 0));
+        doc.set_style(first, &first_style).unwrap();
+
+        let mut second_style = DomStyle::new();
+        second_style.width(Length::Pixels(2));
+        second_style.height(Length::Pixels(1));
+        doc.set_style(second, &second_style).unwrap();
+
+        doc.append_child(root, first).unwrap();
+        doc.append_child(root, second).unwrap();
+
+        compute_layout(&doc, 10, 1).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.x, 0);
+        assert_eq!(second_layout.x, 3);
+    }
+
+    #[test]
+    fn flex_direction_column_stacks_children_vertically() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(4));
+        root_style.flex_direction(FlexDirection::Column);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 10, 4).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!((first_layout.x, first_layout.y), (0, 0));
+        assert_eq!((second_layout.x, second_layout.y), (0, 1));
     }
 
     #[test]

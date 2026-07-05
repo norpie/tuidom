@@ -169,6 +169,24 @@ fn create_input_node_is_focusable_by_default() {
 }
 
 #[test]
+fn padding_affects_rendered_child_position() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("A").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+
+    let mut style = Style::new();
+    style.padding(EdgeInsets::new(1, 0, 0, 2));
+    style.align_items(AlignItems::FlexStart);
+    doc.set_style(doc.root(), &style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 5, 3);
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, " ");
+    assert_eq!(runtime.get_cell(2, 1).unwrap().text, "A");
+}
+
+#[test]
 fn input_state_apis_read_write_and_normalize_offsets() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("a\u{301}b").unwrap();
