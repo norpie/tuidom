@@ -280,7 +280,7 @@ impl Grid {
             }
             CursorShape::HollowBlock => self.write_cursor_glyph(row, x, "▯", fg, bg),
             CursorShape::Underline => self.write_cursor_glyph(row, x, "▁", fg, bg),
-            CursorShape::Bar => self.write_cursor_glyph(row, x, "▏", fg, bg),
+            CursorShape::Bar => self.write_cursor_glyph_transparent(row, x, "▏", fg),
         }
     }
 
@@ -433,6 +433,29 @@ impl Grid {
             return;
         }
         self.clear_text_span_at(row, col);
+        self.cells[row][col] = Cell {
+            content: CellContent::Glyph {
+                text: glyph.to_owned(),
+                width: 1,
+            },
+            fg,
+            bg,
+        };
+    }
+
+    fn write_cursor_glyph_transparent(
+        &mut self,
+        row: usize,
+        col: usize,
+        glyph: &str,
+        fg: Option<Rgb>,
+    ) {
+        if row >= self.height as usize || col >= self.width as usize {
+            return;
+        }
+
+        self.clear_text_span_at(row, col);
+        let bg = self.cells[row][col].bg;
         self.cells[row][col] = Cell {
             content: CellContent::Glyph {
                 text: glyph.to_owned(),
