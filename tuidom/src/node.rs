@@ -46,6 +46,10 @@ pub(crate) struct InputState {
     pub multiline: bool,
     /// Optional display mask for password-like fields.
     pub mask: Option<char>,
+    /// Horizontal scroll offset in terminal cells.
+    pub scroll_x: u16,
+    /// Vertical scroll offset in terminal rows.
+    pub scroll_y: u16,
 }
 
 impl InputState {
@@ -59,6 +63,8 @@ impl InputState {
             selection: None,
             multiline: false,
             mask: None,
+            scroll_x: 0,
+            scroll_y: 0,
         }
     }
 
@@ -90,6 +96,47 @@ pub(crate) fn input_display_content(value: &str, multiline: bool, mask: Option<c
             }
         })
         .collect()
+}
+
+/// Apply input scroll offsets to display content.
+pub(crate) fn input_scrolled_display_content(
+    content: &str,
+    scroll_x: u16,
+    scroll_y: u16,
+) -> String {
+    content
+        .lines()
+        .skip(scroll_y as usize)
+        .map(|line| scroll_line(line, scroll_x))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn scroll_line(line: &str, scroll_x: u16) -> String {
+    if scroll_x == 0 {
+        return line.to_owned();
+    }
+
+    let mut cells = 0_u16;
+    let mut start = line.len();
+    for (index, grapheme) in line.grapheme_indices(true) {
+        let width = unicode_width::UnicodeWidthStr::width(grapheme).min(2) as u16;
+        if width == 0 {
+            continue;
+        }
+        let next = cells.saturating_add(width);
+        if next > scroll_x {
+            start = if cells < scroll_x {
+                index + grapheme.len()
+            } else {
+                index
+            };
+            break;
+        }
+        cells = next;
+    }
+
+    line.get(start..).unwrap_or("").to_owned()
 }
 
 /// The kind of a DOM node.
@@ -211,6 +258,10 @@ pub enum NodeKindView {
         multiline: bool,
         /// Optional display mask for password-like fields.
         mask: Option<char>,
+        /// Horizontal scroll offset in terminal cells.
+        scroll_x: u16,
+        /// Vertical scroll offset in terminal rows.
+        scroll_y: u16,
     },
 }
 
@@ -228,6 +279,8 @@ impl NodeKind {
                 selection: state.selection.clone(),
                 multiline: state.multiline,
                 mask: state.mask,
+                scroll_x: state.scroll_x,
+                scroll_y: state.scroll_y,
             },
         }
     }

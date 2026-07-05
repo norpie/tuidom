@@ -43,6 +43,8 @@ fn create_input_node_is_focusable_by_default() {
             selection: None,
             multiline: false,
             mask: None,
+            scroll_x: 0,
+            scroll_y: 0,
         } if value == "hello"
     ));
 }
@@ -180,6 +182,65 @@ fn input_rendering_uses_display_content_without_changing_stored_value() {
     assert_eq!(runtime.get_cell(1, 0).unwrap().text, "*");
     assert_eq!(runtime.get_cell(0, 1).unwrap().text, "*");
     assert_eq!(runtime.document().input_value(input).unwrap(), "ab\ncd");
+}
+
+#[test]
+fn single_line_input_scroll_keeps_cursor_visible() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abcdef").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    let mut style = Style::new();
+    style.width(Length::Pixels(3));
+    style.cursor_bg(Color::yellow());
+    doc.set_style(input, &style).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 8, 2);
+    runtime.render().unwrap();
+    runtime.document().set_input_cursor(input, 6).unwrap();
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "e");
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, "f");
+    assert_eq!(
+        runtime.get_cell(2, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
+
+    runtime.document().set_input_cursor(input, 0).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "a");
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, "b");
+    assert_eq!(runtime.get_cell(2, 0).unwrap().text, "c");
+}
+
+#[test]
+fn multiline_input_scroll_keeps_cursor_visible() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("a\nb\nc\nd").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    let mut style = Style::new();
+    style.width(Length::Pixels(2));
+    style.height(Length::Pixels(2));
+    style.cursor_bg(Color::yellow());
+    doc.set_style(input, &style).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 8, 4);
+    runtime.render().unwrap();
+    runtime
+        .document()
+        .set_input_cursor(input, "a\nb\nc\nd".len())
+        .unwrap();
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "c");
+    assert_eq!(runtime.get_cell(0, 1).unwrap().text, "d");
+    assert_eq!(
+        runtime.get_cell(1, 1).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
 }
 
 #[test]

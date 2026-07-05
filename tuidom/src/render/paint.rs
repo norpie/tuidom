@@ -6,7 +6,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
-use crate::node::{NodeKindView, input_display_content};
+use crate::node::{NodeKindView, input_display_content, input_scrolled_display_content};
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::CursorBlink;
@@ -80,14 +80,29 @@ fn paint_entry(
             cursor,
             multiline,
             mask,
+            scroll_x,
+            scroll_y,
             ..
         } => {
             let content = input_display_content(value, *multiline, *mask);
-            paint_text(grid, node, bg_rgb, fg_rgb, alpha, &content);
+            let visible_content = input_scrolled_display_content(&content, *scroll_x, *scroll_y);
+            paint_text(grid, node, bg_rgb, fg_rgb, alpha, &visible_content);
             if focused == Some(node.id)
                 && (node.resolved.cursor_blink == CursorBlink::None || cursor_visible)
             {
-                paint_input_cursor(grid, node, value, *cursor, *multiline, *mask, rgb_cache);
+                paint_input_cursor(
+                    grid,
+                    node,
+                    InputCursorPaint {
+                        value,
+                        cursor: *cursor,
+                        multiline: *multiline,
+                        mask: *mask,
+                        scroll_x: *scroll_x,
+                        scroll_y: *scroll_y,
+                    },
+                    rgb_cache,
+                );
             }
         }
     }
@@ -125,28 +140,36 @@ fn paint_text(
     );
 }
 
-fn paint_input_cursor(
-    grid: &mut Grid,
-    node: &PaintEntry,
-    value: &str,
+struct InputCursorPaint<'a> {
+    value: &'a str,
     cursor: usize,
     multiline: bool,
     mask: Option<char>,
+    scroll_x: u16,
+    scroll_y: u16,
+}
+
+fn paint_input_cursor(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    input: InputCursorPaint<'_>,
     rgb_cache: &mut RgbCache,
 ) {
     if node.layout.width == 0 || node.layout.height == 0 {
         return;
     }
 
-    let cursor = clamp_to_grapheme_boundary(value, cursor);
-    let position = input_cursor_position(value, cursor, multiline, mask);
-    if position.y >= i32::from(node.layout.height) || position.x >= i32::from(node.layout.width) {
+    let cursor = clamp_to_grapheme_boundary(input.value, input.cursor);
+    let position = input_cursor_position(input.value, cursor, input.multiline, input.mask);
+    let x = position.x - i32::from(input.scroll_x);
+    let y = position.y - i32::from(input.scroll_y);
+    if x < 0 || y < 0 || y >= i32::from(node.layout.height) || x >= i32::from(node.layout.width) {
         return;
     }
 
     grid.paint_cursor(
-        node.layout.x + position.x,
-        node.layout.y + position.y,
+        node.layout.x + x,
+        node.layout.y + y,
         position.width,
         node.resolved.cursor_shape,
         Some(rgb_cache.resolve(node.resolved.cursor_fg)),

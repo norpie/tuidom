@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
@@ -273,6 +274,7 @@ impl Document {
         };
 
         if handled {
+            self.update_input_scroll(node)?;
             if refresh_layout {
                 self.register_layout_node(node)?;
             }
@@ -299,8 +301,30 @@ impl Document {
     }
 
     fn refresh_input_node(&self, node: NodeId) -> Result<()> {
+        self.update_input_scroll(node)?;
         self.register_layout_node(node)?;
         self.inner.notify.notify_one();
+        Ok(())
+    }
+
+    fn update_input_scroll(&self, node: NodeId) -> Result<()> {
+        if self.focused() != Some(node) {
+            return Ok(());
+        }
+        let Some(layout) = self.get_node(node).and_then(|view| view.layout) else {
+            return Ok(());
+        };
+        if layout.width == 0 || layout.height == 0 {
+            return Ok(());
+        }
+
+        let mut data = self
+            .inner
+            .nodes
+            .get_mut(&node)
+            .ok_or(TuidomError::NodeNotFound { id: node })?;
+        let state = input_state_mut(&mut data.kind, node)?;
+        keep_cursor_visible(state, layout.width, layout.height);
         Ok(())
     }
 }
@@ -387,6 +411,70 @@ fn move_cursor_to_line_start(state: &mut InputState) {
 fn move_cursor_to_line_end(state: &mut InputState) {
     state.selection = None;
     state.cursor = line_end(&state.content, state.cursor);
+}
+
+fn keep_cursor_visible(state: &mut InputState, width: u16, height: u16) {
+    let position = input_cursor_position(state);
+
+    if position.x < state.scroll_x {
+        state.scroll_x = position.x;
+    } else {
+        let right = state.scroll_x.saturating_add(width);
+        let cursor_right = position.x.saturating_add(u16::from(position.width));
+        if cursor_right > right {
+            state.scroll_x = cursor_right.saturating_sub(width);
+        }
+    }
+
+    if state.multiline {
+        if position.y < state.scroll_y {
+            state.scroll_y = position.y;
+        } else {
+            let bottom = state.scroll_y.saturating_add(height);
+            let cursor_bottom = position.y.saturating_add(1);
+            if cursor_bottom > bottom {
+                state.scroll_y = cursor_bottom.saturating_sub(height);
+            }
+        }
+    } else {
+        state.scroll_y = 0;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InputCursorPosition {
+    x: u16,
+    y: u16,
+    width: u8,
+}
+
+fn input_cursor_position(state: &InputState) -> InputCursorPosition {
+    let cursor = clamp_to_grapheme_boundary(&state.content, state.cursor);
+    let prefix =
+        crate::node::input_display_content(&state.content[..cursor], state.multiline, state.mask);
+    let y = prefix.matches('\n').count().min(u16::MAX as usize) as u16;
+    let x = UnicodeWidthStr::width(prefix.rsplit('\n').next().unwrap_or("")).min(u16::MAX as usize)
+        as u16;
+    let width = cursor_grapheme_width(&state.content[cursor..], state.multiline, state.mask);
+    InputCursorPosition { x, y, width }
+}
+
+fn cursor_grapheme_width(suffix: &str, multiline: bool, mask: Option<char>) -> u8 {
+    let Some(grapheme) = suffix.graphemes(true).next() else {
+        return 1;
+    };
+    if multiline && grapheme == "\n" {
+        return 1;
+    }
+
+    let display = if let Some(mask) = mask {
+        mask.to_string()
+    } else if !multiline && grapheme == "\n" {
+        " ".to_owned()
+    } else {
+        grapheme.to_owned()
+    };
+    UnicodeWidthStr::width(display.as_str()).clamp(1, 2) as u8
 }
 
 fn normalize_input_state(state: &mut InputState) {
