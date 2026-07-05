@@ -151,8 +151,8 @@ pub struct Style {
     pub(crate) stacking_context: StyleValue<bool>,
     /// Input cursor shape.
     pub(crate) cursor_shape: StyleValue<CursorShape>,
-    /// Catch-all for unknown / future properties.
-    pub(crate) extra: HashMap<String, String>,
+    /// Raw custom style properties.
+    pub(crate) custom: HashMap<String, String>,
 }
 
 impl Default for Style {
@@ -178,7 +178,7 @@ impl Style {
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
             cursor_shape: StyleValue::Unset,
-            extra: HashMap::new(),
+            custom: HashMap::new(),
         }
     }
 
@@ -368,6 +368,26 @@ impl Style {
     pub fn unset_cursor_shape(&mut self) {
         self.cursor_shape = StyleValue::Unset;
     }
+
+    // -- Custom Properties ---------------------------------------------
+
+    /// Set a raw custom style property.
+    ///
+    /// Custom properties are inline metadata only. They do not inherit, do not
+    /// appear on resolved styles, and do not affect layout or rendering.
+    pub fn set_custom(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.custom.insert(name.into(), value.into());
+    }
+
+    /// Get a raw custom style property.
+    pub fn get_custom(&self, name: &str) -> Option<&str> {
+        self.custom.get(name).map(String::as_str)
+    }
+
+    /// Remove a raw custom style property.
+    pub fn remove_custom(&mut self, name: &str) {
+        self.custom.remove(name);
+    }
 }
 
 #[cfg(test)]
@@ -386,6 +406,7 @@ mod tests {
         style.z_index(10);
         style.stacking_context(true);
         style.cursor_shape(CursorShape::Bar);
+        style.set_custom("--role", "panel");
 
         assert_eq!(style.width, StyleValue::Set(Length::Percent(100.0)));
         assert_eq!(style.height, StyleValue::Set(Length::Pixels(20)));
@@ -393,6 +414,7 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
+        assert_eq!(style.get_custom("--role"), Some("panel"));
     }
 
     #[test]
@@ -404,6 +426,20 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
+        assert_eq!(style.get_custom("--role"), None);
+    }
+
+    #[test]
+    fn custom_properties_are_raw_inline_metadata() {
+        let mut style = Style::new();
+        style.set_custom(String::from("--role"), String::from("panel"));
+        assert_eq!(style.get_custom("--role"), Some("panel"));
+
+        let cloned = style.clone();
+        assert_eq!(cloned.get_custom("--role"), Some("panel"));
+
+        style.remove_custom("--role");
+        assert_eq!(style.get_custom("--role"), None);
     }
 
     #[test]

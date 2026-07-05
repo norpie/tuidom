@@ -16,8 +16,9 @@
     - [ ] Cell buffer mode: callback fills 2D grid of cells (char, fg, bg, attrs)
     - [ ] Raw mode: callback writes arbitrary escape sequences (for kitty/sixel images)
     - [ ] Enables: custom graphics, charts, half-block images, native image protocols
-- [x] Typed style struct for known properties + `HashMap<String, String>` fallback for custom/unknown
+- [x] Typed style struct for known properties + raw custom style properties
 - [x] Attributes stored as `HashMap<String, String>`
+- [x] Public attributes API: set/get/remove
 - [x] `get_node(id)` for ID-based lookup — also exposes computed layout info (position, size)
 - [ ] `node_at(x, y)` for hit testing — returns topmost node at coordinates
 - [x] Child ordering: `insert_before(parent, child, before_sibling)`, `move_child()`

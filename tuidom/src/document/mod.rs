@@ -19,6 +19,7 @@ use crate::lock;
 use crate::node::NodeData;
 use crate::render::RenderStats;
 
+mod attrs;
 mod events;
 mod focus;
 mod input;

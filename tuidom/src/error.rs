@@ -52,6 +52,10 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// An attribute key is invalid.
+    #[error("attribute key cannot be empty")]
+    InvalidAttributeKey,
+
     /// The underlying layout engine reported an error.
     #[error("layout engine error: {0}")]
     Layout(#[from] taffy::tree::TaffyError),

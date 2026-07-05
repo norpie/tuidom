@@ -30,6 +30,123 @@ fn create_nodes() {
 }
 
 #[test]
+fn attribute_api_sets_gets_removes_and_exposes_snapshot() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+
+    doc.set_attr(node, String::from("role"), String::from("button"))
+        .unwrap();
+    assert_eq!(
+        doc.get_attr(node, "role").unwrap(),
+        Some("button".to_owned())
+    );
+    assert_eq!(
+        doc.get_node(node).unwrap().attrs.get("role"),
+        Some(&"button".to_owned())
+    );
+
+    doc.set_attr(node, "role", "tab").unwrap();
+    assert_eq!(doc.get_attr(node, "role").unwrap(), Some("tab".to_owned()));
+
+    doc.remove_attr(node, "role").unwrap();
+    assert_eq!(doc.get_attr(node, "role").unwrap(), None);
+    assert!(!doc.get_node(node).unwrap().attrs.contains_key("role"));
+}
+
+#[test]
+fn attribute_api_rejects_missing_nodes_and_empty_keys() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    let missing = NodeId::new(999);
+
+    assert_eq!(
+        doc.set_attr(missing, "role", "button").unwrap_err(),
+        TuidomError::NodeNotFound { id: missing }
+    );
+    assert_eq!(
+        doc.get_attr(missing, "role").unwrap_err(),
+        TuidomError::NodeNotFound { id: missing }
+    );
+    assert_eq!(
+        doc.remove_attr(missing, "role").unwrap_err(),
+        TuidomError::NodeNotFound { id: missing }
+    );
+
+    assert_eq!(
+        doc.set_attr(node, "", "button").unwrap_err(),
+        TuidomError::InvalidAttributeKey
+    );
+    assert_eq!(
+        doc.get_attr(node, "").unwrap_err(),
+        TuidomError::InvalidAttributeKey
+    );
+    assert_eq!(
+        doc.remove_attr(node, "").unwrap_err(),
+        TuidomError::InvalidAttributeKey
+    );
+}
+
+#[tokio::test]
+async fn attribute_mutations_notify_render() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_attr(node, "role", "button").unwrap();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.remove_attr(node, "role").unwrap();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn style_custom_properties_are_raw_inline_metadata() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+
+    let mut style = Style::new();
+    style.set_custom("--kind", String::from("panel"));
+    assert_eq!(style.get_custom("--kind"), Some("panel"));
+
+    let cloned = style.clone();
+    assert_eq!(cloned.get_custom("--kind"), Some("panel"));
+
+    doc.set_style(node, &style).unwrap();
+    assert_eq!(
+        doc.inner
+            .nodes
+            .get(&node)
+            .unwrap()
+            .style
+            .get_custom("--kind"),
+        Some("panel")
+    );
+
+    doc.update_style(node, |style| {
+        style.set_custom("--kind", "dialog");
+        style.remove_custom("--missing");
+    })
+    .unwrap();
+    assert_eq!(
+        doc.inner
+            .nodes
+            .get(&node)
+            .unwrap()
+            .style
+            .get_custom("--kind"),
+        Some("dialog")
+    );
+
+    let resolved = doc.resolved_style(node).unwrap();
+    assert_eq!(resolved.width, Length::Auto);
+}
+
+#[test]
 fn create_input_node_is_focusable_by_default() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("hello").unwrap();
