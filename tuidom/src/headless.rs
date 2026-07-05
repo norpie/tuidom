@@ -2,9 +2,10 @@ use crate::document::Document;
 use crate::error::Result;
 use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
 use crate::render::grid::{Cell, Grid};
-use crate::render::render_to_grid;
+use crate::render::{RenderCursor, render_to_grid};
 use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
 use crate::style::color::{Rgb, RgbCache};
+use crate::style::CursorShape;
 
 /// A terminal-free runtime harness for deterministic layout, paint, and input tests.
 pub struct HeadlessRuntime {
@@ -12,9 +13,9 @@ pub struct HeadlessRuntime {
     width: u16,
     height: u16,
     grid: Option<Grid>,
+    cursor: Option<RenderCursor>,
     rgb_cache: RgbCache,
     event_state: RuntimeEventState,
-    cursor_visible: bool,
 }
 
 impl HeadlessRuntime {
@@ -25,9 +26,9 @@ impl HeadlessRuntime {
             width,
             height,
             grid: None,
+            cursor: None,
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
-            cursor_visible: true,
         }
     }
 
@@ -51,28 +52,25 @@ impl HeadlessRuntime {
         self.width = width;
         self.height = height;
         self.grid = None;
+        self.cursor = None;
         self.doc.dispatch_resize(ResizeEvent { width, height });
-    }
-
-    /// Set whether blinking cursors are visible on the next render.
-    ///
-    /// Headless rendering defaults to visible for deterministic snapshots.
-    pub fn set_cursor_visible(&mut self, visible: bool) {
-        self.cursor_visible = visible;
     }
 
     /// Compute layout and paint the document into the inspectable screen buffer.
     pub fn render(&mut self) -> Result<()> {
         self.doc.compute_layout(self.width, self.height)?;
-        let (grid, _) = render_to_grid(
-            &self.doc,
-            self.width,
-            self.height,
-            &mut self.rgb_cache,
-            self.cursor_visible,
-        );
-        self.grid = Some(grid);
+        let frame = render_to_grid(&self.doc, self.width, self.height, &mut self.rgb_cache);
+        self.cursor = frame.cursor;
+        self.grid = Some(frame.grid);
         Ok(())
+    }
+
+    /// Return cursor metadata from the last rendered frame.
+    ///
+    /// Returns `None` before the first render or when no focused input produced
+    /// cursor metadata.
+    pub fn cursor(&self) -> Option<ScreenCursor> {
+        self.cursor.map(ScreenCursor::from_cursor)
     }
 
     /// Return the last rendered cell at the given screen coordinate.
@@ -216,6 +214,33 @@ impl From<Rgb> for ScreenColor {
             g: value.g,
             b: value.b,
             a: value.a,
+        }
+    }
+}
+
+/// Cursor metadata captured from a rendered frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScreenCursor {
+    /// Screen x coordinate in terminal cells.
+    pub x: i32,
+    /// Screen y coordinate in terminal cells.
+    pub y: i32,
+    /// Cursor shape requested by style.
+    pub shape: CursorShape,
+    /// Cursor color derived from the focused node's resolved foreground color.
+    pub color: ScreenColor,
+    /// Whether this cursor should be visible after layout/input clipping.
+    pub visible: bool,
+}
+
+impl ScreenCursor {
+    fn from_cursor(cursor: RenderCursor) -> Self {
+        Self {
+            x: cursor.x,
+            y: cursor.y,
+            shape: cursor.shape,
+            color: ScreenColor::from(cursor.color),
+            visible: cursor.visible,
         }
     }
 }

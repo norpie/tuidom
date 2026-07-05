@@ -12,7 +12,7 @@ use crate::event::{
 };
 use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
-use crate::style::{AlignItems, Color, CursorBlink, CursorShape, Display, Length, Style};
+use crate::style::{AlignItems, Color, CursorShape, Display, Length, Style};
 
 #[test]
 fn create_nodes() {
@@ -100,28 +100,18 @@ fn cursor_style_fields_resolve_and_focus_style_overrides_them() {
 
     let mut base = Style::new();
     base.cursor_shape(CursorShape::Bar);
-    base.cursor_fg(Color::red());
-    base.cursor_bg(Color::blue());
-    base.cursor_blink(CursorBlink::Blink);
     doc.set_style(input, &base).unwrap();
 
     let resolved = doc.resolved_style(input).unwrap();
     assert_eq!(resolved.cursor_shape, CursorShape::Bar);
-    assert_eq!(resolved.cursor_fg, Color::red());
-    assert_eq!(resolved.cursor_bg, Color::blue());
-    assert_eq!(resolved.cursor_blink, CursorBlink::Blink);
 
     let mut focus = Style::new();
     focus.cursor_shape(CursorShape::Underline);
-    focus.cursor_bg(Color::yellow());
     doc.set_focus_style(input, &focus).unwrap();
     doc.focus(input).unwrap();
 
     let focused = doc.resolved_style(input).unwrap();
     assert_eq!(focused.cursor_shape, CursorShape::Underline);
-    assert_eq!(focused.cursor_fg, Color::red());
-    assert_eq!(focused.cursor_bg, Color::yellow());
-    assert_eq!(focused.cursor_blink, CursorBlink::Blink);
 }
 
 #[test]
@@ -191,7 +181,6 @@ fn single_line_input_scroll_keeps_cursor_visible() {
     doc.append_child(doc.root(), input).unwrap();
     let mut style = Style::new();
     style.width(Length::Pixels(3));
-    style.cursor_bg(Color::yellow());
     doc.set_style(input, &style).unwrap();
     doc.focus(input).unwrap();
 
@@ -202,10 +191,9 @@ fn single_line_input_scroll_keeps_cursor_visible() {
 
     assert_eq!(runtime.get_cell(0, 0).unwrap().text, "e");
     assert_eq!(runtime.get_cell(1, 0).unwrap().text, "f");
-    assert_eq!(
-        runtime.get_cell(2, 0).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!((cursor.x, cursor.y), (2, 0));
+    assert!(cursor.visible);
 
     runtime.document().set_input_cursor(input, 0).unwrap();
     runtime.render().unwrap();
@@ -223,7 +211,6 @@ fn multiline_input_scroll_keeps_cursor_visible() {
     let mut style = Style::new();
     style.width(Length::Pixels(2));
     style.height(Length::Pixels(2));
-    style.cursor_bg(Color::yellow());
     doc.set_style(input, &style).unwrap();
     doc.focus(input).unwrap();
 
@@ -237,14 +224,13 @@ fn multiline_input_scroll_keeps_cursor_visible() {
 
     assert_eq!(runtime.get_cell(0, 0).unwrap().text, "c");
     assert_eq!(runtime.get_cell(0, 1).unwrap().text, "d");
-    assert_eq!(
-        runtime.get_cell(1, 1).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!((cursor.x, cursor.y), (1, 1));
+    assert!(cursor.visible);
 }
 
 #[test]
-fn focused_input_renders_block_cursor_with_per_node_colors() {
+fn focused_block_cursor_inverts_cell_and_exposes_metadata() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("A").unwrap();
     let other = doc.create_input("B").unwrap();
@@ -253,8 +239,7 @@ fn focused_input_renders_block_cursor_with_per_node_colors() {
 
     let mut style = Style::new();
     style.width(Length::Pixels(3));
-    style.cursor_fg(Color::black());
-    style.cursor_bg(Color::yellow());
+    style.color(Color::black());
     doc.set_style(input, &style).unwrap();
     doc.set_style(other, &style).unwrap();
     doc.focus(input).unwrap();
@@ -262,100 +247,55 @@ fn focused_input_renders_block_cursor_with_per_node_colors() {
     let mut runtime = HeadlessRuntime::new(doc, 10, 2);
     runtime.render().unwrap();
 
-    let cursor = runtime.get_cell(1, 0).unwrap();
-    assert_eq!(cursor.text, " ");
-    assert_eq!(cursor.fg, Some(ScreenColor::from_rgb(0, 0, 0)));
-    assert_eq!(cursor.bg, Some(ScreenColor::from_rgb(255, 255, 0)));
-    assert_eq!(runtime.get_cell(4, 0).unwrap().bg, None);
+    let cell = runtime.get_cell(1, 0).unwrap();
+    assert_eq!(cell.text, " ");
+    assert_eq!(cell.fg, None);
+    assert_eq!(cell.bg, Some(ScreenColor::from_rgb(0, 0, 0)));
+
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!((cursor.x, cursor.y), (1, 0));
+    assert_eq!(cursor.shape, CursorShape::Block);
+    assert_eq!(cursor.color, ScreenColor::from_rgb(0, 0, 0));
+    assert!(cursor.visible);
 }
 
-#[test]
-fn blinking_cursor_respects_headless_visibility_phase() {
-    let doc = Document::new().unwrap();
-    let input = doc.create_input("A").unwrap();
-    doc.append_child(doc.root(), input).unwrap();
-    doc.focus(input).unwrap();
-
-    let mut style = Style::new();
-    style.width(Length::Pixels(3));
-    style.cursor_blink(CursorBlink::Blink);
-    style.cursor_bg(Color::yellow());
-    doc.set_style(input, &style).unwrap();
-
-    let mut runtime = HeadlessRuntime::new(doc, 5, 2);
-    runtime.set_cursor_visible(false);
-    runtime.render().unwrap();
-    assert_eq!(runtime.get_cell(1, 0).unwrap().bg, None);
-
-    runtime.set_cursor_visible(true);
-    runtime.render().unwrap();
-    assert_eq!(
-        runtime.get_cell(1, 0).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
-
-    runtime
-        .document()
-        .update_style(input, |s| s.cursor_blink(CursorBlink::None))
-        .unwrap();
-    runtime.set_cursor_visible(false);
-    runtime.render().unwrap();
-    assert_eq!(
-        runtime.get_cell(1, 0).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
-}
 
 #[test]
-fn input_cursor_shapes_render_distinct_overlays() {
+fn input_cursor_shapes_render_distinct_metadata_without_replacing_text() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("A").unwrap();
     doc.append_child(doc.root(), input).unwrap();
     doc.set_input_cursor(input, 0).unwrap();
     doc.focus(input).unwrap();
 
-    let mut style = Style::new();
-    style.cursor_fg(Color::black());
-    style.cursor_bg(Color::yellow());
+    let style = Style::new();
     doc.set_style(input, &style).unwrap();
 
     let mut runtime = HeadlessRuntime::new(doc, 5, 2);
 
-    runtime
-        .document()
-        .update_style(input, |s| s.cursor_shape(CursorShape::Block))
-        .unwrap();
-    runtime.render().unwrap();
-    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "A");
-    assert_eq!(
-        runtime.get_cell(0, 0).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
+    for shape in [CursorShape::Block, CursorShape::Bar, CursorShape::Underline] {
+        runtime
+            .document()
+            .update_style(input, |s| s.cursor_shape(shape))
+            .unwrap();
+        runtime.render().unwrap();
 
-    runtime
-        .document()
-        .update_style(input, |s| s.cursor_shape(CursorShape::Bar))
-        .unwrap();
-    runtime.render().unwrap();
-    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "▏");
-
-    runtime
-        .document()
-        .update_style(input, |s| s.cursor_shape(CursorShape::Underline))
-        .unwrap();
-    runtime.render().unwrap();
-    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "▁");
-
-    runtime
-        .document()
-        .update_style(input, |s| s.cursor_shape(CursorShape::HollowBlock))
-        .unwrap();
-    runtime.render().unwrap();
-    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "▯");
+        assert_eq!(runtime.get_cell(0, 0).unwrap().text, "A");
+        let cursor = runtime.cursor().unwrap();
+        let cell = runtime.get_cell(0, 0).unwrap();
+        if shape == CursorShape::Block {
+            assert_eq!(cell.bg, Some(cursor.color));
+        } else {
+            assert_eq!(cell.bg, None);
+        }
+        assert_eq!(cursor.shape, shape);
+        assert_eq!((cursor.x, cursor.y), (0, 0));
+        assert!(cursor.visible);
+    }
 }
 
 #[test]
-fn block_cursor_covers_wide_grapheme_cells() {
+fn cursor_metadata_over_wide_grapheme_points_at_head_cell() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("界").unwrap();
     doc.append_child(doc.root(), input).unwrap();
@@ -364,7 +304,6 @@ fn block_cursor_covers_wide_grapheme_cells() {
 
     let mut style = Style::new();
     style.cursor_shape(CursorShape::Block);
-    style.cursor_bg(Color::yellow());
     doc.set_style(input, &style).unwrap();
 
     let mut runtime = HeadlessRuntime::new(doc, 5, 2);
@@ -373,14 +312,13 @@ fn block_cursor_covers_wide_grapheme_cells() {
     assert_eq!(runtime.get_cell(0, 0).unwrap().text, "界");
     assert_eq!(runtime.get_cell(0, 0).unwrap().width, 2);
     assert!(runtime.get_cell(1, 0).unwrap().is_wide_continuation);
-    assert_eq!(
-        runtime.get_cell(0, 0).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
-    assert_eq!(
-        runtime.get_cell(1, 0).unwrap().bg,
-        Some(ScreenColor::from_rgb(255, 255, 0))
-    );
+
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().bg, Some(cursor.color));
+    assert_eq!(runtime.get_cell(1, 0).unwrap().bg, None);
+    assert_eq!((cursor.x, cursor.y), (0, 0));
+    assert_eq!(cursor.shape, CursorShape::Block);
+    assert!(cursor.visible);
 }
 
 #[test]

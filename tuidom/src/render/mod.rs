@@ -12,7 +12,8 @@ use terminal::Terminal;
 
 use crate::document::Document;
 use crate::lock;
-use crate::style::color::RgbCache;
+use crate::style::color::{Rgb, RgbCache};
+use crate::style::CursorShape;
 
 /// Breakdown of time spent in each render phase.
 #[derive(Debug, Clone, Copy, Default)]
@@ -60,19 +61,44 @@ pub(crate) struct GridRenderStats {
     pub overlay_paint_time: Duration,
 }
 
-/// Paint a laid-out document into a fresh grid without flushing to a terminal.
+/// Cursor metadata produced by rendering a focused input node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RenderCursor {
+    /// Screen x coordinate in terminal cells.
+    pub x: i32,
+    /// Screen y coordinate in terminal cells.
+    pub y: i32,
+    /// Cursor shape requested by style.
+    pub shape: CursorShape,
+    /// Cursor color derived from the focused node's resolved foreground color.
+    pub color: Rgb,
+    /// Whether the cursor should be shown after input/layout clipping.
+    pub visible: bool,
+}
+
+/// Backend-neutral render output for one frame.
+#[derive(Debug)]
+pub(crate) struct RenderFrame {
+    /// Painted terminal cell grid.
+    pub grid: grid::Grid,
+    /// Optional cursor metadata for the frame.
+    pub cursor: Option<RenderCursor>,
+    /// Timings for backend-neutral grid rendering.
+    pub stats: GridRenderStats,
+}
+
+/// Paint a laid-out document into a fresh frame without flushing to a terminal.
 pub(crate) fn render_to_grid(
     doc: &Document,
     width: u16,
     height: u16,
     rgb_cache: &mut RgbCache,
-    cursor_visible: bool,
-) -> (grid::Grid, GridRenderStats) {
+) -> RenderFrame {
     let grid_start = std::time::Instant::now();
     let mut grid = grid::Grid::new(width, height);
     let grid_time = grid_start.elapsed();
 
-    let dom_stats = paint::paint(doc, &mut grid, rgb_cache, cursor_visible);
+    let dom_output = paint::paint(doc, &mut grid, rgb_cache);
 
     let mut overlay_paint_time = Duration::ZERO;
     {
@@ -84,15 +110,16 @@ pub(crate) fn render_to_grid(
         }
     }
 
-    (
+    RenderFrame {
         grid,
-        GridRenderStats {
+        cursor: dom_output.cursor,
+        stats: GridRenderStats {
             grid_time,
-            dom_collect_time: dom_stats.collect_time,
-            dom_paint_time: dom_stats.paint_time,
+            dom_collect_time: dom_output.stats.collect_time,
+            dom_paint_time: dom_output.stats.paint_time,
             overlay_paint_time,
         },
-    )
+    }
 }
 
 /// Orchestrates the render pipeline: paint, diff, and flush to terminal.
@@ -115,26 +142,23 @@ impl Renderer {
     }
 
     /// Render a single frame: layout (already done), paint, diff, flush.
-    pub fn render_frame(
-        &mut self,
-        doc: &Document,
-        cursor_visible: bool,
-    ) -> io::Result<RenderStats> {
-        let (grid, grid_stats) = render_to_grid(
+    pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderStats> {
+        let frame = render_to_grid(
             doc,
             self.old_grid.width,
             self.old_grid.height,
             &mut self.rgb_cache,
-            cursor_visible,
         );
-        self.new_grid = grid;
+        let grid_stats = frame.stats;
+        let cursor = frame.cursor;
+        self.new_grid = frame.grid;
 
         let diff_start = std::time::Instant::now();
         let changes = diff::diff(&self.old_grid, &self.new_grid);
         let diff_time = diff_start.elapsed();
 
         let flush_start = std::time::Instant::now();
-        self.terminal.flush_changes(&changes)?;
+        self.terminal.flush_changes(&changes, cursor)?;
         let flush_time = flush_start.elapsed();
 
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
@@ -158,18 +182,19 @@ impl Renderer {
     }
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
-    pub fn render_full(&mut self, doc: &Document, cursor_visible: bool) -> io::Result<RenderStats> {
-        let (grid, grid_stats) = render_to_grid(
+    pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderStats> {
+        let frame = render_to_grid(
             doc,
             self.old_grid.width,
             self.old_grid.height,
             &mut self.rgb_cache,
-            cursor_visible,
         );
-        self.new_grid = grid;
+        let grid_stats = frame.stats;
+        let cursor = frame.cursor;
+        self.new_grid = frame.grid;
 
         let flush_start = std::time::Instant::now();
-        self.terminal.flush_full(&self.new_grid)?;
+        self.terminal.flush_full(&self.new_grid, cursor)?;
         let flush_time = flush_start.elapsed();
 
         let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);

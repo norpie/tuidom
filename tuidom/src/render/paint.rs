@@ -8,8 +8,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::document::Document;
 use crate::node::{NodeKindView, input_display_content, input_scrolled_display_content};
 use crate::paint_order::{PaintEntry, paint_order};
+use crate::render::RenderCursor;
 use crate::render::grid::{Cell, Grid, GridRect};
-use crate::style::CursorBlink;
+use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
 
 /// DOM painting stage timings.
@@ -21,27 +22,37 @@ pub(crate) struct DomPaintStats {
     pub paint_time: Duration,
 }
 
+/// DOM painting output.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DomPaintOutput {
+    /// DOM painting timings.
+    pub stats: DomPaintStats,
+    /// Cursor metadata produced by the focused input, if any.
+    pub cursor: Option<RenderCursor>,
+}
+
 /// Paint the visible portion of the DOM tree into the grid.
-pub(crate) fn paint(
-    doc: &Document,
-    grid: &mut Grid,
-    rgb_cache: &mut RgbCache,
-    cursor_visible: bool,
-) -> DomPaintStats {
+pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -> DomPaintOutput {
     let collect_start = Instant::now();
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
 
     let focused = doc.focused();
     let paint_start = Instant::now();
+    let mut cursor = None;
     for entry in &entries {
-        paint_entry(grid, entry, focused, rgb_cache, cursor_visible);
+        if let Some(entry_cursor) = paint_entry(grid, entry, focused, rgb_cache) {
+            cursor = Some(entry_cursor);
+        }
     }
     let paint_time = paint_start.elapsed();
 
-    DomPaintStats {
-        collect_time,
-        paint_time,
+    DomPaintOutput {
+        stats: DomPaintStats {
+            collect_time,
+            paint_time,
+        },
+        cursor,
     }
 }
 
@@ -50,8 +61,7 @@ fn paint_entry(
     node: &PaintEntry,
     focused: Option<crate::id::NodeId>,
     rgb_cache: &mut RgbCache,
-    cursor_visible: bool,
-) {
+) -> Option<RenderCursor> {
     let alpha = node.resolved.opacity;
     let bg_rgb = node.resolved.background.map(|c| rgb_cache.resolve(c));
     let fg_rgb = rgb_cache.resolve(node.resolved.color);
@@ -69,10 +79,12 @@ fn paint_entry(
                     alpha,
                 );
             }
+            None
         }
 
         NodeKindView::Text { content } => {
             paint_text(grid, node, bg_rgb, fg_rgb, alpha, content);
+            None
         }
 
         NodeKindView::Input {
@@ -87,10 +99,8 @@ fn paint_entry(
             let content = input_display_content(value, *multiline, *mask);
             let visible_content = input_scrolled_display_content(&content, *scroll_x, *scroll_y);
             paint_text(grid, node, bg_rgb, fg_rgb, alpha, &visible_content);
-            if focused == Some(node.id)
-                && (node.resolved.cursor_blink == CursorBlink::None || cursor_visible)
-            {
-                paint_input_cursor(
+            if focused == Some(node.id) {
+                input_cursor_metadata(
                     grid,
                     node,
                     InputCursorPaint {
@@ -101,8 +111,10 @@ fn paint_entry(
                         scroll_x: *scroll_x,
                         scroll_y: *scroll_y,
                     },
-                    rgb_cache,
-                );
+                    fg_rgb,
+                )
+            } else {
+                None
             }
         }
     }
@@ -149,39 +161,55 @@ struct InputCursorPaint<'a> {
     scroll_y: u16,
 }
 
-fn paint_input_cursor(
+fn input_cursor_metadata(
     grid: &mut Grid,
     node: &PaintEntry,
     input: InputCursorPaint<'_>,
-    rgb_cache: &mut RgbCache,
-) {
+    color: Rgb,
+) -> Option<RenderCursor> {
     if node.layout.width == 0 || node.layout.height == 0 {
-        return;
+        return None;
     }
 
     let cursor = clamp_to_grapheme_boundary(input.value, input.cursor);
     let position = input_cursor_position(input.value, cursor, input.multiline, input.mask);
     let x = position.x - i32::from(input.scroll_x);
     let y = position.y - i32::from(input.scroll_y);
-    if x < 0 || y < 0 || y >= i32::from(node.layout.height) || x >= i32::from(node.layout.width) {
+    let clipped =
+        x < 0 || y < 0 || y >= i32::from(node.layout.height) || x >= i32::from(node.layout.width);
+
+    let screen_x = node.layout.x + x;
+    let screen_y = node.layout.y + y;
+    let visible = !clipped;
+    if visible && node.resolved.cursor_shape == CursorShape::Block {
+        invert_cursor_cell(grid, screen_x, screen_y, color);
+    }
+
+    Some(RenderCursor {
+        x: screen_x,
+        y: screen_y,
+        shape: node.resolved.cursor_shape,
+        color,
+        visible,
+    })
+}
+
+fn invert_cursor_cell(grid: &mut Grid, x: i32, y: i32, cursor_color: Rgb) {
+    if x < 0 || y < 0 || x >= i32::from(grid.width) || y >= i32::from(grid.height) {
         return;
     }
 
-    grid.paint_cursor(
-        node.layout.x + x,
-        node.layout.y + y,
-        position.width,
-        node.resolved.cursor_shape,
-        Some(rgb_cache.resolve(node.resolved.cursor_fg)),
-        Some(rgb_cache.resolve(node.resolved.cursor_bg)),
-    );
+    let cell = &mut grid.cells[y as usize][x as usize];
+    let fg = cell.fg;
+    let bg = cell.bg;
+    cell.fg = bg;
+    cell.bg = fg.or(Some(cursor_color));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CursorPosition {
     x: i32,
     y: i32,
-    width: u8,
 }
 
 fn input_cursor_position(
@@ -197,26 +225,7 @@ fn input_cursor_position(
         prefix.matches('\n').count() as i32
     };
     let x = UnicodeWidthStr::width(prefix.rsplit('\n').next().unwrap_or("")) as i32;
-    let width = cursor_grapheme_width(&value[cursor..], multiline, mask);
-    CursorPosition { x, y, width }
-}
-
-fn cursor_grapheme_width(suffix: &str, multiline: bool, mask: Option<char>) -> u8 {
-    let Some(grapheme) = suffix.graphemes(true).next() else {
-        return 1;
-    };
-    if multiline && grapheme == "\n" {
-        return 1;
-    }
-
-    let display = if let Some(mask) = mask {
-        mask.to_string()
-    } else if !multiline && grapheme == "\n" {
-        " ".to_owned()
-    } else {
-        grapheme.to_owned()
-    };
-    UnicodeWidthStr::width(display.as_str()).clamp(1, 2) as u8
+    CursorPosition { x, y }
 }
 
 fn clamp_to_grapheme_boundary(content: &str, offset: usize) -> usize {
@@ -294,7 +303,7 @@ mod tests {
 
     fn paint_doc(doc: &Document, grid: &mut Grid) {
         let mut rgb_cache = RgbCache::new();
-        paint(doc, grid, &mut rgb_cache, true);
+        paint(doc, grid, &mut rgb_cache);
     }
 
     fn painted_bg(doc: &Document) -> Option<Rgb> {

@@ -5,7 +5,7 @@
 
 use crate::node::NodeData;
 use crate::style::{
-    AlignItems, Color, CursorBlink, CursorShape, Display, JustifyContent, Length, Style, StyleValue,
+    AlignItems, Color, CursorShape, Display, JustifyContent, Length, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -33,12 +33,6 @@ pub struct ResolvedStyle {
     pub stacking_context: bool,
     /// Resolved input cursor shape.
     pub cursor_shape: CursorShape,
-    /// Resolved input cursor foreground color.
-    pub cursor_fg: Color,
-    /// Resolved input cursor background color.
-    pub cursor_bg: Color,
-    /// Resolved input cursor blink behavior.
-    pub cursor_blink: CursorBlink,
 }
 
 impl Default for ResolvedStyle {
@@ -61,9 +55,6 @@ pub(crate) struct StyleDefaults {
     z_index: i32,
     stacking_context: bool,
     cursor_shape: CursorShape,
-    cursor_fg: Color,
-    cursor_bg: Color,
-    cursor_blink: CursorBlink,
 }
 
 impl Default for StyleDefaults {
@@ -80,9 +71,6 @@ impl Default for StyleDefaults {
             z_index: 0,
             stacking_context: false,
             cursor_shape: CursorShape::Block,
-            cursor_fg: Color::black(),
-            cursor_bg: Color::white(),
-            cursor_blink: CursorBlink::None,
         }
     }
 }
@@ -110,9 +98,6 @@ impl StyleDefaults {
             z_index: self.z_index,
             stacking_context: self.stacking_context,
             cursor_shape: self.cursor_shape,
-            cursor_fg: self.cursor_fg,
-            cursor_bg: self.cursor_bg,
-            cursor_blink: self.cursor_blink,
         }
     }
 }
@@ -178,21 +163,6 @@ impl ResolvedStyle {
                 &data.style.cursor_shape,
                 parent.map(|p| &p.cursor_shape),
                 &defaults.cursor_shape,
-            ),
-            cursor_fg: resolve(
-                &data.style.cursor_fg,
-                parent.map(|p| &p.cursor_fg),
-                &defaults.cursor_fg,
-            ),
-            cursor_bg: resolve(
-                &data.style.cursor_bg,
-                parent.map(|p| &p.cursor_bg),
-                &defaults.cursor_bg,
-            ),
-            cursor_blink: resolve(
-                &data.style.cursor_blink,
-                parent.map(|p| &p.cursor_blink),
-                &defaults.cursor_blink,
             ),
         }
     }
@@ -268,24 +238,6 @@ impl ResolvedStyle {
             &style.cursor_shape,
             parent.map(|p| &p.cursor_shape),
             &defaults.cursor_shape,
-        );
-        apply_override(
-            &mut self.cursor_fg,
-            &style.cursor_fg,
-            parent.map(|p| &p.cursor_fg),
-            &defaults.cursor_fg,
-        );
-        apply_override(
-            &mut self.cursor_bg,
-            &style.cursor_bg,
-            parent.map(|p| &p.cursor_bg),
-            &defaults.cursor_bg,
-        );
-        apply_override(
-            &mut self.cursor_blink,
-            &style.cursor_blink,
-            parent.map(|p| &p.cursor_blink),
-            &defaults.cursor_blink,
         );
     }
 }

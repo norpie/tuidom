@@ -2,7 +2,7 @@
 
 use std::io::{self, Stdout, Write};
 
-use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::queue;
 use crossterm::style::{
@@ -12,10 +12,12 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
+use crate::render::RenderCursor;
 use crate::render::diff::CellChange;
 use crate::render::grid::Cell;
 use crate::render::grid::Grid;
 use crate::style::color::Rgb;
+use crate::style::CursorShape;
 
 /// Wraps stdout with crossterm setup and teardown.
 pub(crate) struct Terminal {
@@ -37,19 +39,25 @@ impl Terminal {
     }
 
     /// Flush only the changed cells to the terminal.
-    pub fn flush_changes(&mut self, changes: &[CellChange]) -> io::Result<()> {
+    pub fn flush_changes(
+        &mut self,
+        changes: &[CellChange],
+        cursor: Option<RenderCursor>,
+    ) -> io::Result<()> {
+        queue!(self.stdout, Hide)?;
         for change in changes {
             queue_cell(&mut self.stdout, change.x, change.y, &change.cell)?;
         }
+        queue_cursor(&mut self.stdout, cursor)?;
         self.stdout.flush()
     }
 
     /// Flush the entire grid — used on resize.
     ///
     /// Batches all commands with `queue!` then flushes once.
-    pub fn flush_full(&mut self, grid: &Grid) -> io::Result<()> {
+    pub fn flush_full(&mut self, grid: &Grid, cursor: Option<RenderCursor>) -> io::Result<()> {
         use crossterm::terminal::{Clear, ClearType};
-        queue!(self.stdout, Clear(ClearType::All))?;
+        queue!(self.stdout, Hide, Clear(ClearType::All))?;
 
         for (y, row) in grid.cells.iter().enumerate() {
             let y = y as u16;
@@ -88,6 +96,7 @@ impl Terminal {
                 queue!(self.stdout, Print(run_text))?;
             }
         }
+        queue_cursor(&mut self.stdout, cursor)?;
         self.stdout.flush()
     }
 }
@@ -188,10 +197,61 @@ fn restore_terminal(
     if alternate_screen_entered {
         let _ = queue!(stdout, LeaveAlternateScreen);
     }
-    let _ = queue!(stdout, ResetColor, SetAttribute(Attribute::Reset));
+    let _ = queue!(
+        stdout,
+        SetCursorStyle::DefaultUserShape,
+        Print("\x1b]112\x07"),
+        ResetColor,
+        SetAttribute(Attribute::Reset)
+    );
     let _ = stdout.flush();
     if raw_mode_enabled {
         let _ = disable_raw_mode();
+    }
+}
+
+fn queue_cursor(stdout: &mut Stdout, cursor: Option<RenderCursor>) -> io::Result<()> {
+    let Some(cursor) = cursor else {
+        queue!(stdout, Hide)?;
+        return Ok(());
+    };
+
+    if !cursor.visible || cursor.x < 0 || cursor.y < 0 {
+        queue!(stdout, Hide)?;
+        return Ok(());
+    }
+
+    let Ok(x) = u16::try_from(cursor.x) else {
+        queue!(stdout, Hide)?;
+        return Ok(());
+    };
+    let Ok(y) = u16::try_from(cursor.y) else {
+        queue!(stdout, Hide)?;
+        return Ok(());
+    };
+    if cursor.shape == CursorShape::Block {
+        queue!(stdout, Hide)?;
+        return Ok(());
+    }
+
+    queue!(
+        stdout,
+        cursor_style(cursor),
+        Print(cursor_color_sequence(cursor.color)),
+        MoveTo(x, y),
+        Show
+    )
+}
+
+fn cursor_color_sequence(color: Rgb) -> String {
+    format!("\x1b]12;#{:02x}{:02x}{:02x}\x07", color.r, color.g, color.b)
+}
+
+fn cursor_style(cursor: RenderCursor) -> SetCursorStyle {
+    match cursor.shape {
+        CursorShape::Block => SetCursorStyle::SteadyBlock,
+        CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+        CursorShape::Bar => SetCursorStyle::SteadyBar,
     }
 }
 

@@ -8,7 +8,6 @@ use crate::error::{Result, TuidomError};
 use crate::event::KeyCode;
 use crate::id::NodeId;
 use crate::node::{InputState, NodeKind};
-use crate::style::CursorBlink;
 
 impl Document {
     /// Return an input node's stored value.
@@ -282,22 +281,6 @@ impl Document {
         }
 
         Ok(handled)
-    }
-
-    pub(crate) fn cursor_blink_active(&self) -> bool {
-        let Some(node) = self.focused() else {
-            return false;
-        };
-        let Some(data) = self.inner.nodes.get(&node) else {
-            return false;
-        };
-        if !matches!(data.kind, NodeKind::Input { .. }) {
-            return false;
-        }
-        drop(data);
-
-        self.resolved_style(node)
-            .is_ok_and(|resolved| resolved.cursor_blink == CursorBlink::Blink)
     }
 
     fn refresh_input_node(&self, node: NodeId) -> Result<()> {

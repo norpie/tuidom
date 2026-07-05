@@ -98,6 +98,8 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Grid** — 2D buffer of Cells representing screen state (width × height).
 
+**Render Cursor** — Cursor metadata produced with a rendered frame. It carries cursor position, shape, foreground-derived color, and clipped visibility without mutating grid cell content.
+
 ---
 
 *Additional terms will be added as new concepts are introduced during development.*

@@ -59,28 +59,16 @@ pub enum Display {
 // Cursor
 // ---------------------------------------------------------------------------
 
-/// Shape used when rendering an input cursor.
+/// Shape requested for an input cursor.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CursorShape {
     /// Filled cell cursor.
     #[default]
     Block,
-    /// Hollow cell cursor.
-    HollowBlock,
     /// Underline cursor.
     Underline,
     /// Vertical bar cursor.
     Bar,
-}
-
-/// Blink behavior for an input cursor.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum CursorBlink {
-    /// Cursor is always visible.
-    #[default]
-    None,
-    /// Cursor visibility toggles on a timer.
-    Blink,
 }
 
 // ---------------------------------------------------------------------------
@@ -163,12 +151,6 @@ pub struct Style {
     pub(crate) stacking_context: StyleValue<bool>,
     /// Input cursor shape.
     pub(crate) cursor_shape: StyleValue<CursorShape>,
-    /// Input cursor foreground color.
-    pub(crate) cursor_fg: StyleValue<Color>,
-    /// Input cursor background color.
-    pub(crate) cursor_bg: StyleValue<Color>,
-    /// Input cursor blink behavior.
-    pub(crate) cursor_blink: StyleValue<CursorBlink>,
     /// Catch-all for unknown / future properties.
     pub(crate) extra: HashMap<String, String>,
 }
@@ -196,9 +178,6 @@ impl Style {
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
             cursor_shape: StyleValue::Unset,
-            cursor_fg: StyleValue::Unset,
-            cursor_bg: StyleValue::Unset,
-            cursor_blink: StyleValue::Unset,
             extra: HashMap::new(),
         }
     }
@@ -390,56 +369,6 @@ impl Style {
         self.cursor_shape = StyleValue::Unset;
     }
 
-    // -- Cursor Foreground ---------------------------------------------
-
-    /// Set the input cursor foreground color.
-    pub fn cursor_fg(&mut self, value: Color) {
-        self.cursor_fg = StyleValue::Set(value);
-    }
-
-    /// Explicitly inherit input cursor foreground color from the parent node.
-    pub fn inherit_cursor_fg(&mut self) {
-        self.cursor_fg = StyleValue::Inherit;
-    }
-
-    /// Reset input cursor foreground color to the document/default style.
-    pub fn unset_cursor_fg(&mut self) {
-        self.cursor_fg = StyleValue::Unset;
-    }
-
-    // -- Cursor Background ---------------------------------------------
-
-    /// Set the input cursor background color.
-    pub fn cursor_bg(&mut self, value: Color) {
-        self.cursor_bg = StyleValue::Set(value);
-    }
-
-    /// Explicitly inherit input cursor background color from the parent node.
-    pub fn inherit_cursor_bg(&mut self) {
-        self.cursor_bg = StyleValue::Inherit;
-    }
-
-    /// Reset input cursor background color to the document/default style.
-    pub fn unset_cursor_bg(&mut self) {
-        self.cursor_bg = StyleValue::Unset;
-    }
-
-    // -- Cursor Blink ---------------------------------------------------
-
-    /// Set the input cursor blink behavior.
-    pub fn cursor_blink(&mut self, value: CursorBlink) {
-        self.cursor_blink = StyleValue::Set(value);
-    }
-
-    /// Explicitly inherit input cursor blink behavior from the parent node.
-    pub fn inherit_cursor_blink(&mut self) {
-        self.cursor_blink = StyleValue::Inherit;
-    }
-
-    /// Reset input cursor blink behavior to the document/default style.
-    pub fn unset_cursor_blink(&mut self) {
-        self.cursor_blink = StyleValue::Unset;
-    }
 }
 
 #[cfg(test)]
@@ -458,9 +387,6 @@ mod tests {
         style.z_index(10);
         style.stacking_context(true);
         style.cursor_shape(CursorShape::Bar);
-        style.cursor_fg(Color::black());
-        style.cursor_bg(Color::white());
-        style.cursor_blink(CursorBlink::Blink);
 
         assert_eq!(style.width, StyleValue::Set(Length::Percent(100.0)));
         assert_eq!(style.height, StyleValue::Set(Length::Pixels(20)));
@@ -468,9 +394,6 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
-        assert_eq!(style.cursor_fg, StyleValue::Set(Color::black()));
-        assert_eq!(style.cursor_bg, StyleValue::Set(Color::white()));
-        assert_eq!(style.cursor_blink, StyleValue::Set(CursorBlink::Blink));
     }
 
     #[test]
@@ -482,9 +405,6 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
-        assert_eq!(style.cursor_fg, StyleValue::Unset);
-        assert_eq!(style.cursor_bg, StyleValue::Unset);
-        assert_eq!(style.cursor_blink, StyleValue::Unset);
     }
 
     #[test]
@@ -497,9 +417,6 @@ mod tests {
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_cursor_shape();
-        style.inherit_cursor_fg();
-        style.inherit_cursor_bg();
-        style.inherit_cursor_blink();
 
         assert_eq!(style.width, StyleValue::Inherit);
         assert_eq!(style.opacity, StyleValue::Inherit);
@@ -507,8 +424,5 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);
-        assert_eq!(style.cursor_fg, StyleValue::Inherit);
-        assert_eq!(style.cursor_bg, StyleValue::Inherit);
-        assert_eq!(style.cursor_blink, StyleValue::Inherit);
     }
 }

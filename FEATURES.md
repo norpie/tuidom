@@ -30,15 +30,10 @@
 
 ## Cursor
 
-- [ ] Fake cursor — real terminal cursor hidden, we render cursors as styled cells
-- [ ] Cursor style (document-wide default, per-node override):
-  - [ ] Shape: block (semi-transparent), hollow_block, underline, bar
-  - [ ] Colors: `cursor_bg`, `cursor_fg` (part of style system)
-- [ ] Default behavior:
-  - [ ] Semi-transparent block when window focused (see character underneath)
-  - [ ] Hollow block when window unfocused
-  - [ ] Blinks for 8 seconds after focus/movement, then static
-  - [ ] Configurable blink duration (0 = no blink)
+- [x] Cursor metadata — render frames expose cursor position/style separately from grid cells
+- [x] Cursor style metadata (document-wide default, per-node override):
+  - [x] Shape: block, underline, bar
+  - [x] Cursor color follows the focused node's resolved foreground color
 - [ ] Multiple cursors: users sync manually via events (not built-in)
 
 ## Focus Management
@@ -232,7 +227,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] `doc.quit()` — trigger shutdown from handlers
 - [x] Terminal state management:
   - [x] Enter alternate screen on start
-  - [x] Hide real terminal cursor (we render fake cursors as styled cells)
+  - [x] Manage real terminal cursor from render-frame cursor metadata
   - [x] Restore terminal state on exit (raw mode, alternate screen, cursor visibility)
   - [x] Drop guard restores terminal state after successful setup
   - [x] Setup guard restores partially initialized terminal state if startup fails

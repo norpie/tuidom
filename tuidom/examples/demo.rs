@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
-use tuidom::style::{AlignItems, Color, CursorBlink, CursorShape, JustifyContent, Length, Style};
+use tuidom::style::{AlignItems, Color, CursorShape, JustifyContent, Length, Style};
 
 fn init_logging() {
     // Best-effort file logging for the smoke test.
@@ -66,14 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     input_style.color(Color::white());
     input_style.background(Color::oklch(0.18, 0.04, 260.0));
     input_style.cursor_shape(CursorShape::Bar);
-    input_style.cursor_fg(Color::cyan());
-    input_style.cursor_bg(Color::cyan());
-    input_style.cursor_blink(CursorBlink::Blink);
 
     let mut password_style = input_style.clone();
     password_style.cursor_shape(CursorShape::Block);
-    password_style.cursor_fg(Color::black());
-    password_style.cursor_bg(Color::magenta());
 
     // --- DOM ----------------------------------------------------------
 
