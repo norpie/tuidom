@@ -1,17 +1,18 @@
 //! Smoke test exercising the full pipeline:
-//! Box + Text rendering, keyboard events, focus, focus styles, configurable
-//! focus keys, targeted mouse events, bubbling, stop_propagation, wheel events,
-//! transitions, and debug overlay.
+//! Box + Text/Input rendering, keyboard events, focus, focus styles,
+//! configurable focus keys, targeted mouse events, bubbling, stop_propagation,
+//! wheel events, transitions, and debug overlay.
 //!
-//! Tab / Shift-Tab   — move focus in DOM order
-//! Arrows / hjkl     — move focus spatially
-//! Esc               — blur focused node
-//! Hover text        — focus text
-//! Space             — toggle text opacity (fade in/out)
-//! Click first text  — toggle text background, stop propagation
-//! Click background  — toggle container background
-//! Wheel anywhere    — adjust text opacity via container wheel handler
-//! q                 — quit
+//! Tab / Shift-Tab      — move focus in DOM order
+//! Arrows / hjkl        — move focus spatially, or move input cursor
+//! Esc                  — blur focused node
+//! Hover text/input     — focus node
+//! Type in inputs       — edit text / masked password input
+//! Space outside input  — toggle text opacity (fade in/out)
+//! Click first text     — toggle text background, stop propagation
+//! Click background     — toggle container background
+//! Wheel anywhere       — adjust text opacity via container wheel handler
+//! q outside input      — quit
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,7 @@ use std::time::Duration;
 
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
-use tuidom::style::{AlignItems, Color, JustifyContent, Length, Style};
+use tuidom::style::{AlignItems, Color, CursorBlink, CursorShape, JustifyContent, Length, Style};
 
 fn init_logging() {
     // Best-effort file logging for the smoke test.
@@ -59,6 +60,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     focus_style.color(Color::black());
     focus_style.background(Color::yellow());
 
+    let mut input_style = Style::new();
+    input_style.width(Length::Pixels(24));
+    input_style.height(Length::Pixels(1));
+    input_style.color(Color::white());
+    input_style.background(Color::oklch(0.18, 0.04, 260.0));
+    input_style.cursor_shape(CursorShape::Bar);
+    input_style.cursor_fg(Color::cyan());
+    input_style.cursor_bg(Color::cyan());
+    input_style.cursor_blink(CursorBlink::Blink);
+
+    let mut password_style = input_style.clone();
+    password_style.cursor_shape(CursorShape::Block);
+    password_style.cursor_fg(Color::black());
+    password_style.cursor_bg(Color::magenta());
+
     // --- DOM ----------------------------------------------------------
 
     let container = doc.create_box()?;
@@ -79,9 +95,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.set_focusable(third, true)?;
     doc.set_focus_style(third, &focus_style)?;
 
+    let editable = doc.create_input("edit me")?;
+    doc.set_style(editable, &input_style)?;
+    doc.set_focus_style(editable, &focus_style)?;
+
+    let password = doc.create_input("secret")?;
+    doc.set_style(password, &password_style)?;
+    doc.set_input_mask(password, Some('•'))?;
+    doc.set_focus_style(password, &focus_style)?;
+
     doc.append_child(container, text)?;
     doc.append_child(container, second)?;
     doc.append_child(container, third)?;
+    doc.append_child(container, editable)?;
+    doc.append_child(container, password)?;
     doc.append_child(doc.root(), container)?;
 
     let mut focus_keys = FocusKeys::default();
@@ -114,17 +141,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ov = opacity_visible.clone();
     let opacity_for_key = text_opacity.clone();
 
-    doc.on_key_press(doc.root(), move |key| match key.code {
-        KeyCode::Char(' ') => {
-            let was_visible = ov.fetch_not(Ordering::Relaxed);
-            let target = if !was_visible { 1.0 } else { 0.0 };
-            if let Ok(mut opacity) = opacity_for_key.lock() {
-                *opacity = target;
-            }
-            let _ = d.update_style(text, |s| s.opacity(target));
+    doc.on_key_press(doc.root(), move |key| {
+        if matches!(d.focused(), Some(node) if node == editable || node == password) {
+            return;
         }
-        KeyCode::Char('q') => d.quit(),
-        _ => {}
+
+        match key.code {
+            KeyCode::Char(' ') => {
+                let was_visible = ov.fetch_not(Ordering::Relaxed);
+                let target = if !was_visible { 1.0 } else { 0.0 };
+                if let Ok(mut opacity) = opacity_for_key.lock() {
+                    *opacity = target;
+                }
+                let _ = d.update_style(text, |s| s.opacity(target));
+            }
+            KeyCode::Char('q') => d.quit(),
+            _ => {}
+        }
     })?;
 
     // --- Focus handlers ----------------------------------------------
