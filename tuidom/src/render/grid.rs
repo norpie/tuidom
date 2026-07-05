@@ -3,6 +3,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::style::CursorShape;
 use crate::style::color::Rgb;
 
 /// Text content stored in a single terminal cell.
@@ -247,6 +248,42 @@ impl Grid {
         self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha);
     }
 
+    /// Paint a fake cursor overlay at a screen coordinate.
+    pub fn paint_cursor(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: u8,
+        shape: CursorShape,
+        fg: Option<Rgb>,
+        bg: Option<Rgb>,
+    ) {
+        if x < 0 || y < 0 || x >= i32::from(self.width) || y >= i32::from(self.height) {
+            return;
+        }
+
+        let x = x as usize;
+        let row = y as usize;
+        let width = width.clamp(1, 2) as usize;
+
+        match shape {
+            CursorShape::Block => {
+                let col = self.cursor_head_col(row, x);
+                for offset in 0..width {
+                    let col = col + offset;
+                    if col >= self.width as usize {
+                        break;
+                    }
+                    self.cells[row][col].fg = fg;
+                    self.cells[row][col].bg = bg;
+                }
+            }
+            CursorShape::HollowBlock => self.write_cursor_glyph(row, x, "▯", fg, bg),
+            CursorShape::Underline => self.write_cursor_glyph(row, x, "▁", fg, bg),
+            CursorShape::Bar => self.write_cursor_glyph(row, x, "▏", fg, bg),
+        }
+    }
+
     /// Write multiline text clipped to a rectangular region.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
     pub fn write_text_clipped(&mut self, rect: GridRect, text: &str, fg: Option<Rgb>, alpha: f64) {
@@ -381,6 +418,40 @@ impl Grid {
         if width == 2 {
             self.cells[row][col + 1].content = CellContent::WideContinuation;
             self.cells[row][col + 1].fg = None;
+        }
+    }
+
+    fn write_cursor_glyph(
+        &mut self,
+        row: usize,
+        col: usize,
+        glyph: &str,
+        fg: Option<Rgb>,
+        bg: Option<Rgb>,
+    ) {
+        if row >= self.height as usize || col >= self.width as usize {
+            return;
+        }
+        self.clear_text_span_at(row, col);
+        self.cells[row][col] = Cell {
+            content: CellContent::Glyph {
+                text: glyph.to_owned(),
+                width: 1,
+            },
+            fg,
+            bg,
+        };
+    }
+
+    fn cursor_head_col(&self, row: usize, col: usize) -> usize {
+        if row >= self.height as usize || col >= self.width as usize {
+            return col;
+        }
+
+        if matches!(self.cells[row][col].content, CellContent::WideContinuation) && col > 0 {
+            col - 1
+        } else {
+            col
         }
     }
 

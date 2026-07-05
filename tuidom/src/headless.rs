@@ -187,6 +187,13 @@ pub struct ScreenColor {
     pub a: u8,
 }
 
+impl ScreenColor {
+    /// Create an opaque RGB screen color.
+    pub fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b, a: 255 }
+    }
+}
+
 impl From<Rgb> for ScreenColor {
     fn from(value: Rgb) -> Self {
         Self {

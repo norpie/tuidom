@@ -2,6 +2,9 @@
 
 use std::time::{Duration, Instant};
 
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
 use crate::document::Document;
 use crate::node::{NodeKindView, input_display_content};
 use crate::paint_order::{PaintEntry, paint_order};
@@ -23,9 +26,10 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
 
+    let focused = doc.focused();
     let paint_start = Instant::now();
     for entry in &entries {
-        paint_entry(grid, entry, rgb_cache);
+        paint_entry(grid, entry, focused, rgb_cache);
     }
     let paint_time = paint_start.elapsed();
 
@@ -35,7 +39,12 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -
     }
 }
 
-fn paint_entry(grid: &mut Grid, node: &PaintEntry, rgb_cache: &mut RgbCache) {
+fn paint_entry(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    focused: Option<crate::id::NodeId>,
+    rgb_cache: &mut RgbCache,
+) {
     let alpha = node.resolved.opacity;
     let bg_rgb = node.resolved.background.map(|c| rgb_cache.resolve(c));
     let fg_rgb = rgb_cache.resolve(node.resolved.color);
@@ -61,12 +70,16 @@ fn paint_entry(grid: &mut Grid, node: &PaintEntry, rgb_cache: &mut RgbCache) {
 
         NodeKindView::Input {
             value,
+            cursor,
             multiline,
             mask,
             ..
         } => {
             let content = input_display_content(value, *multiline, *mask);
             paint_text(grid, node, bg_rgb, fg_rgb, alpha, &content);
+            if focused == Some(node.id) {
+                paint_input_cursor(grid, node, value, *cursor, *multiline, *mask, rgb_cache);
+            }
         }
     }
 }
@@ -101,6 +114,90 @@ fn paint_text(
         Some(fg_rgb),
         alpha,
     );
+}
+
+fn paint_input_cursor(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    value: &str,
+    cursor: usize,
+    multiline: bool,
+    mask: Option<char>,
+    rgb_cache: &mut RgbCache,
+) {
+    if node.layout.width == 0 || node.layout.height == 0 {
+        return;
+    }
+
+    let cursor = clamp_to_grapheme_boundary(value, cursor);
+    let position = input_cursor_position(value, cursor, multiline, mask);
+    if position.y >= i32::from(node.layout.height) || position.x >= i32::from(node.layout.width) {
+        return;
+    }
+
+    grid.paint_cursor(
+        node.layout.x + position.x,
+        node.layout.y + position.y,
+        position.width,
+        node.resolved.cursor_shape,
+        Some(rgb_cache.resolve(node.resolved.cursor_fg)),
+        Some(rgb_cache.resolve(node.resolved.cursor_bg)),
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorPosition {
+    x: i32,
+    y: i32,
+    width: u8,
+}
+
+fn input_cursor_position(
+    value: &str,
+    cursor: usize,
+    multiline: bool,
+    mask: Option<char>,
+) -> CursorPosition {
+    let prefix = input_display_content(&value[..cursor], multiline, mask);
+    let y = if prefix.is_empty() {
+        0
+    } else {
+        prefix.matches('\n').count() as i32
+    };
+    let x = UnicodeWidthStr::width(prefix.rsplit('\n').next().unwrap_or("")) as i32;
+    let width = cursor_grapheme_width(&value[cursor..], multiline, mask);
+    CursorPosition { x, y, width }
+}
+
+fn cursor_grapheme_width(suffix: &str, multiline: bool, mask: Option<char>) -> u8 {
+    let Some(grapheme) = suffix.graphemes(true).next() else {
+        return 1;
+    };
+    if multiline && grapheme == "\n" {
+        return 1;
+    }
+
+    let display = if let Some(mask) = mask {
+        mask.to_string()
+    } else if !multiline && grapheme == "\n" {
+        " ".to_owned()
+    } else {
+        grapheme.to_owned()
+    };
+    UnicodeWidthStr::width(display.as_str()).clamp(1, 2) as u8
+}
+
+fn clamp_to_grapheme_boundary(content: &str, offset: usize) -> usize {
+    if offset >= content.len() {
+        return content.len();
+    }
+
+    content
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= offset)
+        .last()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

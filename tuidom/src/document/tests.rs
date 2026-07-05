@@ -10,7 +10,7 @@ use crate::event::{
     EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, MouseButton, MouseEvent,
     ResizeEvent, WheelEvent,
 };
-use crate::headless::HeadlessRuntime;
+use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
 use crate::style::{AlignItems, Color, CursorBlink, CursorShape, Display, Length, Style};
 
@@ -180,6 +180,109 @@ fn input_rendering_uses_display_content_without_changing_stored_value() {
     assert_eq!(runtime.get_cell(1, 0).unwrap().text, "*");
     assert_eq!(runtime.get_cell(0, 1).unwrap().text, "*");
     assert_eq!(runtime.document().input_value(input).unwrap(), "ab\ncd");
+}
+
+#[test]
+fn focused_input_renders_block_cursor_with_per_node_colors() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("A").unwrap();
+    let other = doc.create_input("B").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.append_child(doc.root(), other).unwrap();
+
+    let mut style = Style::new();
+    style.width(Length::Pixels(3));
+    style.cursor_fg(Color::black());
+    style.cursor_bg(Color::yellow());
+    doc.set_style(input, &style).unwrap();
+    doc.set_style(other, &style).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 10, 2);
+    runtime.render().unwrap();
+
+    let cursor = runtime.get_cell(1, 0).unwrap();
+    assert_eq!(cursor.text, " ");
+    assert_eq!(cursor.fg, Some(ScreenColor::from_rgb(0, 0, 0)));
+    assert_eq!(cursor.bg, Some(ScreenColor::from_rgb(255, 255, 0)));
+    assert_eq!(runtime.get_cell(4, 0).unwrap().bg, None);
+}
+
+#[test]
+fn input_cursor_shapes_render_distinct_overlays() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("A").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut style = Style::new();
+    style.cursor_fg(Color::black());
+    style.cursor_bg(Color::yellow());
+    doc.set_style(input, &style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 5, 2);
+
+    runtime
+        .document()
+        .update_style(input, |s| s.cursor_shape(CursorShape::Block))
+        .unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "A");
+    assert_eq!(
+        runtime.get_cell(0, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
+
+    runtime
+        .document()
+        .update_style(input, |s| s.cursor_shape(CursorShape::Bar))
+        .unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "▏");
+
+    runtime
+        .document()
+        .update_style(input, |s| s.cursor_shape(CursorShape::Underline))
+        .unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "▁");
+
+    runtime
+        .document()
+        .update_style(input, |s| s.cursor_shape(CursorShape::HollowBlock))
+        .unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "▯");
+}
+
+#[test]
+fn block_cursor_covers_wide_grapheme_cells() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("界").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut style = Style::new();
+    style.cursor_shape(CursorShape::Block);
+    style.cursor_bg(Color::yellow());
+    doc.set_style(input, &style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 5, 2);
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, "界");
+    assert_eq!(runtime.get_cell(0, 0).unwrap().width, 2);
+    assert!(runtime.get_cell(1, 0).unwrap().is_wide_continuation);
+    assert_eq!(
+        runtime.get_cell(0, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
+    assert_eq!(
+        runtime.get_cell(1, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(255, 255, 0))
+    );
 }
 
 #[test]
