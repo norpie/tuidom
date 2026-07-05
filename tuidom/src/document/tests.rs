@@ -2116,6 +2116,9 @@ fn set_style_gets_resolved() {
     style.padding(EdgeInsets::symmetric(2, 1));
     style.margin(EdgeInsets::new(1, 2, 3, 4));
     style.flex_direction(FlexDirection::Column);
+    style.flex_basis(Length::Pixels(3));
+    style.flex_grow(1.0);
+    style.flex_shrink(0.5);
     doc.set_style(node, &style).unwrap();
 
     let resolved = doc.resolved_style(node).unwrap();
@@ -2123,6 +2126,9 @@ fn set_style_gets_resolved() {
     assert_eq!(resolved.padding, EdgeInsets::symmetric(2, 1));
     assert_eq!(resolved.margin, EdgeInsets::new(1, 2, 3, 4));
     assert_eq!(resolved.flex_direction, FlexDirection::Column);
+    assert_eq!(resolved.flex_basis, Length::Pixels(3));
+    assert_eq!(resolved.flex_grow, 1.0);
+    assert_eq!(resolved.flex_shrink, 0.5);
     assert_eq!(resolved.opacity, 1.0); // Inherit → default
     assert_eq!(resolved.color, Color::white()); // Inherit → default
 }
@@ -2230,6 +2236,9 @@ fn unset_properties_use_defaults_not_parent_values() {
     assert_eq!(child_resolved.padding, EdgeInsets::ZERO);
     assert_eq!(child_resolved.margin, EdgeInsets::ZERO);
     assert_eq!(child_resolved.flex_direction, FlexDirection::Row);
+    assert_eq!(child_resolved.flex_basis, Length::Auto);
+    assert_eq!(child_resolved.flex_grow, 0.0);
+    assert_eq!(child_resolved.flex_shrink, 1.0);
 }
 
 #[test]
@@ -2242,6 +2251,9 @@ fn explicitly_inherits_from_parent() {
     parent_style.padding(EdgeInsets::all(2));
     parent_style.margin(EdgeInsets::new(1, 2, 3, 4));
     parent_style.flex_direction(FlexDirection::Column);
+    parent_style.flex_basis(Length::Pixels(3));
+    parent_style.flex_grow(1.0);
+    parent_style.flex_shrink(0.5);
     doc.set_style(parent, &parent_style).unwrap();
 
     let child = doc.create_text("hi").unwrap();
@@ -2250,6 +2262,9 @@ fn explicitly_inherits_from_parent() {
     child_style.inherit_padding();
     child_style.inherit_margin();
     child_style.inherit_flex_direction();
+    child_style.inherit_flex_basis();
+    child_style.inherit_flex_grow();
+    child_style.inherit_flex_shrink();
     doc.set_style(child, &child_style).unwrap();
     doc.append_child(parent, child).unwrap();
 
@@ -2258,6 +2273,9 @@ fn explicitly_inherits_from_parent() {
     assert_eq!(child_resolved.padding, EdgeInsets::all(2));
     assert_eq!(child_resolved.margin, EdgeInsets::new(1, 2, 3, 4));
     assert_eq!(child_resolved.flex_direction, FlexDirection::Column);
+    assert_eq!(child_resolved.flex_basis, Length::Pixels(3));
+    assert_eq!(child_resolved.flex_grow, 1.0);
+    assert_eq!(child_resolved.flex_shrink, 0.5);
     assert_eq!(child_resolved.width, Length::Auto);
 }
 

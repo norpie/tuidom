@@ -209,6 +209,12 @@ pub struct Style {
     pub(crate) background: StyleValue<Color>,
     /// Main-axis direction for flex containers.
     pub(crate) flex_direction: StyleValue<FlexDirection>,
+    /// Initial main-axis size for flex items.
+    pub(crate) flex_basis: StyleValue<Length>,
+    /// Relative grow factor for flex items.
+    pub(crate) flex_grow: StyleValue<f32>,
+    /// Relative shrink factor for flex items.
+    pub(crate) flex_shrink: StyleValue<f32>,
     /// Cross-axis alignment (flex container).
     pub(crate) align_items: StyleValue<AlignItems>,
     /// Main-axis alignment (flex container).
@@ -244,6 +250,9 @@ impl Style {
             color: StyleValue::Unset,
             background: StyleValue::Unset,
             flex_direction: StyleValue::Unset,
+            flex_basis: StyleValue::Unset,
+            flex_grow: StyleValue::Unset,
+            flex_shrink: StyleValue::Unset,
             align_items: StyleValue::Unset,
             justify_content: StyleValue::Unset,
             z_index: StyleValue::Unset,
@@ -406,6 +415,57 @@ impl Style {
         self.flex_direction = StyleValue::Unset;
     }
 
+    // -- Flex Basis -----------------------------------------------------
+
+    /// Set the initial main-axis size for this flex item.
+    pub fn flex_basis(&mut self, value: Length) {
+        self.flex_basis = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit flex basis from the parent node.
+    pub fn inherit_flex_basis(&mut self) {
+        self.flex_basis = StyleValue::Inherit;
+    }
+
+    /// Reset flex basis to the document/default style.
+    pub fn unset_flex_basis(&mut self) {
+        self.flex_basis = StyleValue::Unset;
+    }
+
+    // -- Flex Grow ------------------------------------------------------
+
+    /// Set the relative grow factor for this flex item.
+    pub fn flex_grow(&mut self, value: f32) {
+        self.flex_grow = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit flex grow from the parent node.
+    pub fn inherit_flex_grow(&mut self) {
+        self.flex_grow = StyleValue::Inherit;
+    }
+
+    /// Reset flex grow to the document/default style.
+    pub fn unset_flex_grow(&mut self) {
+        self.flex_grow = StyleValue::Unset;
+    }
+
+    // -- Flex Shrink ----------------------------------------------------
+
+    /// Set the relative shrink factor for this flex item.
+    pub fn flex_shrink(&mut self, value: f32) {
+        self.flex_shrink = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit flex shrink from the parent node.
+    pub fn inherit_flex_shrink(&mut self) {
+        self.flex_shrink = StyleValue::Inherit;
+    }
+
+    /// Reset flex shrink to the document/default style.
+    pub fn unset_flex_shrink(&mut self) {
+        self.flex_shrink = StyleValue::Unset;
+    }
+
     // -- Align Items ----------------------------------------------------
 
     /// Set the cross-axis alignment.
@@ -527,6 +587,9 @@ mod tests {
         style.background(Color::blue());
         style.opacity(0.5);
         style.flex_direction(FlexDirection::Column);
+        style.flex_basis(Length::Pixels(3));
+        style.flex_grow(1.0);
+        style.flex_shrink(0.5);
 
         style.z_index(10);
         style.stacking_context(true);
@@ -539,6 +602,9 @@ mod tests {
         assert_eq!(style.margin, StyleValue::Set(EdgeInsets::new(1, 2, 3, 4)));
         assert_eq!(style.opacity, StyleValue::Set(0.5));
         assert_eq!(style.flex_direction, StyleValue::Set(FlexDirection::Column));
+        assert_eq!(style.flex_basis, StyleValue::Set(Length::Pixels(3)));
+        assert_eq!(style.flex_grow, StyleValue::Set(1.0));
+        assert_eq!(style.flex_shrink, StyleValue::Set(0.5));
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
@@ -554,6 +620,9 @@ mod tests {
         assert_eq!(style.opacity, StyleValue::Unset);
         assert_eq!(style.color, StyleValue::Unset);
         assert_eq!(style.flex_direction, StyleValue::Unset);
+        assert_eq!(style.flex_basis, StyleValue::Unset);
+        assert_eq!(style.flex_grow, StyleValue::Unset);
+        assert_eq!(style.flex_shrink, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
@@ -583,6 +652,9 @@ mod tests {
         style.inherit_opacity();
         style.inherit_color();
         style.inherit_flex_direction();
+        style.inherit_flex_basis();
+        style.inherit_flex_grow();
+        style.inherit_flex_shrink();
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_cursor_shape();
@@ -593,6 +665,9 @@ mod tests {
         assert_eq!(style.opacity, StyleValue::Inherit);
         assert_eq!(style.color, StyleValue::Inherit);
         assert_eq!(style.flex_direction, StyleValue::Inherit);
+        assert_eq!(style.flex_basis, StyleValue::Inherit);
+        assert_eq!(style.flex_grow, StyleValue::Inherit);
+        assert_eq!(style.flex_shrink, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);

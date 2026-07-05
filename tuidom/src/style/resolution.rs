@@ -30,6 +30,12 @@ pub struct ResolvedStyle {
     pub background: Option<Color>,
     /// Resolved main-axis direction.
     pub flex_direction: FlexDirection,
+    /// Resolved initial main-axis size for flex items.
+    pub flex_basis: Length,
+    /// Resolved relative grow factor for flex items.
+    pub flex_grow: f32,
+    /// Resolved relative shrink factor for flex items.
+    pub flex_shrink: f32,
     /// Resolved cross-axis alignment.
     pub align_items: AlignItems,
     /// Resolved main-axis alignment.
@@ -60,6 +66,9 @@ pub(crate) struct StyleDefaults {
     color: Color,
     background: Option<Color>,
     flex_direction: FlexDirection,
+    flex_basis: Length,
+    flex_grow: f32,
+    flex_shrink: f32,
     align_items: AlignItems,
     justify_content: JustifyContent,
     z_index: i32,
@@ -79,6 +88,9 @@ impl Default for StyleDefaults {
             color: Color::white(),
             background: None,
             flex_direction: FlexDirection::Row,
+            flex_basis: Length::Auto,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::FlexStart,
             z_index: 0,
@@ -109,6 +121,9 @@ impl StyleDefaults {
             color: self.color,
             background: self.background,
             flex_direction: self.flex_direction,
+            flex_basis: self.flex_basis,
+            flex_grow: self.flex_grow,
+            flex_shrink: self.flex_shrink,
             align_items: self.align_items,
             justify_content: self.justify_content,
             z_index: self.z_index,
@@ -169,6 +184,21 @@ impl ResolvedStyle {
                 &data.style.flex_direction,
                 parent.map(|p| &p.flex_direction),
                 &defaults.flex_direction,
+            ),
+            flex_basis: resolve(
+                &data.style.flex_basis,
+                parent.map(|p| &p.flex_basis),
+                &defaults.flex_basis,
+            ),
+            flex_grow: resolve(
+                &data.style.flex_grow,
+                parent.map(|p| &p.flex_grow),
+                &defaults.flex_grow,
+            ),
+            flex_shrink: resolve(
+                &data.style.flex_shrink,
+                parent.map(|p| &p.flex_shrink),
+                &defaults.flex_shrink,
             ),
             align_items: resolve(
                 &data.style.align_items,
@@ -257,6 +287,24 @@ impl ResolvedStyle {
             &style.flex_direction,
             parent.map(|p| &p.flex_direction),
             &defaults.flex_direction,
+        );
+        apply_override(
+            &mut self.flex_basis,
+            &style.flex_basis,
+            parent.map(|p| &p.flex_basis),
+            &defaults.flex_basis,
+        );
+        apply_override(
+            &mut self.flex_grow,
+            &style.flex_grow,
+            parent.map(|p| &p.flex_grow),
+            &defaults.flex_grow,
+        );
+        apply_override(
+            &mut self.flex_shrink,
+            &style.flex_shrink,
+            parent.map(|p| &p.flex_shrink),
+            &defaults.flex_shrink,
         );
         apply_override(
             &mut self.align_items,

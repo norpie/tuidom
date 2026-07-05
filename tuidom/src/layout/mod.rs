@@ -389,6 +389,9 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         margin: to_taffy_margin(resolved.margin),
         padding: to_taffy_padding(resolved.padding),
         flex_direction: to_taffy_flex_direction(resolved.flex_direction),
+        flex_basis: to_dimension(resolved.flex_basis),
+        flex_grow: resolved.flex_grow,
+        flex_shrink: resolved.flex_shrink,
         align_items: Some(to_align_items(resolved.align_items)),
         justify_content: Some(to_justify_content(resolved.justify_content)),
         ..Default::default()
@@ -653,6 +656,92 @@ mod tests {
         let second_layout = doc.get_node(second).unwrap().layout.unwrap();
         assert_eq!((first_layout.x, first_layout.y), (0, 0));
         assert_eq!((second_layout.x, second_layout.y), (0, 1));
+    }
+
+    #[test]
+    fn flex_grow_distributes_extra_space() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(12));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style).unwrap();
+
+        for (child, grow) in [(first, 1.0), (second, 2.0)] {
+            let mut child_style = DomStyle::new();
+            child_style.height(Length::Pixels(1));
+            child_style.flex_basis(Length::Pixels(0));
+            child_style.flex_grow(grow);
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 12, 1).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.width, 4);
+        assert_eq!(second_layout.width, 8);
+        assert_eq!(second_layout.x, 4);
+    }
+
+    #[test]
+    fn flex_shrink_distributes_overflow() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(8));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style).unwrap();
+
+        for (child, shrink) in [(first, 1.0), (second, 3.0)] {
+            let mut child_style = DomStyle::new();
+            child_style.height(Length::Pixels(1));
+            child_style.flex_basis(Length::Pixels(6));
+            child_style.flex_shrink(shrink);
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 8, 1).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.width, 5);
+        assert_eq!(second_layout.width, 3);
+        assert_eq!(second_layout.x, 5);
+    }
+
+    #[test]
+    fn flex_basis_sets_initial_main_axis_size() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let child = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(1));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut child_style = DomStyle::new();
+        child_style.height(Length::Pixels(1));
+        child_style.flex_basis(Length::Pixels(4));
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(root, child).unwrap();
+
+        compute_layout(&doc, 10, 1).unwrap();
+
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!(child_layout.width, 4);
     }
 
     #[test]
