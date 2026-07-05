@@ -4,8 +4,8 @@ use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, Whee
 use crate::render::grid::{Cell, Grid};
 use crate::render::{RenderCursor, render_to_grid};
 use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
-use crate::style::color::{Rgb, RgbCache};
 use crate::style::CursorShape;
+use crate::style::color::{Rgb, RgbCache};
 
 /// A terminal-free runtime harness for deterministic layout, paint, and input tests.
 pub struct HeadlessRuntime {

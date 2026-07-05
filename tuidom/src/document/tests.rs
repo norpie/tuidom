@@ -259,7 +259,6 @@ fn focused_block_cursor_inverts_cell_and_exposes_metadata() {
     assert!(cursor.visible);
 }
 
-
 #[test]
 fn input_cursor_shapes_render_distinct_metadata_without_replacing_text() {
     let doc = Document::new().unwrap();
@@ -319,6 +318,24 @@ fn cursor_metadata_over_wide_grapheme_points_at_head_cell() {
     assert_eq!((cursor.x, cursor.y), (0, 0));
     assert_eq!(cursor.shape, CursorShape::Block);
     assert!(cursor.visible);
+}
+
+#[test]
+fn cursor_metadata_is_hidden_when_cursor_is_outside_screen() {
+    let doc = Document::new().unwrap();
+    let spacer = doc.create_text("xxxxx").unwrap();
+    let input = doc.create_input("A").unwrap();
+    doc.append_child(doc.root(), spacer).unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 5, 2);
+    runtime.render().unwrap();
+
+    let cursor = runtime.cursor().unwrap();
+    assert!(cursor.x >= i32::from(runtime.width()));
+    assert_eq!(cursor.y, 0);
+    assert!(!cursor.visible);
 }
 
 #[test]

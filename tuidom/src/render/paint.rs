@@ -175,12 +175,16 @@ fn input_cursor_metadata(
     let position = input_cursor_position(input.value, cursor, input.multiline, input.mask);
     let x = position.x - i32::from(input.scroll_x);
     let y = position.y - i32::from(input.scroll_y);
-    let clipped =
+    let input_clipped =
         x < 0 || y < 0 || y >= i32::from(node.layout.height) || x >= i32::from(node.layout.width);
 
     let screen_x = node.layout.x + x;
     let screen_y = node.layout.y + y;
-    let visible = !clipped;
+    let screen_clipped = screen_x < 0
+        || screen_y < 0
+        || screen_x >= i32::from(grid.width)
+        || screen_y >= i32::from(grid.height);
+    let visible = !input_clipped && !screen_clipped;
     if visible && node.resolved.cursor_shape == CursorShape::Block {
         invert_cursor_cell(grid, screen_x, screen_y, color);
     }

@@ -12,8 +12,8 @@ use terminal::Terminal;
 
 use crate::document::Document;
 use crate::lock;
-use crate::style::color::{Rgb, RgbCache};
 use crate::style::CursorShape;
+use crate::style::color::{Rgb, RgbCache};
 
 /// Breakdown of time spent in each render phase.
 #[derive(Debug, Clone, Copy, Default)]

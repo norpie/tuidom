@@ -16,8 +16,8 @@ use crate::render::RenderCursor;
 use crate::render::diff::CellChange;
 use crate::render::grid::Cell;
 use crate::render::grid::Grid;
-use crate::style::color::Rgb;
 use crate::style::CursorShape;
+use crate::style::color::Rgb;
 
 /// Wraps stdout with crossterm setup and teardown.
 pub(crate) struct Terminal {

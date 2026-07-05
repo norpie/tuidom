@@ -368,7 +368,6 @@ impl Style {
     pub fn unset_cursor_shape(&mut self) {
         self.cursor_shape = StyleValue::Unset;
     }
-
 }
 
 #[cfg(test)]
