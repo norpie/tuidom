@@ -15,7 +15,9 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::{LayoutRect, NodeKind};
 use crate::style::resolution::ResolvedStyle;
-use crate::style::{AlignItems, Display, EdgeInsets, FlexDirection, JustifyContent, Length};
+use crate::style::{
+    AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, JustifyContent, Length,
+};
 
 // ---------------------------------------------------------------------------
 // Persistent layout engine
@@ -392,6 +394,7 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         flex_basis: to_dimension(resolved.flex_basis),
         flex_grow: resolved.flex_grow,
         flex_shrink: resolved.flex_shrink,
+        gap: to_taffy_gap(resolved.gap),
         align_items: Some(to_align_items(resolved.align_items)),
         justify_content: Some(to_justify_content(resolved.justify_content)),
         ..Default::default()
@@ -428,6 +431,13 @@ fn to_taffy_flex_direction(direction: FlexDirection) -> taffy::style::FlexDirect
     match direction {
         FlexDirection::Row => taffy::style::FlexDirection::Row,
         FlexDirection::Column => taffy::style::FlexDirection::Column,
+    }
+}
+
+fn to_taffy_gap(gap: FlexGap) -> Size<LengthPercentage> {
+    Size {
+        width: LengthPercentage::length(gap.column as f32),
+        height: LengthPercentage::length(gap.row as f32),
     }
 }
 
@@ -656,6 +666,67 @@ mod tests {
         let second_layout = doc.get_node(second).unwrap().layout.unwrap();
         assert_eq!((first_layout.x, first_layout.y), (0, 0));
         assert_eq!((second_layout.x, second_layout.y), (0, 1));
+    }
+
+    #[test]
+    fn row_flex_gap_spaces_children_horizontally() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(1));
+        root_style.gap(FlexGap::new(0, 2));
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 10, 1).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.x, 0);
+        assert_eq!(second_layout.x, 4);
+    }
+
+    #[test]
+    fn column_flex_gap_spaces_children_vertically() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(2));
+        root_style.height(Length::Pixels(5));
+        root_style.flex_direction(FlexDirection::Column);
+        root_style.gap(FlexGap::new(2, 0));
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 2, 5).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.y, 0);
+        assert_eq!(second_layout.y, 3);
     }
 
     #[test]

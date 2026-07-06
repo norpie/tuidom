@@ -133,6 +133,33 @@ pub enum FlexDirection {
     Column,
 }
 
+/// Spacing between flex children and flex lines in terminal cells.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FlexGap {
+    /// Vertical spacing between rows or wrapped flex lines.
+    pub row: u16,
+    /// Horizontal spacing between columns or row-direction flex items.
+    pub column: u16,
+}
+
+impl FlexGap {
+    /// No flex gap.
+    pub const ZERO: Self = Self::all(0);
+
+    /// Create equal row and column gaps.
+    pub const fn all(value: u16) -> Self {
+        Self {
+            row: value,
+            column: value,
+        }
+    }
+
+    /// Create explicit row and column gaps.
+    pub const fn new(row: u16, column: u16) -> Self {
+        Self { row, column }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Flex alignment
 // ---------------------------------------------------------------------------
@@ -215,6 +242,8 @@ pub struct Style {
     pub(crate) flex_grow: StyleValue<f32>,
     /// Relative shrink factor for flex items.
     pub(crate) flex_shrink: StyleValue<f32>,
+    /// Spacing between flex children and flex lines.
+    pub(crate) gap: StyleValue<FlexGap>,
     /// Cross-axis alignment (flex container).
     pub(crate) align_items: StyleValue<AlignItems>,
     /// Main-axis alignment (flex container).
@@ -253,6 +282,7 @@ impl Style {
             flex_basis: StyleValue::Unset,
             flex_grow: StyleValue::Unset,
             flex_shrink: StyleValue::Unset,
+            gap: StyleValue::Unset,
             align_items: StyleValue::Unset,
             justify_content: StyleValue::Unset,
             z_index: StyleValue::Unset,
@@ -466,6 +496,23 @@ impl Style {
         self.flex_shrink = StyleValue::Unset;
     }
 
+    // -- Gap ------------------------------------------------------------
+
+    /// Set spacing between flex children and flex lines.
+    pub fn gap(&mut self, value: FlexGap) {
+        self.gap = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit gap from the parent node.
+    pub fn inherit_gap(&mut self) {
+        self.gap = StyleValue::Inherit;
+    }
+
+    /// Reset gap to the document/default style.
+    pub fn unset_gap(&mut self) {
+        self.gap = StyleValue::Unset;
+    }
+
     // -- Align Items ----------------------------------------------------
 
     /// Set the cross-axis alignment.
@@ -590,6 +637,7 @@ mod tests {
         style.flex_basis(Length::Pixels(3));
         style.flex_grow(1.0);
         style.flex_shrink(0.5);
+        style.gap(FlexGap::new(1, 2));
 
         style.z_index(10);
         style.stacking_context(true);
@@ -605,6 +653,7 @@ mod tests {
         assert_eq!(style.flex_basis, StyleValue::Set(Length::Pixels(3)));
         assert_eq!(style.flex_grow, StyleValue::Set(1.0));
         assert_eq!(style.flex_shrink, StyleValue::Set(0.5));
+        assert_eq!(style.gap, StyleValue::Set(FlexGap::new(1, 2)));
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
@@ -623,6 +672,7 @@ mod tests {
         assert_eq!(style.flex_basis, StyleValue::Unset);
         assert_eq!(style.flex_grow, StyleValue::Unset);
         assert_eq!(style.flex_shrink, StyleValue::Unset);
+        assert_eq!(style.gap, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
@@ -655,6 +705,7 @@ mod tests {
         style.inherit_flex_basis();
         style.inherit_flex_grow();
         style.inherit_flex_shrink();
+        style.inherit_gap();
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_cursor_shape();
@@ -668,6 +719,7 @@ mod tests {
         assert_eq!(style.flex_basis, StyleValue::Inherit);
         assert_eq!(style.flex_grow, StyleValue::Inherit);
         assert_eq!(style.flex_shrink, StyleValue::Inherit);
+        assert_eq!(style.gap, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);

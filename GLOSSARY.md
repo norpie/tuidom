@@ -44,6 +44,8 @@ Terms and concepts used throughout the tuidom codebase.
 
 **FlexDirection** — Main-axis direction for flex containers. Currently supports row and column.
 
+**FlexGap** — Terminal-cell spacing between flex children and flex lines. `column` is horizontal spacing and `row` is vertical spacing.
+
 **Custom Style Property** — Raw inline style metadata stored on `Style`. Custom properties do not inherit, do not resolve into `ResolvedStyle`, and do not affect layout or rendering.
 
 **Attribute** — Raw string key/value metadata stored on a node. Attribute keys cannot be empty.

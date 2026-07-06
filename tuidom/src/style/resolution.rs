@@ -5,8 +5,8 @@
 
 use crate::node::NodeData;
 use crate::style::{
-    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, JustifyContent, Length,
-    Style, StyleValue,
+    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, JustifyContent,
+    Length, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -36,6 +36,8 @@ pub struct ResolvedStyle {
     pub flex_grow: f32,
     /// Resolved relative shrink factor for flex items.
     pub flex_shrink: f32,
+    /// Resolved spacing between flex children and flex lines.
+    pub gap: FlexGap,
     /// Resolved cross-axis alignment.
     pub align_items: AlignItems,
     /// Resolved main-axis alignment.
@@ -69,6 +71,7 @@ pub(crate) struct StyleDefaults {
     flex_basis: Length,
     flex_grow: f32,
     flex_shrink: f32,
+    gap: FlexGap,
     align_items: AlignItems,
     justify_content: JustifyContent,
     z_index: i32,
@@ -91,6 +94,7 @@ impl Default for StyleDefaults {
             flex_basis: Length::Auto,
             flex_grow: 0.0,
             flex_shrink: 1.0,
+            gap: FlexGap::ZERO,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::FlexStart,
             z_index: 0,
@@ -124,6 +128,7 @@ impl StyleDefaults {
             flex_basis: self.flex_basis,
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
+            gap: self.gap,
             align_items: self.align_items,
             justify_content: self.justify_content,
             z_index: self.z_index,
@@ -200,6 +205,7 @@ impl ResolvedStyle {
                 parent.map(|p| &p.flex_shrink),
                 &defaults.flex_shrink,
             ),
+            gap: resolve(&data.style.gap, parent.map(|p| &p.gap), &defaults.gap),
             align_items: resolve(
                 &data.style.align_items,
                 parent.map(|p| &p.align_items),
@@ -305,6 +311,12 @@ impl ResolvedStyle {
             &style.flex_shrink,
             parent.map(|p| &p.flex_shrink),
             &defaults.flex_shrink,
+        );
+        apply_override(
+            &mut self.gap,
+            &style.gap,
+            parent.map(|p| &p.gap),
+            &defaults.gap,
         );
         apply_override(
             &mut self.align_items,
