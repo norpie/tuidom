@@ -178,6 +178,9 @@ pub enum AlignItems {
     Stretch,
 }
 
+/// Cross-axis alignment override for an individual flex item.
+pub type AlignSelf = AlignItems;
+
 /// Main-axis alignment for flex containers.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum JustifyContent {
@@ -244,6 +247,8 @@ pub struct Style {
     pub(crate) flex_shrink: StyleValue<f32>,
     /// Spacing between flex children and flex lines.
     pub(crate) gap: StyleValue<FlexGap>,
+    /// Cross-axis alignment override for this flex item.
+    pub(crate) align_self: StyleValue<AlignSelf>,
     /// Cross-axis alignment (flex container).
     pub(crate) align_items: StyleValue<AlignItems>,
     /// Main-axis alignment (flex container).
@@ -283,6 +288,7 @@ impl Style {
             flex_grow: StyleValue::Unset,
             flex_shrink: StyleValue::Unset,
             gap: StyleValue::Unset,
+            align_self: StyleValue::Unset,
             align_items: StyleValue::Unset,
             justify_content: StyleValue::Unset,
             z_index: StyleValue::Unset,
@@ -513,6 +519,23 @@ impl Style {
         self.gap = StyleValue::Unset;
     }
 
+    // -- Align Self -----------------------------------------------------
+
+    /// Set the cross-axis alignment override for this flex item.
+    pub fn align_self(&mut self, value: AlignSelf) {
+        self.align_self = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit align-self from the parent node.
+    pub fn inherit_align_self(&mut self) {
+        self.align_self = StyleValue::Inherit;
+    }
+
+    /// Reset align-self to the document/default style.
+    pub fn unset_align_self(&mut self) {
+        self.align_self = StyleValue::Unset;
+    }
+
     // -- Align Items ----------------------------------------------------
 
     /// Set the cross-axis alignment.
@@ -638,6 +661,7 @@ mod tests {
         style.flex_grow(1.0);
         style.flex_shrink(0.5);
         style.gap(FlexGap::new(1, 2));
+        style.align_self(AlignSelf::Center);
 
         style.z_index(10);
         style.stacking_context(true);
@@ -654,6 +678,7 @@ mod tests {
         assert_eq!(style.flex_grow, StyleValue::Set(1.0));
         assert_eq!(style.flex_shrink, StyleValue::Set(0.5));
         assert_eq!(style.gap, StyleValue::Set(FlexGap::new(1, 2)));
+        assert_eq!(style.align_self, StyleValue::Set(AlignSelf::Center));
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
@@ -673,6 +698,7 @@ mod tests {
         assert_eq!(style.flex_grow, StyleValue::Unset);
         assert_eq!(style.flex_shrink, StyleValue::Unset);
         assert_eq!(style.gap, StyleValue::Unset);
+        assert_eq!(style.align_self, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
@@ -706,6 +732,7 @@ mod tests {
         style.inherit_flex_grow();
         style.inherit_flex_shrink();
         style.inherit_gap();
+        style.inherit_align_self();
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_cursor_shape();
@@ -720,6 +747,7 @@ mod tests {
         assert_eq!(style.flex_grow, StyleValue::Inherit);
         assert_eq!(style.flex_shrink, StyleValue::Inherit);
         assert_eq!(style.gap, StyleValue::Inherit);
+        assert_eq!(style.align_self, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);

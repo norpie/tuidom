@@ -5,8 +5,8 @@
 
 use crate::node::NodeData;
 use crate::style::{
-    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, JustifyContent,
-    Length, Style, StyleValue,
+    AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap,
+    JustifyContent, Length, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -38,6 +38,8 @@ pub struct ResolvedStyle {
     pub flex_shrink: f32,
     /// Resolved spacing between flex children and flex lines.
     pub gap: FlexGap,
+    /// Resolved cross-axis alignment override for this flex item.
+    pub align_self: Option<AlignSelf>,
     /// Resolved cross-axis alignment.
     pub align_items: AlignItems,
     /// Resolved main-axis alignment.
@@ -72,6 +74,7 @@ pub(crate) struct StyleDefaults {
     flex_grow: f32,
     flex_shrink: f32,
     gap: FlexGap,
+    align_self: Option<AlignSelf>,
     align_items: AlignItems,
     justify_content: JustifyContent,
     z_index: i32,
@@ -95,6 +98,7 @@ impl Default for StyleDefaults {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             gap: FlexGap::ZERO,
+            align_self: None,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::FlexStart,
             z_index: 0,
@@ -129,6 +133,7 @@ impl StyleDefaults {
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             gap: self.gap,
+            align_self: self.align_self,
             align_items: self.align_items,
             justify_content: self.justify_content,
             z_index: self.z_index,
@@ -206,6 +211,11 @@ impl ResolvedStyle {
                 &defaults.flex_shrink,
             ),
             gap: resolve(&data.style.gap, parent.map(|p| &p.gap), &defaults.gap),
+            align_self: resolve_optional(
+                &data.style.align_self,
+                parent.map(|p| p.align_self),
+                defaults.align_self,
+            ),
             align_items: resolve(
                 &data.style.align_items,
                 parent.map(|p| &p.align_items),
@@ -318,6 +328,12 @@ impl ResolvedStyle {
             parent.map(|p| &p.gap),
             &defaults.gap,
         );
+        apply_optional_override(
+            &mut self.align_self,
+            &style.align_self,
+            parent.map(|p| p.align_self),
+            defaults.align_self,
+        );
         apply_override(
             &mut self.align_items,
             &style.align_items,
@@ -376,6 +392,18 @@ fn resolve_opt(
     }
 }
 
+fn resolve_optional<T: Clone>(
+    value: &StyleValue<T>,
+    parent: Option<Option<T>>,
+    default: Option<T>,
+) -> Option<T> {
+    match value {
+        StyleValue::Unset => default,
+        StyleValue::Inherit => parent.unwrap_or(default),
+        StyleValue::Set(v) => Some(v.clone()),
+    }
+}
+
 fn apply_override<T: Clone>(
     target: &mut T,
     value: &StyleValue<T>,
@@ -399,5 +427,18 @@ fn apply_opt_override(
         StyleValue::Unset => {}
         StyleValue::Inherit => *target = parent.or(default),
         StyleValue::Set(v) => *target = Some(*v),
+    }
+}
+
+fn apply_optional_override<T: Clone>(
+    target: &mut Option<T>,
+    value: &StyleValue<T>,
+    parent: Option<Option<T>>,
+    default: Option<T>,
+) {
+    match value {
+        StyleValue::Unset => {}
+        StyleValue::Inherit => *target = parent.unwrap_or(default),
+        StyleValue::Set(v) => *target = Some(v.clone()),
     }
 }

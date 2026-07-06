@@ -395,6 +395,7 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         flex_grow: resolved.flex_grow,
         flex_shrink: resolved.flex_shrink,
         gap: to_taffy_gap(resolved.gap),
+        align_self: resolved.align_self.map(to_align_items),
         align_items: Some(to_align_items(resolved.align_items)),
         justify_content: Some(to_justify_content(resolved.justify_content)),
         ..Default::default()
@@ -489,7 +490,7 @@ fn rounded_taffy_size_to_u16(value: f32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::Style as DomStyle;
+    use crate::style::{AlignSelf, Style as DomStyle};
 
     fn fixed_centered_style(width: u16, height: u16) -> DomStyle {
         let mut style = DomStyle::new();
@@ -813,6 +814,32 @@ mod tests {
 
         let child_layout = doc.get_node(child).unwrap().layout.unwrap();
         assert_eq!(child_layout.width, 4);
+    }
+
+    #[test]
+    fn align_self_overrides_parent_cross_axis_alignment() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let child = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(5));
+        root_style.align_items(AlignItems::FlexStart);
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut child_style = DomStyle::new();
+        child_style.width(Length::Pixels(2));
+        child_style.height(Length::Pixels(1));
+        child_style.align_self(AlignSelf::Center);
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(root, child).unwrap();
+
+        compute_layout(&doc, 10, 5).unwrap();
+
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!((child_layout.x, child_layout.y), (0, 2));
     }
 
     #[test]
