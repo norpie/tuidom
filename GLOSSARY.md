@@ -48,6 +48,8 @@ Terms and concepts used throughout the tuidom codebase.
 
 **AlignSelf** — Cross-axis alignment override for one flex item. When unset, the item follows its parent container's `AlignItems` behavior.
 
+**FlexWrap** — Flex container wrapping behavior. `NoWrap` keeps children on one line; `Wrap` allows children to move onto additional lines when they exceed the available main-axis space. Reverse wrapping is deferred.
+
 **Custom Style Property** — Raw inline style metadata stored on `Style`. Custom properties do not inherit, do not resolve into `ResolvedStyle`, and do not affect layout or rendering.
 
 **Attribute** — Raw string key/value metadata stored on a node. Attribute keys cannot be empty.

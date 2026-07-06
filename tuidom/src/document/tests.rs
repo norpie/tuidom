@@ -13,8 +13,8 @@ use crate::event::{
 use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
 use crate::style::{
-    AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, Length,
-    Style,
+    AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap,
+    FlexWrap, Length, Style,
 };
 
 #[test]
@@ -2120,6 +2120,7 @@ fn set_style_gets_resolved() {
     style.flex_basis(Length::Pixels(3));
     style.flex_grow(1.0);
     style.flex_shrink(0.5);
+    style.flex_wrap(FlexWrap::Wrap);
     style.gap(FlexGap::new(1, 2));
     style.align_self(AlignSelf::Center);
     doc.set_style(node, &style).unwrap();
@@ -2132,6 +2133,7 @@ fn set_style_gets_resolved() {
     assert_eq!(resolved.flex_basis, Length::Pixels(3));
     assert_eq!(resolved.flex_grow, 1.0);
     assert_eq!(resolved.flex_shrink, 0.5);
+    assert_eq!(resolved.flex_wrap, FlexWrap::Wrap);
     assert_eq!(resolved.gap, FlexGap::new(1, 2));
     assert_eq!(resolved.align_self, Some(AlignSelf::Center));
     assert_eq!(resolved.opacity, 1.0); // Inherit → default
@@ -2244,6 +2246,7 @@ fn unset_properties_use_defaults_not_parent_values() {
     assert_eq!(child_resolved.flex_basis, Length::Auto);
     assert_eq!(child_resolved.flex_grow, 0.0);
     assert_eq!(child_resolved.flex_shrink, 1.0);
+    assert_eq!(child_resolved.flex_wrap, FlexWrap::NoWrap);
     assert_eq!(child_resolved.gap, FlexGap::ZERO);
     assert_eq!(child_resolved.align_self, None);
 }
@@ -2261,6 +2264,7 @@ fn explicitly_inherits_from_parent() {
     parent_style.flex_basis(Length::Pixels(3));
     parent_style.flex_grow(1.0);
     parent_style.flex_shrink(0.5);
+    parent_style.flex_wrap(FlexWrap::Wrap);
     parent_style.gap(FlexGap::new(1, 2));
     parent_style.align_self(AlignSelf::Center);
     doc.set_style(parent, &parent_style).unwrap();
@@ -2274,6 +2278,7 @@ fn explicitly_inherits_from_parent() {
     child_style.inherit_flex_basis();
     child_style.inherit_flex_grow();
     child_style.inherit_flex_shrink();
+    child_style.inherit_flex_wrap();
     child_style.inherit_gap();
     child_style.inherit_align_self();
     doc.set_style(child, &child_style).unwrap();
@@ -2287,6 +2292,7 @@ fn explicitly_inherits_from_parent() {
     assert_eq!(child_resolved.flex_basis, Length::Pixels(3));
     assert_eq!(child_resolved.flex_grow, 1.0);
     assert_eq!(child_resolved.flex_shrink, 0.5);
+    assert_eq!(child_resolved.flex_wrap, FlexWrap::Wrap);
     assert_eq!(child_resolved.gap, FlexGap::new(1, 2));
     assert_eq!(child_resolved.align_self, Some(AlignSelf::Center));
     assert_eq!(child_resolved.width, Length::Auto);

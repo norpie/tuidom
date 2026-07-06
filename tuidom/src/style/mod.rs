@@ -133,6 +133,16 @@ pub enum FlexDirection {
     Column,
 }
 
+/// Whether flex children remain on one line or wrap onto multiple lines.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum FlexWrap {
+    /// Keep flex children on a single line.
+    #[default]
+    NoWrap,
+    /// Allow flex children to wrap onto additional lines.
+    Wrap,
+}
+
 /// Spacing between flex children and flex lines in terminal cells.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct FlexGap {
@@ -245,6 +255,8 @@ pub struct Style {
     pub(crate) flex_grow: StyleValue<f32>,
     /// Relative shrink factor for flex items.
     pub(crate) flex_shrink: StyleValue<f32>,
+    /// Whether flex children remain on one line or wrap onto multiple lines.
+    pub(crate) flex_wrap: StyleValue<FlexWrap>,
     /// Spacing between flex children and flex lines.
     pub(crate) gap: StyleValue<FlexGap>,
     /// Cross-axis alignment override for this flex item.
@@ -287,6 +299,7 @@ impl Style {
             flex_basis: StyleValue::Unset,
             flex_grow: StyleValue::Unset,
             flex_shrink: StyleValue::Unset,
+            flex_wrap: StyleValue::Unset,
             gap: StyleValue::Unset,
             align_self: StyleValue::Unset,
             align_items: StyleValue::Unset,
@@ -502,6 +515,23 @@ impl Style {
         self.flex_shrink = StyleValue::Unset;
     }
 
+    // -- Flex Wrap ------------------------------------------------------
+
+    /// Set whether flex children remain on one line or wrap onto multiple lines.
+    pub fn flex_wrap(&mut self, value: FlexWrap) {
+        self.flex_wrap = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit flex wrap from the parent node.
+    pub fn inherit_flex_wrap(&mut self) {
+        self.flex_wrap = StyleValue::Inherit;
+    }
+
+    /// Reset flex wrap to the document/default style.
+    pub fn unset_flex_wrap(&mut self) {
+        self.flex_wrap = StyleValue::Unset;
+    }
+
     // -- Gap ------------------------------------------------------------
 
     /// Set spacing between flex children and flex lines.
@@ -660,6 +690,7 @@ mod tests {
         style.flex_basis(Length::Pixels(3));
         style.flex_grow(1.0);
         style.flex_shrink(0.5);
+        style.flex_wrap(FlexWrap::Wrap);
         style.gap(FlexGap::new(1, 2));
         style.align_self(AlignSelf::Center);
 
@@ -677,6 +708,7 @@ mod tests {
         assert_eq!(style.flex_basis, StyleValue::Set(Length::Pixels(3)));
         assert_eq!(style.flex_grow, StyleValue::Set(1.0));
         assert_eq!(style.flex_shrink, StyleValue::Set(0.5));
+        assert_eq!(style.flex_wrap, StyleValue::Set(FlexWrap::Wrap));
         assert_eq!(style.gap, StyleValue::Set(FlexGap::new(1, 2)));
         assert_eq!(style.align_self, StyleValue::Set(AlignSelf::Center));
         assert_eq!(style.z_index, StyleValue::Set(10));
@@ -697,6 +729,7 @@ mod tests {
         assert_eq!(style.flex_basis, StyleValue::Unset);
         assert_eq!(style.flex_grow, StyleValue::Unset);
         assert_eq!(style.flex_shrink, StyleValue::Unset);
+        assert_eq!(style.flex_wrap, StyleValue::Unset);
         assert_eq!(style.gap, StyleValue::Unset);
         assert_eq!(style.align_self, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
@@ -731,6 +764,7 @@ mod tests {
         style.inherit_flex_basis();
         style.inherit_flex_grow();
         style.inherit_flex_shrink();
+        style.inherit_flex_wrap();
         style.inherit_gap();
         style.inherit_align_self();
         style.inherit_z_index();
@@ -746,6 +780,7 @@ mod tests {
         assert_eq!(style.flex_basis, StyleValue::Inherit);
         assert_eq!(style.flex_grow, StyleValue::Inherit);
         assert_eq!(style.flex_shrink, StyleValue::Inherit);
+        assert_eq!(style.flex_wrap, StyleValue::Inherit);
         assert_eq!(style.gap, StyleValue::Inherit);
         assert_eq!(style.align_self, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);

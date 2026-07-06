@@ -6,7 +6,7 @@
 use crate::node::NodeData;
 use crate::style::{
     AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap,
-    JustifyContent, Length, Style, StyleValue,
+    FlexWrap, JustifyContent, Length, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -36,6 +36,8 @@ pub struct ResolvedStyle {
     pub flex_grow: f32,
     /// Resolved relative shrink factor for flex items.
     pub flex_shrink: f32,
+    /// Resolved flex wrapping behavior.
+    pub flex_wrap: FlexWrap,
     /// Resolved spacing between flex children and flex lines.
     pub gap: FlexGap,
     /// Resolved cross-axis alignment override for this flex item.
@@ -73,6 +75,7 @@ pub(crate) struct StyleDefaults {
     flex_basis: Length,
     flex_grow: f32,
     flex_shrink: f32,
+    flex_wrap: FlexWrap,
     gap: FlexGap,
     align_self: Option<AlignSelf>,
     align_items: AlignItems,
@@ -97,6 +100,7 @@ impl Default for StyleDefaults {
             flex_basis: Length::Auto,
             flex_grow: 0.0,
             flex_shrink: 1.0,
+            flex_wrap: FlexWrap::NoWrap,
             gap: FlexGap::ZERO,
             align_self: None,
             align_items: AlignItems::Stretch,
@@ -132,6 +136,7 @@ impl StyleDefaults {
             flex_basis: self.flex_basis,
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
+            flex_wrap: self.flex_wrap,
             gap: self.gap,
             align_self: self.align_self,
             align_items: self.align_items,
@@ -209,6 +214,11 @@ impl ResolvedStyle {
                 &data.style.flex_shrink,
                 parent.map(|p| &p.flex_shrink),
                 &defaults.flex_shrink,
+            ),
+            flex_wrap: resolve(
+                &data.style.flex_wrap,
+                parent.map(|p| &p.flex_wrap),
+                &defaults.flex_wrap,
             ),
             gap: resolve(&data.style.gap, parent.map(|p| &p.gap), &defaults.gap),
             align_self: resolve_optional(
@@ -321,6 +331,12 @@ impl ResolvedStyle {
             &style.flex_shrink,
             parent.map(|p| &p.flex_shrink),
             &defaults.flex_shrink,
+        );
+        apply_override(
+            &mut self.flex_wrap,
+            &style.flex_wrap,
+            parent.map(|p| &p.flex_wrap),
+            &defaults.flex_wrap,
         );
         apply_override(
             &mut self.gap,

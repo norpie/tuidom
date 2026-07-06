@@ -16,7 +16,7 @@ use crate::lock;
 use crate::node::{LayoutRect, NodeKind};
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{
-    AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, JustifyContent, Length,
+    AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, JustifyContent, Length,
 };
 
 // ---------------------------------------------------------------------------
@@ -391,6 +391,7 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         margin: to_taffy_margin(resolved.margin),
         padding: to_taffy_padding(resolved.padding),
         flex_direction: to_taffy_flex_direction(resolved.flex_direction),
+        flex_wrap: to_taffy_flex_wrap(resolved.flex_wrap),
         flex_basis: to_dimension(resolved.flex_basis),
         flex_grow: resolved.flex_grow,
         flex_shrink: resolved.flex_shrink,
@@ -439,6 +440,13 @@ fn to_taffy_gap(gap: FlexGap) -> Size<LengthPercentage> {
     Size {
         width: LengthPercentage::length(gap.column as f32),
         height: LengthPercentage::length(gap.row as f32),
+    }
+}
+
+fn to_taffy_flex_wrap(wrap: FlexWrap) -> taffy::style::FlexWrap {
+    match wrap {
+        FlexWrap::NoWrap => taffy::style::FlexWrap::NoWrap,
+        FlexWrap::Wrap => taffy::style::FlexWrap::Wrap,
     }
 }
 
@@ -814,6 +822,40 @@ mod tests {
 
         let child_layout = doc.get_node(child).unwrap().layout.unwrap();
         assert_eq!(child_layout.width, 4);
+    }
+
+    #[test]
+    fn flex_wrap_moves_overflowing_children_to_next_line() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+        let third = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(5));
+        root_style.height(Length::Pixels(2));
+        root_style.flex_wrap(FlexWrap::Wrap);
+        root_style.align_items(AlignItems::FlexStart);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second, third] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 5, 2).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        assert_eq!((first_layout.x, first_layout.y), (0, 0));
+        assert_eq!((second_layout.x, second_layout.y), (2, 0));
+        assert_eq!((third_layout.x, third_layout.y), (0, 1));
     }
 
     #[test]
