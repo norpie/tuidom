@@ -16,7 +16,8 @@ use crate::lock;
 use crate::node::{LayoutRect, NodeKind};
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{
-    AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, JustifyContent, Length,
+    AlignContent, AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap,
+    JustifyContent, Length,
 };
 
 // ---------------------------------------------------------------------------
@@ -398,6 +399,7 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         gap: to_taffy_gap(resolved.gap),
         align_self: resolved.align_self.map(to_align_items),
         align_items: Some(to_align_items(resolved.align_items)),
+        align_content: Some(to_align_content(resolved.align_content)),
         justify_content: Some(to_justify_content(resolved.justify_content)),
         ..Default::default()
     }
@@ -466,6 +468,17 @@ fn to_justify_content(j: JustifyContent) -> taffy::style::JustifyContent {
         JustifyContent::Center => taffy::style::JustifyContent::CENTER,
         JustifyContent::SpaceBetween => taffy::style::JustifyContent::SPACE_BETWEEN,
         JustifyContent::SpaceAround => taffy::style::JustifyContent::SPACE_AROUND,
+    }
+}
+
+fn to_align_content(a: AlignContent) -> taffy::style::AlignContent {
+    match a {
+        AlignContent::FlexStart => taffy::style::AlignContent::FLEX_START,
+        AlignContent::FlexEnd => taffy::style::AlignContent::FLEX_END,
+        AlignContent::Center => taffy::style::AlignContent::CENTER,
+        AlignContent::Stretch => taffy::style::AlignContent::STRETCH,
+        AlignContent::SpaceBetween => taffy::style::AlignContent::SPACE_BETWEEN,
+        AlignContent::SpaceAround => taffy::style::AlignContent::SPACE_AROUND,
     }
 }
 
@@ -856,6 +869,41 @@ mod tests {
         assert_eq!((first_layout.x, first_layout.y), (0, 0));
         assert_eq!((second_layout.x, second_layout.y), (2, 0));
         assert_eq!((third_layout.x, third_layout.y), (0, 1));
+    }
+
+    #[test]
+    fn align_content_places_wrapped_lines_in_cross_axis() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+        let third = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(5));
+        root_style.height(Length::Pixels(6));
+        root_style.flex_wrap(FlexWrap::Wrap);
+        root_style.align_content(AlignContent::Center);
+        root_style.align_items(AlignItems::FlexStart);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second, third] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 5, 6).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        assert_eq!((first_layout.x, first_layout.y), (0, 2));
+        assert_eq!((second_layout.x, second_layout.y), (2, 2));
+        assert_eq!((third_layout.x, third_layout.y), (0, 3));
     }
 
     #[test]

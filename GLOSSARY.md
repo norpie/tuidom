@@ -50,6 +50,8 @@ Terms and concepts used throughout the tuidom codebase.
 
 **FlexWrap** — Flex container wrapping behavior. `NoWrap` keeps children on one line; `Wrap` allows children to move onto additional lines when they exceed the available main-axis space. Reverse wrapping is deferred.
 
+**AlignContent** — Cross-axis alignment for wrapped flex lines. Controls how multiple flex lines are packed or distributed inside a flex container.
+
 **Custom Style Property** — Raw inline style metadata stored on `Style`. Custom properties do not inherit, do not resolve into `ResolvedStyle`, and do not affect layout or rendering.
 
 **Attribute** — Raw string key/value metadata stored on a node. Attribute keys cannot be empty.

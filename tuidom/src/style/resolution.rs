@@ -5,8 +5,8 @@
 
 use crate::node::NodeData;
 use crate::style::{
-    AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap,
-    FlexWrap, JustifyContent, Length, Style, StyleValue,
+    AlignContent, AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection,
+    FlexGap, FlexWrap, JustifyContent, Length, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -44,6 +44,8 @@ pub struct ResolvedStyle {
     pub align_self: Option<AlignSelf>,
     /// Resolved cross-axis alignment.
     pub align_items: AlignItems,
+    /// Resolved cross-axis alignment for wrapped flex lines.
+    pub align_content: AlignContent,
     /// Resolved main-axis alignment.
     pub justify_content: JustifyContent,
     /// Resolved paint order within the current stacking context.
@@ -79,6 +81,7 @@ pub(crate) struct StyleDefaults {
     gap: FlexGap,
     align_self: Option<AlignSelf>,
     align_items: AlignItems,
+    align_content: AlignContent,
     justify_content: JustifyContent,
     z_index: i32,
     stacking_context: bool,
@@ -104,6 +107,7 @@ impl Default for StyleDefaults {
             gap: FlexGap::ZERO,
             align_self: None,
             align_items: AlignItems::Stretch,
+            align_content: AlignContent::Stretch,
             justify_content: JustifyContent::FlexStart,
             z_index: 0,
             stacking_context: false,
@@ -140,6 +144,7 @@ impl StyleDefaults {
             gap: self.gap,
             align_self: self.align_self,
             align_items: self.align_items,
+            align_content: self.align_content,
             justify_content: self.justify_content,
             z_index: self.z_index,
             stacking_context: self.stacking_context,
@@ -230,6 +235,11 @@ impl ResolvedStyle {
                 &data.style.align_items,
                 parent.map(|p| &p.align_items),
                 &defaults.align_items,
+            ),
+            align_content: resolve(
+                &data.style.align_content,
+                parent.map(|p| &p.align_content),
+                &defaults.align_content,
             ),
             justify_content: resolve(
                 &data.style.justify_content,
@@ -355,6 +365,12 @@ impl ResolvedStyle {
             &style.align_items,
             parent.map(|p| &p.align_items),
             &defaults.align_items,
+        );
+        apply_override(
+            &mut self.align_content,
+            &style.align_content,
+            parent.map(|p| &p.align_content),
+            &defaults.align_content,
         );
         apply_override(
             &mut self.justify_content,

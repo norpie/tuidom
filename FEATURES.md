@@ -98,7 +98,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 ## Layout
 
 - [x] Use `taffy` for flexbox layout
-- [x] Padding, margin, row/column flex direction, flex grow/shrink/basis, flex gap, align-self, flex wrap
+- [x] Padding, margin, row/column flex direction, flex grow/shrink/basis, flex gap, align-self, flex wrap, align-content
 - [x] 1:1 mapping from DOM nodes to taffy layout nodes
 - [x] Custom measure functions for text (terminal cell widths)
 - [x] Careful integer rounding of layout results to avoid gaps/overlaps
