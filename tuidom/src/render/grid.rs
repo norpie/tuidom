@@ -223,6 +223,14 @@ impl Grid {
             return 0;
         }
 
+        if alpha >= 1.0 && matches!(cell.content, CellContent::Empty) {
+            if let Some(bg) = cell.bg {
+                if bg.a == 255 {
+                    return self.fill_opaque_empty_bg_rect(x_start, y_start, x_end, y_end, bg);
+                }
+            }
+        }
+
         let replaces_content = !matches!(cell.content, CellContent::Empty)
             || cell.bg.is_some_and(|bg| effective_alpha(bg, alpha) >= 1.0);
         for row in y_start..y_end {
@@ -232,6 +240,30 @@ impl Grid {
                 }
                 let dst = &self.cells[row][col];
                 self.cells[row][col] = blend_cell(dst, &cell, alpha, replaces_content);
+            }
+        }
+
+        (x_end - x_start) * (y_end - y_start)
+    }
+
+    fn fill_opaque_empty_bg_rect(
+        &mut self,
+        x_start: usize,
+        y_start: usize,
+        x_end: usize,
+        y_end: usize,
+        bg: Rgb,
+    ) -> usize {
+        for row in y_start..y_end {
+            for col in x_start..x_end {
+                if !matches!(self.cells[row][col].content, CellContent::Empty) {
+                    self.clear_text_span_at(row, col);
+                }
+
+                let cell = &mut self.cells[row][col];
+                cell.content = CellContent::Empty;
+                cell.fg = None;
+                cell.bg = Some(bg);
             }
         }
 
