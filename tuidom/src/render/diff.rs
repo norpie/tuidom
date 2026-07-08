@@ -27,26 +27,28 @@ const COLOR_THRESHOLD: i32 = 0;
 pub(crate) fn diff(old: &Grid, new: &Grid) -> Vec<CellChange> {
     let width = new.width as usize;
     let height = new.height as usize;
-    let mut dirty = vec![vec![false; width]; height];
+    let mut dirty_row = vec![false; width];
+    let mut changes = Vec::new();
 
     for (y, new_row) in new.cells.iter().enumerate().take(height) {
+        if old.cells.get(y).is_some_and(|old_row| old_row == new_row) {
+            continue;
+        }
+
+        dirty_row.fill(false);
         for (x, new_cell) in new_row.iter().enumerate().take(width) {
-            let changed = if y >= old.height as usize || x >= old.width as usize {
-                true
-            } else {
-                let old_cell = &old.cells[y][x];
-                cells_differ(old_cell, new_cell)
-            };
+            let changed = old
+                .cells
+                .get(y)
+                .and_then(|old_row| old_row.get(x))
+                .is_none_or(|old_cell| cells_differ(old_cell, new_cell));
 
             if changed {
-                mark_span(&mut dirty, old, x, y);
-                mark_span(&mut dirty, new, x, y);
+                mark_span_in_row(&mut dirty_row, old, x, y);
+                mark_span_in_row(&mut dirty_row, new, x, y);
             }
         }
-    }
 
-    let mut changes = Vec::new();
-    for (y, dirty_row) in dirty.iter().enumerate().take(height) {
         for (x, is_dirty) in dirty_row.iter().enumerate().take(width) {
             if *is_dirty {
                 changes.push(CellChange {
@@ -67,30 +69,30 @@ fn cells_differ(old: &Cell, new: &Cell) -> bool {
         || color_diff(old.bg, new.bg) > COLOR_THRESHOLD
 }
 
-fn mark_span(dirty: &mut [Vec<bool>], grid: &Grid, x: usize, y: usize) {
+fn mark_span_in_row(dirty: &mut [bool], grid: &Grid, x: usize, y: usize) {
     if y >= grid.height as usize || x >= grid.width as usize {
-        mark(dirty, x, y);
+        mark(dirty, x);
         return;
     }
 
     match &grid.cells[y][x].content {
         CellContent::Glyph { width: 2, .. } => {
-            mark(dirty, x, y);
-            mark(dirty, x + 1, y);
+            mark(dirty, x);
+            mark(dirty, x + 1);
         }
         CellContent::WideContinuation => {
             if x > 0 {
-                mark(dirty, x - 1, y);
+                mark(dirty, x - 1);
             }
-            mark(dirty, x, y);
+            mark(dirty, x);
         }
-        _ => mark(dirty, x, y),
+        _ => mark(dirty, x),
     }
 }
 
-fn mark(dirty: &mut [Vec<bool>], x: usize, y: usize) {
-    if y < dirty.len() && x < dirty[y].len() {
-        dirty[y][x] = true;
+fn mark(dirty: &mut [bool], x: usize) {
+    if x < dirty.len() {
+        dirty[x] = true;
     }
 }
 
