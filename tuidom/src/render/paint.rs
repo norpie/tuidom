@@ -10,8 +10,29 @@ use crate::node::{NodeKindView, input_display_content, input_scrolled_display_co
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::RenderCursor;
 use crate::render::grid::{Cell, Grid, GridRect};
-use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
+use crate::style::{Color, CursorShape};
+
+/// Detailed DOM paint instrumentation.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PaintProfile {
+    /// Whether detailed paint instrumentation was enabled for this frame.
+    pub enabled: bool,
+    /// Time spent converting resolved colors to terminal RGB.
+    pub rgb_resolve_time: Duration,
+    /// Number of resolved colors converted or read from the RGB cache.
+    pub rgb_resolves: usize,
+    /// Time spent filling node backgrounds into the grid.
+    pub background_fill_time: Duration,
+    /// Number of grid cells touched by background fills.
+    pub filled_cells: usize,
+    /// Time spent writing text glyphs into the grid.
+    pub text_write_time: Duration,
+    /// Number of glyph heads written into the grid.
+    pub glyphs_written: usize,
+    /// Time spent formatting input display content before text paint.
+    pub input_format_time: Duration,
+}
 
 /// DOM painting stage timings.
 #[derive(Debug, Clone, Copy, Default)]
@@ -20,6 +41,8 @@ pub(crate) struct DomPaintStats {
     pub collect_time: Duration,
     /// Time spent rasterizing the collected DOM snapshot into the grid.
     pub paint_time: Duration,
+    /// Detailed instrumentation for the paint span.
+    pub profile: PaintProfile,
 }
 
 /// DOM painting output.
@@ -32,16 +55,25 @@ pub(crate) struct DomPaintOutput {
 }
 
 /// Paint the visible portion of the DOM tree into the grid.
-pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -> DomPaintOutput {
+pub(crate) fn paint(
+    doc: &Document,
+    grid: &mut Grid,
+    rgb_cache: &mut RgbCache,
+    instrument: bool,
+) -> DomPaintOutput {
     let collect_start = Instant::now();
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
 
     let focused = doc.focused();
     let paint_start = Instant::now();
+    let mut profile = PaintProfile {
+        enabled: instrument,
+        ..PaintProfile::default()
+    };
     let mut cursor = None;
     for entry in &entries {
-        if let Some(entry_cursor) = paint_entry(grid, entry, focused, rgb_cache) {
+        if let Some(entry_cursor) = paint_entry(grid, entry, focused, rgb_cache, &mut profile) {
             cursor = Some(entry_cursor);
         }
     }
@@ -51,6 +83,7 @@ pub(crate) fn paint(doc: &Document, grid: &mut Grid, rgb_cache: &mut RgbCache) -
         stats: DomPaintStats {
             collect_time,
             paint_time,
+            profile,
         },
         cursor,
     }
@@ -61,29 +94,26 @@ fn paint_entry(
     node: &PaintEntry,
     focused: Option<crate::id::NodeId>,
     rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
 ) -> Option<RenderCursor> {
     let alpha = node.resolved.opacity;
-    let bg_rgb = node.resolved.background.map(|c| rgb_cache.resolve(c));
-    let fg_rgb = rgb_cache.resolve(node.resolved.color);
+    let bg_rgb = node
+        .resolved
+        .background
+        .map(|c| resolve_rgb(rgb_cache, c, profile));
+    let fg_rgb = resolve_rgb(rgb_cache, node.resolved.color, profile);
 
     match &node.kind {
         NodeKindView::Box => {
             if let Some(bg) = bg_rgb {
                 let bg_cell = Cell::empty_with_bg(bg);
-                grid.fill_rect(
-                    node.layout.x,
-                    node.layout.y,
-                    node.layout.width,
-                    node.layout.height,
-                    bg_cell,
-                    alpha,
-                );
+                fill_background(grid, node, bg_cell, alpha, profile);
             }
             None
         }
 
         NodeKindView::Text { content } => {
-            paint_text(grid, node, bg_rgb, fg_rgb, alpha, content);
+            paint_text(grid, node, bg_rgb, fg_rgb, alpha, content, profile);
             None
         }
 
@@ -96,9 +126,13 @@ fn paint_entry(
             scroll_y,
             ..
         } => {
+            let input_format_start = profile.enabled.then(Instant::now);
             let content = input_display_content(value, *multiline, *mask);
             let visible_content = input_scrolled_display_content(&content, *scroll_x, *scroll_y);
-            paint_text(grid, node, bg_rgb, fg_rgb, alpha, &visible_content);
+            if let Some(start) = input_format_start {
+                profile.input_format_time += start.elapsed();
+            }
+            paint_text(grid, node, bg_rgb, fg_rgb, alpha, &visible_content, profile);
             if focused == Some(node.id) {
                 input_cursor_metadata(
                     grid,
@@ -127,19 +161,15 @@ fn paint_text(
     fg_rgb: Rgb,
     alpha: f64,
     content: &str,
+    profile: &mut PaintProfile,
 ) {
     if let Some(bg) = bg_rgb {
         let bg_cell = Cell::empty_with_bg(bg);
-        grid.fill_rect(
-            node.layout.x,
-            node.layout.y,
-            node.layout.width,
-            node.layout.height,
-            bg_cell,
-            alpha,
-        );
+        fill_background(grid, node, bg_cell, alpha, profile);
     }
-    grid.write_text_clipped(
+
+    let text_start = profile.enabled.then(Instant::now);
+    let glyphs = grid.write_text_clipped(
         GridRect {
             x: node.layout.x,
             y: node.layout.y,
@@ -150,6 +180,42 @@ fn paint_text(
         Some(fg_rgb),
         alpha,
     );
+    if let Some(start) = text_start {
+        profile.text_write_time += start.elapsed();
+        profile.glyphs_written += glyphs;
+    }
+}
+
+fn fill_background(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    bg_cell: Cell,
+    alpha: f64,
+    profile: &mut PaintProfile,
+) {
+    let fill_start = profile.enabled.then(Instant::now);
+    let cells = grid.fill_rect(
+        node.layout.x,
+        node.layout.y,
+        node.layout.width,
+        node.layout.height,
+        bg_cell,
+        alpha,
+    );
+    if let Some(start) = fill_start {
+        profile.background_fill_time += start.elapsed();
+        profile.filled_cells += cells;
+    }
+}
+
+fn resolve_rgb(rgb_cache: &mut RgbCache, color: Color, profile: &mut PaintProfile) -> Rgb {
+    let resolve_start = profile.enabled.then(Instant::now);
+    let rgb = rgb_cache.resolve(color);
+    if let Some(start) = resolve_start {
+        profile.rgb_resolve_time += start.elapsed();
+        profile.rgb_resolves += 1;
+    }
+    rgb
 }
 
 struct InputCursorPaint<'a> {
@@ -307,7 +373,7 @@ mod tests {
 
     fn paint_doc(doc: &Document, grid: &mut Grid) {
         let mut rgb_cache = RgbCache::new();
-        paint(doc, grid, &mut rgb_cache);
+        paint(doc, grid, &mut rgb_cache, false);
     }
 
     fn painted_bg(doc: &Document) -> Option<Rgb> {

@@ -28,6 +28,8 @@ pub(crate) struct RenderStats {
     pub dom_collect_time: Duration,
     /// Time spent painting DOM nodes into the grid.
     pub dom_paint_time: Duration,
+    /// Detailed instrumentation for DOM painting.
+    pub paint_profile: paint::PaintProfile,
     /// Time spent painting the debug overlay into the grid.
     pub overlay_paint_time: Duration,
     /// Time spent diffing (old vs new).
@@ -57,6 +59,8 @@ pub(crate) struct GridRenderStats {
     pub dom_collect_time: Duration,
     /// Time spent painting DOM nodes into the grid.
     pub dom_paint_time: Duration,
+    /// Detailed instrumentation for DOM painting.
+    pub paint_profile: paint::PaintProfile,
     /// Time spent painting the debug overlay into the grid.
     pub overlay_paint_time: Duration,
 }
@@ -98,7 +102,8 @@ pub(crate) fn render_to_grid(
     let mut grid = grid::Grid::new(width, height);
     let grid_time = grid_start.elapsed();
 
-    let dom_output = paint::paint(doc, &mut grid, rgb_cache);
+    let instrument_paint = lock::mutex(&doc.inner.debug_overlay).enabled;
+    let dom_output = paint::paint(doc, &mut grid, rgb_cache, instrument_paint);
 
     let mut overlay_paint_time = Duration::ZERO;
     {
@@ -117,6 +122,7 @@ pub(crate) fn render_to_grid(
             grid_time,
             dom_collect_time: dom_output.stats.collect_time,
             dom_paint_time: dom_output.stats.paint_time,
+            paint_profile: dom_output.stats.profile,
             overlay_paint_time,
         },
     }
@@ -169,6 +175,7 @@ impl Renderer {
             grid_time: grid_stats.grid_time,
             dom_collect_time: grid_stats.dom_collect_time,
             dom_paint_time: grid_stats.dom_paint_time,
+            paint_profile: grid_stats.paint_profile,
             overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time,
             flush_time,
@@ -206,6 +213,7 @@ impl Renderer {
             grid_time: grid_stats.grid_time,
             dom_collect_time: grid_stats.dom_collect_time,
             dom_paint_time: grid_stats.dom_paint_time,
+            paint_profile: grid_stats.paint_profile,
             overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time: Duration::ZERO,
             flush_time,

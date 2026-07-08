@@ -171,7 +171,7 @@ impl DebugOverlay {
             "changed"
         };
 
-        vec![
+        let mut lines = vec![
             format!("FPS:        {:.0}", self.fps),
             format!(
                 "Frame:      {:.3}ms (avg: {:.3}ms)",
@@ -208,6 +208,34 @@ impl DebugOverlay {
                 ms(self.stats.dom_paint_time),
                 ms(self.avg_dom_paint_time)
             ),
+        ];
+
+        let paint_profile = self.stats.paint_profile;
+        if paint_profile.enabled {
+            lines.extend([
+                format!(
+                    "        Fill:  {:.3}ms / {} cells",
+                    ms(paint_profile.background_fill_time),
+                    paint_profile.filled_cells
+                ),
+                format!(
+                    "        Text:  {:.3}ms / {} glyphs",
+                    ms(paint_profile.text_write_time),
+                    paint_profile.glyphs_written
+                ),
+                format!(
+                    "        RGB:   {:.3}ms / {} resolves",
+                    ms(paint_profile.rgb_resolve_time),
+                    paint_profile.rgb_resolves
+                ),
+                format!(
+                    "        Input: {:.3}ms",
+                    ms(paint_profile.input_format_time)
+                ),
+            ]);
+        }
+
+        lines.extend([
             format!(
                 "    Debug:  {:.3}ms (avg: {:.3}ms)",
                 ms(self.stats.overlay_paint_time),
@@ -227,7 +255,8 @@ impl DebugOverlay {
                 "    Cells:  {} {} (avg: {:.0})",
                 self.stats.cells_changed, cells_label, self.avg_cells_changed
             ),
-        ]
+        ]);
+        lines
     }
 }
 

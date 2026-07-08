@@ -213,14 +213,14 @@ impl Grid {
     }
 
     /// Fill a rectangular region with a cell value, blending by `alpha`.
-    pub fn fill_rect(&mut self, x: i32, y: i32, w: u16, h: u16, cell: Cell, alpha: f64) {
+    pub fn fill_rect(&mut self, x: i32, y: i32, w: u16, h: u16, cell: Cell, alpha: f64) -> usize {
         let Some((x_start, y_start, x_end, y_end)) = self.clip_rect(x, y, w, h) else {
-            return;
+            return 0;
         };
 
         let alpha = clamp_alpha(alpha);
         if alpha <= 0.0 {
-            return;
+            return 0;
         }
 
         let replaces_content = !matches!(cell.content, CellContent::Empty)
@@ -234,37 +234,46 @@ impl Grid {
                 self.cells[row][col] = blend_cell(dst, &cell, alpha, replaces_content);
             }
         }
+
+        (x_end - x_start) * (y_end - y_start)
     }
 
     /// Write one line of text at a position, clipped to the screen width.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
-    pub fn write_text(&mut self, x: i32, y: i32, text: &str, fg: Option<Rgb>, alpha: f64) {
+    pub fn write_text(&mut self, x: i32, y: i32, text: &str, fg: Option<Rgb>, alpha: f64) -> usize {
         if y < 0 || y >= self.height as i32 {
-            return;
+            return 0;
         }
 
         let line = text.lines().next().unwrap_or("");
-        self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha);
+        self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha)
     }
 
     /// Write multiline text clipped to a rectangular region.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
-    pub fn write_text_clipped(&mut self, rect: GridRect, text: &str, fg: Option<Rgb>, alpha: f64) {
+    pub fn write_text_clipped(
+        &mut self,
+        rect: GridRect,
+        text: &str,
+        fg: Option<Rgb>,
+        alpha: f64,
+    ) -> usize {
         if rect.width == 0 || rect.height == 0 {
-            return;
+            return 0;
         }
 
         let rect_top = rect.y as i64;
         let rect_bottom = rect_top + i64::from(rect.height);
         if rect_bottom <= 0 || rect_top >= i64::from(self.height) {
-            return;
+            return 0;
         }
 
         let clip_right = (rect.x as i64 + i64::from(rect.width)).min(i64::from(self.width));
         if clip_right <= 0 || rect.x as i64 >= i64::from(self.width) {
-            return;
+            return 0;
         }
 
+        let mut glyphs = 0;
         for (line_index, line) in text.lines().take(rect.height as usize).enumerate() {
             let y = rect.y + line_index as i32;
             if y < 0 {
@@ -273,8 +282,9 @@ impl Grid {
             if y >= self.height as i32 {
                 break;
             }
-            self.write_text_line_clipped(rect.x, y as usize, clip_right, line, fg, alpha);
+            glyphs += self.write_text_line_clipped(rect.x, y as usize, clip_right, line, fg, alpha);
         }
+        glyphs
     }
 
     fn write_text_line_clipped(
@@ -285,14 +295,15 @@ impl Grid {
         text: &str,
         fg: Option<Rgb>,
         alpha: f64,
-    ) {
+    ) -> usize {
         let alpha = clamp_alpha(alpha);
         if alpha <= 0.0 || clip_right <= 0 {
-            return;
+            return 0;
         }
 
         let clip_left = 0_i64;
         let mut col = i64::from(x);
+        let mut glyphs = 0;
 
         for grapheme in text.graphemes(true) {
             let width = UnicodeWidthStr::width(grapheme).min(2) as i64;
@@ -314,8 +325,11 @@ impl Grid {
             }
 
             self.write_glyph(row, col as usize, grapheme, width as u8, fg, alpha);
+            glyphs += 1;
             col = next_col;
         }
+
+        glyphs
     }
 
     fn clip_rect(
