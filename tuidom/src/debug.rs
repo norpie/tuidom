@@ -272,8 +272,11 @@ impl DebugOverlay {
         if diff_profile.enabled {
             lines.extend([
                 format!(
-                    "      Rows: {} same / {} changed / {} total",
-                    diff_profile.unchanged_rows, diff_profile.changed_rows, diff_profile.rows
+                    "      Rows: {} hinted / {} same / {} changed / {} total",
+                    diff_profile.hint_skipped_rows,
+                    diff_profile.unchanged_rows,
+                    diff_profile.changed_rows,
+                    diff_profile.rows
                 ),
                 format!(
                     "      Check: {:.3}ms row / {:.3}ms cell / {} cells",

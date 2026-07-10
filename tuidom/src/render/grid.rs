@@ -199,6 +199,8 @@ pub(crate) struct Grid {
     pub width: u16,
     /// Height in cells.
     pub height: u16,
+    /// Rows touched by paint operations after the frame base clear.
+    touched_rows: Vec<bool>,
 }
 
 impl Grid {
@@ -209,11 +211,13 @@ impl Grid {
             cells,
             width,
             height,
+            touched_rows: vec![false; height as usize],
         }
     }
 
     /// Reset all cells to empty terminal-default state while preserving allocation.
     pub fn clear(&mut self) {
+        self.touched_rows.fill(false);
         for row in &mut self.cells {
             for cell in row {
                 cell.content = CellContent::Empty;
@@ -225,12 +229,25 @@ impl Grid {
 
     /// Reset all cells to empty content with a shared opaque background.
     pub fn clear_with_bg(&mut self, bg: Rgb) {
+        self.touched_rows.fill(false);
         for row in &mut self.cells {
             for cell in row {
                 cell.content = CellContent::Empty;
                 cell.fg = None;
                 cell.bg = Some(bg);
             }
+        }
+    }
+
+    /// Rows touched by paint operations after the frame base clear.
+    pub fn touched_rows(&self) -> &[bool] {
+        &self.touched_rows
+    }
+
+    /// Mark one row as touched by direct grid mutation.
+    pub fn touch_row(&mut self, row: usize) {
+        if row < self.touched_rows.len() {
+            self.touched_rows[row] = true;
         }
     }
 
@@ -244,6 +261,8 @@ impl Grid {
         if alpha <= 0.0 {
             return 0;
         }
+
+        self.touch_rows(y_start, y_end);
 
         if alpha >= 1.0 && matches!(cell.content, CellContent::Empty) {
             if let Some(bg) = cell.bg {
@@ -266,6 +285,13 @@ impl Grid {
         }
 
         (x_end - x_start) * (y_end - y_start)
+    }
+
+    fn touch_rows(&mut self, y_start: usize, y_end: usize) {
+        let end = y_end.min(self.touched_rows.len());
+        for touched in &mut self.touched_rows[y_start..end] {
+            *touched = true;
+        }
     }
 
     fn fill_opaque_empty_bg_rect(
@@ -379,6 +405,7 @@ impl Grid {
             }
 
             self.write_glyph(row, col as usize, grapheme, width as u8, fg, alpha);
+            self.touch_row(row);
             glyphs += 1;
             col = next_col;
         }

@@ -68,9 +68,21 @@ pub(crate) struct PaintProfile {
     pub input_format_time: Duration,
 }
 
+/// Base cell state used to clear a frame before painting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FrameClearBase {
+    /// Empty terminal-default cells.
+    #[default]
+    Default,
+    /// Empty cells with a shared background color.
+    Background(Rgb),
+}
+
 /// DOM painting stage timings.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct DomPaintStats {
+    /// Base cell state used to clear the frame before painting.
+    pub clear_base: FrameClearBase,
     /// Time spent clearing or initializing the frame grid.
     pub grid_time: Duration,
     /// Time spent collecting the visible DOM tree into a paintable snapshot.
@@ -109,10 +121,10 @@ pub(crate) fn paint(
     };
 
     let grid_start = Instant::now();
-    let skipped_background = if clear_grid {
+    let clear_result = if clear_grid {
         clear_grid_for_paint(grid, &entries, rgb_cache, &mut profile)
     } else {
-        None
+        ClearGridResult::default()
     };
     let grid_time = grid_start.elapsed();
 
@@ -125,7 +137,7 @@ pub(crate) fn paint(
             focused,
             rgb_cache,
             &mut profile,
-            skipped_background,
+            clear_result.skipped_background,
         ) {
             cursor = Some(entry_cursor);
         }
@@ -134,6 +146,7 @@ pub(crate) fn paint(
 
     DomPaintOutput {
         stats: DomPaintStats {
+            clear_base: clear_result.base,
             grid_time,
             collect_time,
             paint_time,
@@ -245,38 +258,47 @@ fn paint_text(
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ClearGridResult {
+    base: FrameClearBase,
+    skipped_background: Option<NodeId>,
+}
+
 fn clear_grid_for_paint(
     grid: &mut Grid,
     entries: &[PaintEntry],
     rgb_cache: &mut RgbCache,
     profile: &mut PaintProfile,
-) -> Option<NodeId> {
+) -> ClearGridResult {
     for entry in entries {
         let Some(background) = entry.resolved.background else {
             if entry_has_no_self_paint(entry) {
                 continue;
             }
             grid.clear();
-            return None;
+            return ClearGridResult::default();
         };
 
         if entry.resolved.opacity < 1.0 || !covers_grid(entry.layout, grid) {
             grid.clear();
-            return None;
+            return ClearGridResult::default();
         }
 
         let bg = resolve_rgb(rgb_cache, background, profile);
         if bg.a < 255 {
             grid.clear();
-            return None;
+            return ClearGridResult::default();
         }
 
         grid.clear_with_bg(bg);
-        return Some(entry.id);
+        return ClearGridResult {
+            base: FrameClearBase::Background(bg),
+            skipped_background: Some(entry.id),
+        };
     }
 
     grid.clear();
-    None
+    ClearGridResult::default()
 }
 
 fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
@@ -421,6 +443,7 @@ fn invert_cursor_cell(grid: &mut Grid, x: i32, y: i32, cursor_color: Rgb) {
         return;
     }
 
+    grid.touch_row(y as usize);
     let cell = &mut grid.cells[y as usize][x as usize];
     let fg = cell.fg;
     let bg = cell.bg;

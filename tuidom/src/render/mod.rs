@@ -12,6 +12,7 @@ use terminal::Terminal;
 
 use crate::document::Document;
 use crate::lock;
+use crate::render::paint::FrameClearBase;
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
 
@@ -98,6 +99,8 @@ pub(crate) struct RenderFrame {
 pub(crate) struct RenderGridOutput {
     /// Optional cursor metadata for the frame.
     pub cursor: Option<RenderCursor>,
+    /// Base cell state used to clear the frame before painting.
+    pub clear_base: FrameClearBase,
     /// Timings for backend-neutral grid rendering.
     pub stats: GridRenderStats,
 }
@@ -152,6 +155,7 @@ fn render_grid(
 
     RenderGridOutput {
         cursor: dom_output.cursor,
+        clear_base: dom_output.stats.clear_base,
         stats: GridRenderStats {
             grid_time: dom_output.stats.grid_time,
             dom_collect_time: dom_output.stats.collect_time,
@@ -167,6 +171,7 @@ pub(crate) struct Renderer {
     terminal: Terminal,
     old_grid: grid::Grid,
     new_grid: grid::Grid,
+    old_clear_base: FrameClearBase,
     rgb_cache: RgbCache,
 }
 
@@ -177,6 +182,7 @@ impl Renderer {
             terminal: Terminal::new()?,
             old_grid: grid::Grid::new(width, height),
             new_grid: grid::Grid::new(width, height),
+            old_clear_base: FrameClearBase::default(),
             rgb_cache: RgbCache::new(),
         })
     }
@@ -187,9 +193,17 @@ impl Renderer {
         let grid_stats = output.stats;
         let cursor = output.cursor;
 
+        let clear_base_changed = self.old_clear_base != output.clear_base;
+        let dirty_rows = (!clear_base_changed)
+            .then(|| (self.old_grid.touched_rows(), self.new_grid.touched_rows()));
         let instrument_diff = lock::mutex(&doc.inner.debug_overlay).enabled;
         let diff_start = std::time::Instant::now();
-        let diff_output = diff::diff_profiled(&self.old_grid, &self.new_grid, instrument_diff);
+        let diff_output = diff::diff_profiled_with_hints(
+            &self.old_grid,
+            &self.new_grid,
+            instrument_diff,
+            dirty_rows,
+        );
         let diff_time = diff_start.elapsed();
         let changes = diff_output.changes;
 
@@ -198,6 +212,7 @@ impl Renderer {
         let flush_time = flush_start.elapsed();
 
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
+        self.old_clear_base = output.clear_base;
 
         Ok(RenderStats {
             cells_changed: changes.len(),
@@ -217,6 +232,7 @@ impl Renderer {
     pub fn resize(&mut self, width: u16, height: u16) {
         self.old_grid = grid::Grid::new(width, height);
         self.new_grid = grid::Grid::new(width, height);
+        self.old_clear_base = FrameClearBase::default();
     }
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
@@ -231,6 +247,7 @@ impl Renderer {
 
         let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
+        self.old_clear_base = output.clear_base;
 
         Ok(RenderStats {
             cells_changed: cells,

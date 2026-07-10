@@ -14,8 +14,10 @@ use crate::render::grid::Grid;
 pub(crate) struct DiffProfile {
     /// Whether detailed diff instrumentation was enabled for this frame.
     pub enabled: bool,
-    /// Number of rows considered in the new grid.
+    /// Number of rows in the new grid.
     pub rows: usize,
+    /// Number of rows skipped by render-provided dirty row hints.
+    pub hint_skipped_rows: usize,
     /// Number of rows skipped by exact row equality.
     pub unchanged_rows: usize,
     /// Number of rows that required cell-level scanning.
@@ -52,8 +54,13 @@ pub(crate) struct CellChange {
     pub cell: Cell,
 }
 
-/// Compare old and new grids with optional instrumentation.
-pub(crate) fn diff_profiled(old: &Grid, new: &Grid, instrument: bool) -> DiffOutput {
+/// Compare old and new grids with optional dirty row hints and instrumentation.
+pub(crate) fn diff_profiled_with_hints(
+    old: &Grid,
+    new: &Grid,
+    instrument: bool,
+    dirty_rows: Option<(&[bool], &[bool])>,
+) -> DiffOutput {
     let width = new.width as usize;
     let height = new.height as usize;
     let mut dirty_row = vec![false; width];
@@ -66,6 +73,15 @@ pub(crate) fn diff_profiled(old: &Grid, new: &Grid, instrument: bool) -> DiffOut
     for (y, new_row) in new.cells.iter().enumerate().take(height) {
         if profile.enabled {
             profile.rows += 1;
+        }
+
+        if dirty_rows.is_some_and(|(old_rows, new_rows)| {
+            !old_rows.get(y).copied().unwrap_or(true) && !new_rows.get(y).copied().unwrap_or(true)
+        }) {
+            if profile.enabled {
+                profile.hint_skipped_rows += 1;
+            }
+            continue;
         }
 
         let row_equality_start = profile.enabled.then(Instant::now);
@@ -172,7 +188,13 @@ mod tests {
         let mut new = Grid::new(3, 1);
         new.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
 
-        let changes = diff_profiled(&old, &new, false).changes;
+        let changes = diff_profiled_with_hints(
+            &old,
+            &new,
+            false,
+            Some((old.touched_rows(), new.touched_rows())),
+        )
+        .changes;
         let coords: Vec<(u16, u16)> = changes.iter().map(|c| (c.x, c.y)).collect();
 
         assert_eq!(coords, vec![(0, 0), (1, 0)]);
@@ -184,7 +206,13 @@ mod tests {
         old.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
         let new = Grid::new(3, 1);
 
-        let changes = diff_profiled(&old, &new, false).changes;
+        let changes = diff_profiled_with_hints(
+            &old,
+            &new,
+            false,
+            Some((old.touched_rows(), new.touched_rows())),
+        )
+        .changes;
         let coords: Vec<(u16, u16)> = changes.iter().map(|c| (c.x, c.y)).collect();
 
         assert_eq!(coords, vec![(0, 0), (1, 0)]);
