@@ -214,10 +214,30 @@ impl DebugOverlay {
         if paint_profile.enabled {
             lines.extend([
                 format!(
-                    "        Fill:  {:.3}ms / {} cells",
+                    "        Fill:  {:.3}ms / {} cells / {} calls",
                     ms(paint_profile.background_fill_time),
-                    paint_profile.filled_cells
+                    paint_profile.filled_cells,
+                    paint_profile.background_fill_calls
                 ),
+                format!(
+                    "        Area:  {} requested / {} opaque",
+                    paint_profile.requested_fill_cells, paint_profile.opaque_filled_cells
+                ),
+            ]);
+            if let Some(largest) = paint_profile.largest_fill {
+                lines.push(format!(
+                    "        Max:   {}#{} {}x{}@{},{} / {}/{} cells",
+                    largest.node_kind,
+                    largest.node_id.index,
+                    largest.width,
+                    largest.height,
+                    largest.x,
+                    largest.y,
+                    largest.clipped_cells,
+                    largest.requested_cells
+                ));
+            }
+            lines.extend([
                 format!(
                     "        Text:  {:.3}ms / {} glyphs",
                     ms(paint_profile.text_write_time),

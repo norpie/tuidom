@@ -13,6 +13,27 @@ use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
 use crate::style::{Color, CursorShape};
 
+/// Largest background fill observed during a profiled paint pass.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LargestFillProfile {
+    /// Node id that requested the fill.
+    pub node_id: crate::id::NodeId,
+    /// Node kind that requested the fill.
+    pub node_kind: &'static str,
+    /// Requested fill x coordinate before clipping.
+    pub x: i32,
+    /// Requested fill y coordinate before clipping.
+    pub y: i32,
+    /// Requested fill width before clipping.
+    pub width: u16,
+    /// Requested fill height before clipping.
+    pub height: u16,
+    /// Requested area before clipping.
+    pub requested_cells: usize,
+    /// Actual grid cells touched after clipping.
+    pub clipped_cells: usize,
+}
+
 /// Detailed DOM paint instrumentation.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PaintProfile {
@@ -24,8 +45,18 @@ pub(crate) struct PaintProfile {
     pub rgb_resolves: usize,
     /// Time spent filling node backgrounds into the grid.
     pub background_fill_time: Duration,
+    /// Number of background fill calls.
+    pub background_fill_calls: usize,
     /// Number of grid cells touched by background fills.
     pub filled_cells: usize,
+    /// Total requested background fill area before clipping.
+    pub requested_fill_cells: usize,
+    /// Number of fully opaque background fill calls.
+    pub opaque_fill_calls: usize,
+    /// Number of cells touched by fully opaque background fills.
+    pub opaque_filled_cells: usize,
+    /// Largest background fill in this frame.
+    pub largest_fill: Option<LargestFillProfile>,
     /// Time spent writing text glyphs into the grid.
     pub text_write_time: Duration,
     /// Number of glyph heads written into the grid.
@@ -193,6 +224,8 @@ fn fill_background(
     alpha: f64,
     profile: &mut PaintProfile,
 ) {
+    let requested_cells = usize::from(node.layout.width) * usize::from(node.layout.height);
+    let opaque_fill = alpha >= 1.0 && bg_cell.bg.is_some_and(|bg| bg.a == 255);
     let fill_start = profile.enabled.then(Instant::now);
     let cells = grid.fill_rect(
         node.layout.x,
@@ -204,7 +237,47 @@ fn fill_background(
     );
     if let Some(start) = fill_start {
         profile.background_fill_time += start.elapsed();
+        profile.background_fill_calls += 1;
         profile.filled_cells += cells;
+        profile.requested_fill_cells += requested_cells;
+        if opaque_fill {
+            profile.opaque_fill_calls += 1;
+            profile.opaque_filled_cells += cells;
+        }
+        record_largest_fill(profile, node, requested_cells, cells);
+    }
+}
+
+fn record_largest_fill(
+    profile: &mut PaintProfile,
+    node: &PaintEntry,
+    requested_cells: usize,
+    clipped_cells: usize,
+) {
+    if profile
+        .largest_fill
+        .is_some_and(|largest| largest.clipped_cells >= clipped_cells)
+    {
+        return;
+    }
+
+    profile.largest_fill = Some(LargestFillProfile {
+        node_id: node.id,
+        node_kind: node_kind_label(&node.kind),
+        x: node.layout.x,
+        y: node.layout.y,
+        width: node.layout.width,
+        height: node.layout.height,
+        requested_cells,
+        clipped_cells,
+    });
+}
+
+fn node_kind_label(kind: &NodeKindView) -> &'static str {
+    match kind {
+        NodeKindView::Box => "box",
+        NodeKindView::Text { .. } => "text",
+        NodeKindView::Input { .. } => "input",
     }
 }
 
