@@ -6,7 +6,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
-use crate::node::{NodeKindView, input_display_content, input_scrolled_display_content};
+use crate::id::NodeId;
+use crate::node::{
+    LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
+};
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::render::RenderCursor;
 use crate::render::grid::{Cell, Grid, GridRect};
@@ -68,6 +71,8 @@ pub(crate) struct PaintProfile {
 /// DOM painting stage timings.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct DomPaintStats {
+    /// Time spent clearing or initializing the frame grid.
+    pub grid_time: Duration,
     /// Time spent collecting the visible DOM tree into a paintable snapshot.
     pub collect_time: Duration,
     /// Time spent rasterizing the collected DOM snapshot into the grid.
@@ -91,20 +96,37 @@ pub(crate) fn paint(
     grid: &mut Grid,
     rgb_cache: &mut RgbCache,
     instrument: bool,
+    clear_grid: bool,
 ) -> DomPaintOutput {
     let collect_start = Instant::now();
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
 
     let focused = doc.focused();
-    let paint_start = Instant::now();
     let mut profile = PaintProfile {
         enabled: instrument,
         ..PaintProfile::default()
     };
+
+    let grid_start = Instant::now();
+    let skipped_background = if clear_grid {
+        clear_grid_for_paint(grid, &entries, rgb_cache, &mut profile)
+    } else {
+        None
+    };
+    let grid_time = grid_start.elapsed();
+
+    let paint_start = Instant::now();
     let mut cursor = None;
     for entry in &entries {
-        if let Some(entry_cursor) = paint_entry(grid, entry, focused, rgb_cache, &mut profile) {
+        if let Some(entry_cursor) = paint_entry(
+            grid,
+            entry,
+            focused,
+            rgb_cache,
+            &mut profile,
+            skipped_background,
+        ) {
             cursor = Some(entry_cursor);
         }
     }
@@ -112,6 +134,7 @@ pub(crate) fn paint(
 
     DomPaintOutput {
         stats: DomPaintStats {
+            grid_time,
             collect_time,
             paint_time,
             profile,
@@ -126,12 +149,17 @@ fn paint_entry(
     focused: Option<crate::id::NodeId>,
     rgb_cache: &mut RgbCache,
     profile: &mut PaintProfile,
+    skipped_background: Option<NodeId>,
 ) -> Option<RenderCursor> {
     let alpha = node.resolved.opacity;
-    let bg_rgb = node
-        .resolved
-        .background
-        .map(|c| resolve_rgb(rgb_cache, c, profile));
+    let skip_background = skipped_background == Some(node.id);
+    let bg_rgb = if skip_background {
+        None
+    } else {
+        node.resolved
+            .background
+            .map(|c| resolve_rgb(rgb_cache, c, profile))
+    };
     let fg_rgb = resolve_rgb(rgb_cache, node.resolved.color, profile);
 
     match &node.kind {
@@ -215,6 +243,57 @@ fn paint_text(
         profile.text_write_time += start.elapsed();
         profile.glyphs_written += glyphs;
     }
+}
+
+fn clear_grid_for_paint(
+    grid: &mut Grid,
+    entries: &[PaintEntry],
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) -> Option<NodeId> {
+    for entry in entries {
+        let Some(background) = entry.resolved.background else {
+            if entry_has_no_self_paint(entry) {
+                continue;
+            }
+            grid.clear();
+            return None;
+        };
+
+        if entry.resolved.opacity < 1.0 || !covers_grid(entry.layout, grid) {
+            grid.clear();
+            return None;
+        }
+
+        let bg = resolve_rgb(rgb_cache, background, profile);
+        if bg.a < 255 {
+            grid.clear();
+            return None;
+        }
+
+        grid.clear_with_bg(bg);
+        return Some(entry.id);
+    }
+
+    grid.clear();
+    None
+}
+
+fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
+    match &entry.kind {
+        NodeKindView::Box => true,
+        NodeKindView::Text { content } => content.is_empty(),
+        NodeKindView::Input { .. } => false,
+    }
+}
+
+fn covers_grid(layout: LayoutRect, grid: &Grid) -> bool {
+    let left = i64::from(layout.x);
+    let top = i64::from(layout.y);
+    let right = left + i64::from(layout.width);
+    let bottom = top + i64::from(layout.height);
+
+    left <= 0 && top <= 0 && right >= i64::from(grid.width) && bottom >= i64::from(grid.height)
 }
 
 fn fill_background(
@@ -446,7 +525,7 @@ mod tests {
 
     fn paint_doc(doc: &Document, grid: &mut Grid) {
         let mut rgb_cache = RgbCache::new();
-        paint(doc, grid, &mut rgb_cache, false);
+        paint(doc, grid, &mut rgb_cache, false, false);
     }
 
     fn painted_bg(doc: &Document) -> Option<Rgb> {

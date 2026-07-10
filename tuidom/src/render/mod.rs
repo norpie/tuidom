@@ -107,8 +107,11 @@ pub(crate) fn render_to_grid(
     height: u16,
     rgb_cache: &mut RgbCache,
 ) -> RenderFrame {
+    let grid_start = std::time::Instant::now();
     let mut grid = grid::Grid::new(width, height);
-    let output = render_into_grid(doc, &mut grid, rgb_cache);
+    let grid_time = grid_start.elapsed();
+    let mut output = render_grid(doc, &mut grid, rgb_cache, false);
+    output.stats.grid_time += grid_time;
 
     RenderFrame {
         grid,
@@ -123,12 +126,17 @@ pub(crate) fn render_into_grid(
     grid: &mut grid::Grid,
     rgb_cache: &mut RgbCache,
 ) -> RenderGridOutput {
-    let grid_start = std::time::Instant::now();
-    grid.clear();
-    let grid_time = grid_start.elapsed();
+    render_grid(doc, grid, rgb_cache, true)
+}
 
+fn render_grid(
+    doc: &Document,
+    grid: &mut grid::Grid,
+    rgb_cache: &mut RgbCache,
+    clear_grid: bool,
+) -> RenderGridOutput {
     let instrument_paint = lock::mutex(&doc.inner.debug_overlay).enabled;
-    let dom_output = paint::paint(doc, grid, rgb_cache, instrument_paint);
+    let dom_output = paint::paint(doc, grid, rgb_cache, instrument_paint, clear_grid);
 
     let mut overlay_paint_time = Duration::ZERO;
     {
@@ -143,7 +151,7 @@ pub(crate) fn render_into_grid(
     RenderGridOutput {
         cursor: dom_output.cursor,
         stats: GridRenderStats {
-            grid_time,
+            grid_time: dom_output.stats.grid_time,
             dom_collect_time: dom_output.stats.collect_time,
             dom_paint_time: dom_output.stats.paint_time,
             paint_profile: dom_output.stats.profile,
