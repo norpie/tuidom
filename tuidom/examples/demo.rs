@@ -6,10 +6,10 @@
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Arrows / hjkl        — move focus spatially, or move input cursor
 //! Esc                  — blur focused node
-//! Hover text/input     — focus node
+//! Hover buttons/input  — focus node
 //! Type in inputs       — edit text / masked password input
-//! Space outside input  — toggle text opacity (fade in/out)
-//! Click first text     — toggle text background, stop propagation
+//! Space outside input  — toggle first button opacity (fade in/out)
+//! Click first button   — toggle button background, stop propagation
 //! Click background     — toggle container background
 //! Wheel anywhere       — adjust text opacity via container wheel handler
 //! q outside input      — quit
@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
-use tuidom::style::{AlignItems, Color, CursorShape, JustifyContent, Length, Style};
+use tuidom::style::{
+    AlignItems, Color, CursorShape, FlexDirection, FlexGap, JustifyContent, Length, Style,
+};
 
 fn init_logging() {
     // Best-effort file logging for the smoke test.
@@ -43,9 +45,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut container_style = Style::new();
     container_style.width(Length::Percent(100.0));
     container_style.height(Length::Percent(100.0));
-    container_style.justify_content(JustifyContent::Center);
-    container_style.align_items(AlignItems::Center);
+    container_style.flex_direction(FlexDirection::Column);
     container_style.background(Color::oklch(0.3, 0.1, 50.0));
+
+    let mut top_bar_style = Style::new();
+    top_bar_style.width(Length::Percent(100.0));
+    top_bar_style.height(Length::Auto);
+    top_bar_style.flex_direction(FlexDirection::Row);
+    top_bar_style.justify_content(JustifyContent::FlexEnd);
+
+    let mut center_area_style = Style::new();
+    center_area_style.width(Length::Percent(100.0));
+    center_area_style.flex_grow(1.0);
+    center_area_style.justify_content(JustifyContent::Center);
+    center_area_style.align_items(AlignItems::Center);
+
+    let mut stack_style = Style::new();
+    stack_style.width(Length::Auto);
+    stack_style.height(Length::Auto);
+    stack_style.flex_direction(FlexDirection::Column);
+    stack_style.align_items(AlignItems::Center);
+    stack_style.gap(FlexGap::new(1, 0));
+
+    let mut row_style = Style::new();
+    row_style.width(Length::Auto);
+    row_style.height(Length::Auto);
+    row_style.flex_direction(FlexDirection::Row);
+    row_style.align_items(AlignItems::Center);
+    row_style.gap(FlexGap::new(0, 4));
+
+    let mut field_style = Style::new();
+    field_style.width(Length::Auto);
+    field_style.height(Length::Auto);
+    field_style.flex_direction(FlexDirection::Column);
+    field_style.align_items(AlignItems::FlexStart);
+    field_style.gap(FlexGap::new(1, 0));
+
+    let mut label_style = Style::new();
+    label_style.width(Length::Auto);
+    label_style.height(Length::Auto);
+    label_style.color(Color::oklch(0.92, 0.04, 260.0));
+
+    let mut section_label_style = label_style.clone();
+    section_label_style.color(Color::oklch(0.82, 0.12, 80.0));
+
+    let mut title_style = label_style.clone();
+    title_style.color(Color::white());
+    title_style.background(Color::oklch(0.22, 0.08, 260.0));
 
     let mut text_style = Style::new();
     text_style.width(Length::Auto);
@@ -75,26 +121,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let container = doc.create_box()?;
     doc.set_style(container, &container_style)?;
 
+    let top_bar = doc.create_box()?;
+    doc.set_style(top_bar, &top_bar_style)?;
+
+    let center_area = doc.create_box()?;
+    doc.set_style(center_area, &center_area_style)?;
+
+    let stack = doc.create_box()?;
+    doc.set_style(stack, &stack_style)?;
+
+    let button_row = doc.create_box()?;
+    doc.set_style(button_row, &row_style)?;
+
+    let input_row = doc.create_box()?;
+    doc.set_style(input_row, &row_style)?;
+
+    let editable_field = doc.create_box()?;
+    doc.set_style(editable_field, &field_style)?;
+
+    let password_field = doc.create_box()?;
+    doc.set_style(password_field, &field_style)?;
+
     let perf_counter = doc.create_text("FPS: --  Frame: --")?;
     let mut perf_style = Style::new();
     perf_style.color(Color::oklch(0.85, 0.16, 145.0));
     perf_style.background(Color::black());
     doc.set_style(perf_counter, &perf_style)?;
 
-    let text = doc.create_text("Hello, tuidom!  Click / wheel me")?;
+    let title = doc.create_text(" tuidom interaction demo ")?;
+    doc.set_style(title, &title_style)?;
+
+    let hint =
+        doc.create_text("Tab/Shift-Tab or arrows/hjkl move focus; q quits outside inputs")?;
+    doc.set_style(hint, &label_style)?;
+
+    let button_label = doc.create_text("Buttons")?;
+    doc.set_style(button_label, &section_label_style)?;
+
+    let text = doc.create_text("  Toggle opacity  ")?;
     doc.set_style(text, &text_style)?;
     doc.set_focusable(text, true)?;
     doc.set_focus_style(text, &focus_style)?;
 
-    let second = doc.create_text("  Focus target 2  ")?;
+    let second = doc.create_text("  Focus target  ")?;
     doc.set_style(second, &secondary_text_style)?;
     doc.set_focusable(second, true)?;
     doc.set_focus_style(second, &focus_style)?;
 
-    let third = doc.create_text("  Focus target 3  ")?;
-    doc.set_style(third, &secondary_text_style)?;
-    doc.set_focusable(third, true)?;
-    doc.set_focus_style(third, &focus_style)?;
+    let input_label = doc.create_text("Inputs")?;
+    doc.set_style(input_label, &section_label_style)?;
+
+    let editable_label = doc.create_text("Editable")?;
+    doc.set_style(editable_label, &label_style)?;
+
+    let password_label = doc.create_text("Password")?;
+    doc.set_style(password_label, &label_style)?;
 
     let editable = doc.create_input("edit me")?;
     doc.set_style(editable, &input_style)?;
@@ -105,12 +186,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.set_input_mask(password, Some('•'))?;
     doc.set_focus_style(password, &focus_style)?;
 
-    doc.append_child(container, perf_counter)?;
-    doc.append_child(container, text)?;
-    doc.append_child(container, second)?;
-    doc.append_child(container, third)?;
-    doc.append_child(container, editable)?;
-    doc.append_child(container, password)?;
+    doc.append_child(top_bar, perf_counter)?;
+
+    doc.append_child(button_row, text)?;
+    doc.append_child(button_row, second)?;
+
+    doc.append_child(editable_field, editable_label)?;
+    doc.append_child(editable_field, editable)?;
+    doc.append_child(password_field, password_label)?;
+    doc.append_child(password_field, password)?;
+    doc.append_child(input_row, editable_field)?;
+    doc.append_child(input_row, password_field)?;
+
+    doc.append_child(stack, title)?;
+    doc.append_child(stack, hint)?;
+    doc.append_child(stack, button_label)?;
+    doc.append_child(stack, button_row)?;
+    doc.append_child(stack, input_label)?;
+    doc.append_child(stack, input_row)?;
+
+    doc.append_child(center_area, stack)?;
+    doc.append_child(container, top_bar)?;
+    doc.append_child(container, center_area)?;
     doc.append_child(doc.root(), container)?;
 
     let mut focus_keys = FocusKeys::default();
