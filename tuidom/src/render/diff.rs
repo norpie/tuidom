@@ -6,7 +6,6 @@
 use crate::render::grid::Cell;
 use crate::render::grid::CellContent;
 use crate::render::grid::Grid;
-use crate::style::color::Rgb;
 
 /// A single changed cell with its position.
 #[derive(Debug, Clone)]
@@ -18,10 +17,6 @@ pub(crate) struct CellChange {
     /// The new cell value to write.
     pub cell: Cell,
 }
-
-/// Max squared color distance to consider two colors "the same".
-/// Must be 0 — even a 1-bit difference in any channel matters.
-const COLOR_THRESHOLD: i32 = 0;
 
 /// Compare old and new grids, returning only the cells that changed.
 pub(crate) fn diff(old: &Grid, new: &Grid) -> Vec<CellChange> {
@@ -64,9 +59,7 @@ pub(crate) fn diff(old: &Grid, new: &Grid) -> Vec<CellChange> {
 }
 
 fn cells_differ(old: &Cell, new: &Cell) -> bool {
-    old.content != new.content
-        || color_diff(old.fg, new.fg) > COLOR_THRESHOLD
-        || color_diff(old.bg, new.bg) > COLOR_THRESHOLD
+    old.content != new.content || old.fg != new.fg || old.bg != new.bg
 }
 
 fn mark_span_in_row(dirty: &mut [bool], grid: &Grid, x: usize, y: usize) {
@@ -96,23 +89,10 @@ fn mark(dirty: &mut [bool], x: usize) {
     }
 }
 
-/// Squared Euclidean distance between two optional colors.
-fn color_diff(a: Option<Rgb>, b: Option<Rgb>) -> i32 {
-    match (a, b) {
-        (None, None) => 0,
-        (None, Some(_)) | (Some(_), None) => i32::MAX,
-        (Some(a), Some(b)) => {
-            let dr = a.r as i32 - b.r as i32;
-            let dg = a.g as i32 - b.g as i32;
-            let db = a.b as i32 - b.b as i32;
-            dr * dr + dg * dg + db * db
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::color::Rgb;
 
     fn rgb(r: u8, g: u8, b: u8) -> Rgb {
         Rgb { r, g, b, a: 255 }
