@@ -266,6 +266,30 @@ impl DebugOverlay {
                 ms(self.stats.diff_time),
                 ms(self.avg_diff_time)
             ),
+        ]);
+
+        let diff_profile = self.stats.diff_profile;
+        if diff_profile.enabled {
+            lines.extend([
+                format!(
+                    "      Rows: {} same / {} changed / {} total",
+                    diff_profile.unchanged_rows, diff_profile.changed_rows, diff_profile.rows
+                ),
+                format!(
+                    "      Check: {:.3}ms row / {:.3}ms cell / {} cells",
+                    ms(diff_profile.row_equality_time),
+                    ms(diff_profile.cell_scan_time),
+                    diff_profile.cells_compared
+                ),
+                format!(
+                    "      Emit:  {:.3}ms / {} dirty",
+                    ms(diff_profile.emit_time),
+                    diff_profile.dirty_cells
+                ),
+            ]);
+        }
+
+        lines.extend([
             format!(
                 "    Flush:  {:.3}ms (avg: {:.3}ms)",
                 ms(self.stats.flush_time),

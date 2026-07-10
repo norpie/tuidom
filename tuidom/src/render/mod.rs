@@ -34,6 +34,8 @@ pub(crate) struct RenderStats {
     pub overlay_paint_time: Duration,
     /// Time spent diffing (old vs new).
     pub diff_time: Duration,
+    /// Detailed instrumentation for diffing.
+    pub diff_profile: diff::DiffProfile,
     /// Time spent flushing to terminal.
     pub flush_time: Duration,
 }
@@ -185,9 +187,11 @@ impl Renderer {
         let grid_stats = output.stats;
         let cursor = output.cursor;
 
+        let instrument_diff = lock::mutex(&doc.inner.debug_overlay).enabled;
         let diff_start = std::time::Instant::now();
-        let changes = diff::diff(&self.old_grid, &self.new_grid);
+        let diff_output = diff::diff_profiled(&self.old_grid, &self.new_grid, instrument_diff);
         let diff_time = diff_start.elapsed();
+        let changes = diff_output.changes;
 
         let flush_start = std::time::Instant::now();
         self.terminal.flush_changes(&changes, cursor)?;
@@ -204,6 +208,7 @@ impl Renderer {
             paint_profile: grid_stats.paint_profile,
             overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time,
+            diff_profile: diff_output.profile,
             flush_time,
         })
     }
@@ -236,6 +241,7 @@ impl Renderer {
             paint_profile: grid_stats.paint_profile,
             overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time: Duration::ZERO,
+            diff_profile: diff::DiffProfile::default(),
             flush_time,
         })
     }
