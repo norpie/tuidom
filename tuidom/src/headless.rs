@@ -60,6 +60,7 @@ impl HeadlessRuntime {
     pub fn render(&mut self) -> Result<()> {
         self.doc.compute_layout(self.width, self.height)?;
         let frame = render_to_grid(&self.doc, self.width, self.height, &mut self.rgb_cache);
+        let _stats = frame.stats;
         self.cursor = frame.cursor;
         self.grid = Some(frame.grid);
         Ok(())

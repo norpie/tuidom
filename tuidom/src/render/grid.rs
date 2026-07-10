@@ -212,6 +212,17 @@ impl Grid {
         }
     }
 
+    /// Reset all cells to empty terminal-default state while preserving allocation.
+    pub fn clear(&mut self) {
+        for row in &mut self.cells {
+            for cell in row {
+                cell.content = CellContent::Empty;
+                cell.fg = None;
+                cell.bg = None;
+            }
+        }
+    }
+
     /// Fill a rectangular region with a cell value, blending by `alpha`.
     pub fn fill_rect(&mut self, x: i32, y: i32, w: u16, h: u16, cell: Cell, alpha: f64) -> usize {
         let Some((x_start, y_start, x_end, y_end)) = self.clip_rect(x, y, w, h) else {

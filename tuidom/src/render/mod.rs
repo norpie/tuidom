@@ -91,6 +91,15 @@ pub(crate) struct RenderFrame {
     pub stats: GridRenderStats,
 }
 
+/// Backend-neutral render metadata for an existing frame grid.
+#[derive(Debug)]
+pub(crate) struct RenderGridOutput {
+    /// Optional cursor metadata for the frame.
+    pub cursor: Option<RenderCursor>,
+    /// Timings for backend-neutral grid rendering.
+    pub stats: GridRenderStats,
+}
+
 /// Paint a laid-out document into a fresh frame without flushing to a terminal.
 pub(crate) fn render_to_grid(
     doc: &Document,
@@ -98,25 +107,40 @@ pub(crate) fn render_to_grid(
     height: u16,
     rgb_cache: &mut RgbCache,
 ) -> RenderFrame {
-    let grid_start = std::time::Instant::now();
     let mut grid = grid::Grid::new(width, height);
+    let output = render_into_grid(doc, &mut grid, rgb_cache);
+
+    RenderFrame {
+        grid,
+        cursor: output.cursor,
+        stats: output.stats,
+    }
+}
+
+/// Paint a laid-out document into an existing grid without flushing to a terminal.
+pub(crate) fn render_into_grid(
+    doc: &Document,
+    grid: &mut grid::Grid,
+    rgb_cache: &mut RgbCache,
+) -> RenderGridOutput {
+    let grid_start = std::time::Instant::now();
+    grid.clear();
     let grid_time = grid_start.elapsed();
 
     let instrument_paint = lock::mutex(&doc.inner.debug_overlay).enabled;
-    let dom_output = paint::paint(doc, &mut grid, rgb_cache, instrument_paint);
+    let dom_output = paint::paint(doc, grid, rgb_cache, instrument_paint);
 
     let mut overlay_paint_time = Duration::ZERO;
     {
         let overlay = lock::mutex(&doc.inner.debug_overlay);
         if overlay.enabled {
             let overlay_paint_start = std::time::Instant::now();
-            overlay.render(&mut grid);
+            overlay.render(grid);
             overlay_paint_time = overlay_paint_start.elapsed();
         }
     }
 
-    RenderFrame {
-        grid,
+    RenderGridOutput {
         cursor: dom_output.cursor,
         stats: GridRenderStats {
             grid_time,
@@ -149,15 +173,9 @@ impl Renderer {
 
     /// Render a single frame: layout (already done), paint, diff, flush.
     pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderStats> {
-        let frame = render_to_grid(
-            doc,
-            self.old_grid.width,
-            self.old_grid.height,
-            &mut self.rgb_cache,
-        );
-        let grid_stats = frame.stats;
-        let cursor = frame.cursor;
-        self.new_grid = frame.grid;
+        let output = render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache);
+        let grid_stats = output.stats;
+        let cursor = output.cursor;
 
         let diff_start = std::time::Instant::now();
         let changes = diff::diff(&self.old_grid, &self.new_grid);
@@ -190,15 +208,9 @@ impl Renderer {
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
     pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderStats> {
-        let frame = render_to_grid(
-            doc,
-            self.old_grid.width,
-            self.old_grid.height,
-            &mut self.rgb_cache,
-        );
-        let grid_stats = frame.stats;
-        let cursor = frame.cursor;
-        self.new_grid = frame.grid;
+        let output = render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache);
+        let grid_stats = output.stats;
+        let cursor = output.cursor;
 
         let flush_start = std::time::Instant::now();
         self.terminal.flush_full(&self.new_grid, cursor)?;
