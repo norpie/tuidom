@@ -443,7 +443,7 @@ fn invert_cursor_cell(grid: &mut Grid, x: i32, y: i32, cursor_color: Rgb) {
         return;
     }
 
-    grid.touch_row(y as usize);
+    grid.touch_span(y as usize, x as usize, x as usize + 1);
     let cell = &mut grid.cells[y as usize][x as usize];
     let fg = cell.fg;
     let bg = cell.bg;

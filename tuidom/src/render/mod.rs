@@ -194,15 +194,15 @@ impl Renderer {
         let cursor = output.cursor;
 
         let clear_base_changed = self.old_clear_base != output.clear_base;
-        let dirty_rows = (!clear_base_changed)
-            .then(|| (self.old_grid.touched_rows(), self.new_grid.touched_rows()));
+        let dirty_spans = (!clear_base_changed)
+            .then(|| (self.old_grid.touched_spans(), self.new_grid.touched_spans()));
         let instrument_diff = lock::mutex(&doc.inner.debug_overlay).enabled;
         let diff_start = std::time::Instant::now();
         let diff_output = diff::diff_profiled_with_hints(
             &self.old_grid,
             &self.new_grid,
             instrument_diff,
-            dirty_rows,
+            dirty_spans,
         );
         let diff_time = diff_start.elapsed();
         let changes = diff_output.changes;

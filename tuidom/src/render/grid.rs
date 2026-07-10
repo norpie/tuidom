@@ -190,6 +190,22 @@ fn clamp_alpha(alpha: f64) -> f64 {
     }
 }
 
+/// Horizontal cell span touched in one grid row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TouchedSpan {
+    /// First touched cell, inclusive.
+    pub start: usize,
+    /// Last touched cell, exclusive.
+    pub end: usize,
+}
+
+impl TouchedSpan {
+    fn include(&mut self, start: usize, end: usize) {
+        self.start = self.start.min(start);
+        self.end = self.end.max(end);
+    }
+}
+
 /// A 2D buffer of [`Cell`]s representing a single frame's screen state.
 #[derive(Debug, Clone)]
 pub(crate) struct Grid {
@@ -199,8 +215,8 @@ pub(crate) struct Grid {
     pub width: u16,
     /// Height in cells.
     pub height: u16,
-    /// Rows touched by paint operations after the frame base clear.
-    touched_rows: Vec<bool>,
+    /// Horizontal spans touched by paint operations after the frame base clear.
+    touched_spans: Vec<Option<TouchedSpan>>,
 }
 
 impl Grid {
@@ -211,13 +227,13 @@ impl Grid {
             cells,
             width,
             height,
-            touched_rows: vec![false; height as usize],
+            touched_spans: vec![None; height as usize],
         }
     }
 
     /// Reset all cells to empty terminal-default state while preserving allocation.
     pub fn clear(&mut self) {
-        self.touched_rows.fill(false);
+        self.touched_spans.fill(None);
         for row in &mut self.cells {
             for cell in row {
                 cell.content = CellContent::Empty;
@@ -229,7 +245,7 @@ impl Grid {
 
     /// Reset all cells to empty content with a shared opaque background.
     pub fn clear_with_bg(&mut self, bg: Rgb) {
-        self.touched_rows.fill(false);
+        self.touched_spans.fill(None);
         for row in &mut self.cells {
             for cell in row {
                 cell.content = CellContent::Empty;
@@ -239,15 +255,28 @@ impl Grid {
         }
     }
 
-    /// Rows touched by paint operations after the frame base clear.
-    pub fn touched_rows(&self) -> &[bool] {
-        &self.touched_rows
+    /// Horizontal spans touched by paint operations after the frame base clear.
+    pub fn touched_spans(&self) -> &[Option<TouchedSpan>] {
+        &self.touched_spans
     }
 
-    /// Mark one row as touched by direct grid mutation.
-    pub fn touch_row(&mut self, row: usize) {
-        if row < self.touched_rows.len() {
-            self.touched_rows[row] = true;
+    /// Mark one row span as touched by direct grid mutation.
+    pub fn touch_span(&mut self, row: usize, start: usize, end: usize) {
+        if row >= self.touched_spans.len() || start >= end {
+            return;
+        }
+
+        let span = TouchedSpan {
+            start: start.min(self.width as usize),
+            end: end.min(self.width as usize),
+        };
+        if span.start >= span.end {
+            return;
+        }
+
+        match &mut self.touched_spans[row] {
+            Some(existing) => existing.include(span.start, span.end),
+            slot @ None => *slot = Some(span),
         }
     }
 
@@ -262,7 +291,7 @@ impl Grid {
             return 0;
         }
 
-        self.touch_rows(y_start, y_end);
+        self.touch_rect(x_start, x_end, y_start, y_end);
 
         if alpha >= 1.0 && matches!(cell.content, CellContent::Empty) {
             if let Some(bg) = cell.bg {
@@ -287,10 +316,10 @@ impl Grid {
         (x_end - x_start) * (y_end - y_start)
     }
 
-    fn touch_rows(&mut self, y_start: usize, y_end: usize) {
-        let end = y_end.min(self.touched_rows.len());
-        for touched in &mut self.touched_rows[y_start..end] {
-            *touched = true;
+    fn touch_rect(&mut self, x_start: usize, x_end: usize, y_start: usize, y_end: usize) {
+        let end = y_end.min(self.touched_spans.len());
+        for row in y_start..end {
+            self.touch_span(row, x_start, x_end);
         }
     }
 
@@ -405,7 +434,7 @@ impl Grid {
             }
 
             self.write_glyph(row, col as usize, grapheme, width as u8, fg, alpha);
-            self.touch_row(row);
+            self.touch_span(row, col as usize, next_col as usize);
             glyphs += 1;
             col = next_col;
         }

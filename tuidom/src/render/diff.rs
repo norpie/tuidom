@@ -7,7 +7,7 @@ use crate::render::grid::Cell;
 use crate::render::grid::CellContent;
 use std::time::{Duration, Instant};
 
-use crate::render::grid::Grid;
+use crate::render::grid::{Grid, TouchedSpan};
 
 /// Detailed frame diff instrumentation.
 #[derive(Debug, Clone, Copy, Default)]
@@ -59,7 +59,7 @@ pub(crate) fn diff_profiled_with_hints(
     old: &Grid,
     new: &Grid,
     instrument: bool,
-    dirty_rows: Option<(&[bool], &[bool])>,
+    dirty_spans: Option<(&[Option<TouchedSpan>], &[Option<TouchedSpan>])>,
 ) -> DiffOutput {
     let width = new.width as usize;
     let height = new.height as usize;
@@ -75,17 +75,27 @@ pub(crate) fn diff_profiled_with_hints(
             profile.rows += 1;
         }
 
-        if dirty_rows.is_some_and(|(old_rows, new_rows)| {
-            !old_rows.get(y).copied().unwrap_or(true) && !new_rows.get(y).copied().unwrap_or(true)
-        }) {
+        let scan_span = dirty_spans.and_then(|(old_spans, new_spans)| {
+            union_spans(
+                span_hint(old_spans, y, width),
+                span_hint(new_spans, y, width),
+            )
+        });
+        let Some(scan_span) =
+            scan_span.or_else(|| dirty_spans.is_none().then_some(full_span(width)))
+        else {
             if profile.enabled {
                 profile.hint_skipped_rows += 1;
             }
             continue;
-        }
+        };
 
         let row_equality_start = profile.enabled.then(Instant::now);
-        let row_unchanged = old.cells.get(y).is_some_and(|old_row| old_row == new_row);
+        let row_unchanged = old
+            .cells
+            .get(y)
+            .and_then(|old_row| old_row.get(scan_span.start..scan_span.end))
+            .is_some_and(|old_cells| old_cells == &new_row[scan_span.start..scan_span.end]);
         if let Some(start) = row_equality_start {
             profile.row_equality_time += start.elapsed();
         }
@@ -101,7 +111,8 @@ pub(crate) fn diff_profiled_with_hints(
 
         dirty_row.fill(false);
         let cell_scan_start = profile.enabled.then(Instant::now);
-        for (x, new_cell) in new_row.iter().enumerate().take(width) {
+        for (offset, new_cell) in new_row[scan_span.start..scan_span.end].iter().enumerate() {
+            let x = scan_span.start + offset;
             if profile.enabled {
                 profile.cells_compared += 1;
             }
@@ -140,6 +151,28 @@ pub(crate) fn diff_profiled_with_hints(
     }
 
     DiffOutput { changes, profile }
+}
+
+fn span_hint(spans: &[Option<TouchedSpan>], row: usize, width: usize) -> Option<TouchedSpan> {
+    spans.get(row).copied().unwrap_or(Some(full_span(width)))
+}
+
+fn full_span(width: usize) -> TouchedSpan {
+    TouchedSpan {
+        start: 0,
+        end: width,
+    }
+}
+
+fn union_spans(a: Option<TouchedSpan>, b: Option<TouchedSpan>) -> Option<TouchedSpan> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(span), None) | (None, Some(span)) => Some(span),
+        (Some(a), Some(b)) => Some(TouchedSpan {
+            start: a.start.min(b.start),
+            end: a.end.max(b.end),
+        }),
+    }
 }
 
 fn cells_differ(old: &Cell, new: &Cell) -> bool {
@@ -192,7 +225,7 @@ mod tests {
             &old,
             &new,
             false,
-            Some((old.touched_rows(), new.touched_rows())),
+            Some((old.touched_spans(), new.touched_spans())),
         )
         .changes;
         let coords: Vec<(u16, u16)> = changes.iter().map(|c| (c.x, c.y)).collect();
@@ -210,7 +243,7 @@ mod tests {
             &old,
             &new,
             false,
-            Some((old.touched_rows(), new.touched_rows())),
+            Some((old.touched_spans(), new.touched_spans())),
         )
         .changes;
         let coords: Vec<(u16, u16)> = changes.iter().map(|c| (c.x, c.y)).collect();
