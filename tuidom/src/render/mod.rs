@@ -166,6 +166,15 @@ fn render_grid(
     }
 }
 
+const FULL_REDRAW_CHANGE_THRESHOLD_NUMERATOR: usize = 1;
+const FULL_REDRAW_CHANGE_THRESHOLD_DENOMINATOR: usize = 3;
+
+fn should_flush_full(changed_cells: usize, total_cells: usize) -> bool {
+    total_cells > 0
+        && changed_cells.saturating_mul(FULL_REDRAW_CHANGE_THRESHOLD_DENOMINATOR)
+            > total_cells.saturating_mul(FULL_REDRAW_CHANGE_THRESHOLD_NUMERATOR)
+}
+
 /// Orchestrates the render pipeline: paint, diff, and flush to terminal.
 pub(crate) struct Renderer {
     terminal: Terminal,
@@ -207,16 +216,27 @@ impl Renderer {
         let diff_time = diff_start.elapsed();
         let changes = diff_output.changes;
 
+        let total_cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);
+        let full_redraw = should_flush_full(changes.len(), total_cells);
         let flush_start = std::time::Instant::now();
-        self.terminal.flush_changes(&changes, cursor)?;
+        if full_redraw {
+            self.terminal.flush_full(&self.new_grid, cursor)?;
+        } else {
+            self.terminal.flush_changes(&changes, cursor)?;
+        }
         let flush_time = flush_start.elapsed();
+        let cells_changed = if full_redraw {
+            total_cells
+        } else {
+            changes.len()
+        };
 
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
         self.old_clear_base = output.clear_base;
 
         Ok(RenderStats {
-            cells_changed: changes.len(),
-            full_redraw: false,
+            cells_changed,
+            full_redraw,
             grid_time: grid_stats.grid_time,
             dom_collect_time: grid_stats.dom_collect_time,
             dom_paint_time: grid_stats.dom_paint_time,
