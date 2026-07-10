@@ -9,8 +9,6 @@
 
 /// Animation driver and types.
 pub mod animation;
-/// Debug overlay.
-mod debug;
 /// Error types returned by tuidom APIs.
 mod error;
 /// Event types and dispatch.
@@ -29,6 +27,8 @@ mod lock;
 /// Node data storage and views.
 mod node;
 mod paint_order;
+/// Runtime performance metrics.
+pub mod performance;
 /// Screen buffer and rendering.
 pub(crate) mod render;
 mod runtime_event;

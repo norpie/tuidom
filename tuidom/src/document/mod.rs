@@ -8,16 +8,15 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{Mutex as TokioMutex, Notify};
 
 use crate::animation::driver::AnimationDriver;
-use crate::debug::DebugOverlay;
-use crate::error::Result;
+use crate::error::{Result, TuidomError};
 use crate::event::FocusKeys;
 use crate::event_loop;
 use crate::id::{NodeId, next_document_id};
 use crate::inner::DocumentInner;
 use crate::layout::LayoutEngine;
 use crate::lock;
-use crate::node::NodeData;
-use crate::render::RenderStats;
+use crate::node::{NodeData, NodeKind};
+use crate::performance::{PerformanceDetail, PerformanceSnapshot, PerformanceState, RenderMetrics};
 
 mod attrs;
 mod events;
@@ -84,7 +83,7 @@ impl Document {
                 max_frame_interval: RwLock::new(None),
                 layout: Mutex::new(LayoutEngine::new()),
                 layout_rects: RwLock::new(HashMap::new()),
-                debug_overlay: Mutex::new(DebugOverlay::new()),
+                performance: Mutex::new(PerformanceState::new()),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
             }),
@@ -115,6 +114,29 @@ impl Document {
             return Err(err);
         }
         Ok(id)
+    }
+
+    /// Replace a text node's content.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not a text node.
+    pub fn set_text_content(&self, node: NodeId, content: impl Into<String>) -> Result<()> {
+        {
+            let mut data = self
+                .inner
+                .nodes
+                .get_mut(&node)
+                .ok_or(TuidomError::NodeNotFound { id: node })?;
+            let NodeKind::Text { content: text } = &mut data.kind else {
+                return Err(TuidomError::NodeNotText { id: node });
+            };
+            *text = content.into();
+        }
+
+        self.register_layout_node(node)?;
+        self.inner.notify.notify_one();
+        Ok(())
     }
 
     /// Create a new editable input node with the given content.
@@ -149,22 +171,25 @@ impl Document {
         self.inner.shutdown_notify.notify_waiters();
     }
 
-    /// Toggle the debug overlay on/off.
-    pub fn toggle_debug_overlay(&self) {
-        let mut overlay = lock::mutex(&self.inner.debug_overlay);
-        overlay.enabled = !overlay.enabled;
+    /// Return the latest collected performance metrics.
+    pub fn performance_snapshot(&self) -> PerformanceSnapshot {
+        lock::mutex(&self.inner.performance).snapshot()
+    }
+
+    /// Set the amount of performance instrumentation collected while rendering.
+    pub fn set_performance_detail(&self, detail: PerformanceDetail) {
+        lock::mutex(&self.inner.performance).set_detail(detail);
         self.inner.notify.notify_one();
     }
 
-    /// Record rendering metrics for the debug overlay.
+    /// Record rendering metrics for the public performance API.
     pub(crate) fn record_frame_metrics(
         &self,
         frame: Duration,
         layout: Duration,
-        stats: RenderStats,
+        stats: RenderMetrics,
     ) {
-        let mut overlay = lock::mutex(&self.inner.debug_overlay);
-        overlay.record(frame, layout, stats);
+        lock::mutex(&self.inner.performance).record(frame, layout, stats);
     }
 
     /// Run the render + event loop until [`quit`](Self::quit) is called.

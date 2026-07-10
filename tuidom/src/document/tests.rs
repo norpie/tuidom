@@ -12,6 +12,7 @@ use crate::event::{
 };
 use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
+use crate::performance::PerformanceDetail;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection,
     FlexGap, FlexWrap, Length, Style,
@@ -30,6 +31,49 @@ fn create_nodes() {
     assert!(matches!(text_view.kind, NodeKindView::Text { .. }));
 
     assert!(doc.get_node(NodeId::new(999)).is_none());
+}
+
+#[test]
+fn text_content_api_sets_text_and_rejects_other_nodes() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hello").unwrap();
+    let box_id = doc.create_box().unwrap();
+
+    doc.set_text_content(text, "updated").unwrap();
+    let view = doc.get_node(text).unwrap();
+    assert!(matches!(view.kind, NodeKindView::Text { content } if content == "updated"));
+
+    assert_eq!(
+        doc.set_text_content(box_id, "nope").unwrap_err(),
+        TuidomError::NodeNotText { id: box_id }
+    );
+}
+
+#[test]
+fn performance_snapshot_exposes_recorded_metrics_and_detail() {
+    let doc = Document::new().unwrap();
+    assert_eq!(doc.performance_snapshot().detail, PerformanceDetail::Basic);
+    assert!(doc.performance_snapshot().latest.is_none());
+
+    doc.set_performance_detail(PerformanceDetail::Detailed);
+    doc.record_frame_metrics(
+        Duration::from_millis(4),
+        Duration::from_millis(1),
+        crate::performance::RenderMetrics {
+            diff_dirty_cells: 2,
+            cells_flushed: 3,
+            ..Default::default()
+        },
+    );
+
+    let snapshot = doc.performance_snapshot();
+    let latest = snapshot.latest.unwrap();
+    assert_eq!(snapshot.detail, PerformanceDetail::Detailed);
+    assert_eq!(snapshot.frame_count, 1);
+    assert_eq!(latest.frame_time, Duration::from_millis(4));
+    assert_eq!(latest.layout_time, Duration::from_millis(1));
+    assert_eq!(latest.render.diff_dirty_cells, 2);
+    assert_eq!(latest.render.cells_flushed, 3);
 }
 
 #[test]

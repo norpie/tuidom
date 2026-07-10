@@ -277,12 +277,13 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [ ] Full document snapshot for comparison/testing (no restore — handlers can't be serialized)
   - [ ] Per-node serialization: `doc.serialize_node(node_id)` for external storage/comparison
   - [ ] Captures: DOM structure, styles, text content, computed layout, focus/selection state
-- [x] Built-in debug overlay (toggle-able):
+- [x] Public performance metrics API:
   - [x] FPS / frame time
   - [ ] Node count
   - [x] Render latency
   - [x] Layout latency
   - [ ] Event latency
+  - [x] Opt-in detailed paint and diff profiling
 
 ## Testing
 

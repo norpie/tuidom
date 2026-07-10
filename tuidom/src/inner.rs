@@ -8,11 +8,11 @@ use dashmap::DashMap;
 use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
-use crate::debug::DebugOverlay;
 use crate::event::{FocusKeys, Listener, TargetedEventKind};
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
 use crate::node::{LayoutRect, NodeData};
+use crate::performance::PerformanceState;
 use crate::runtime_event::RuntimeEvent;
 
 /// Internal state of a [`Document`](crate::Document).
@@ -86,8 +86,8 @@ pub(crate) struct DocumentInner {
     /// Latest published layout rectangles, updated atomically after layout computation.
     pub layout_rects: RwLock<HashMap<NodeId, LayoutRect>>,
 
-    /// Debug overlay — toggled via F1, renders performance stats.
-    pub debug_overlay: Mutex<DebugOverlay>,
+    /// Collected runtime performance metrics.
+    pub performance: Mutex<PerformanceState>,
 
     /// Targeted event listeners keyed by node and event kind.
     pub targeted_listeners: Mutex<HashMap<(NodeId, TargetedEventKind), Vec<Listener>>>,

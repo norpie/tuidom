@@ -12,46 +12,10 @@ use terminal::Terminal;
 
 use crate::document::Document;
 use crate::lock;
+use crate::performance::{DiffProfile, FlushMode, PaintProfile, RenderMetrics};
 use crate::render::paint::FrameClearBase;
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
-
-/// Breakdown of time spent in each render phase.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct RenderStats {
-    /// Number of cells flushed.
-    pub cells_changed: usize,
-    /// Whether this frame was a full redraw instead of a diffed update.
-    pub full_redraw: bool,
-    /// Time spent creating/clearing the frame grid.
-    pub grid_time: Duration,
-    /// Time spent collecting the visible DOM tree into a paintable snapshot.
-    pub dom_collect_time: Duration,
-    /// Time spent painting DOM nodes into the grid.
-    pub dom_paint_time: Duration,
-    /// Detailed instrumentation for DOM painting.
-    pub paint_profile: paint::PaintProfile,
-    /// Time spent painting the debug overlay into the grid.
-    pub overlay_paint_time: Duration,
-    /// Time spent diffing (old vs new).
-    pub diff_time: Duration,
-    /// Detailed instrumentation for diffing.
-    pub diff_profile: diff::DiffProfile,
-    /// Time spent flushing to terminal.
-    pub flush_time: Duration,
-}
-
-impl RenderStats {
-    /// Total time spent inside the renderer for this frame.
-    pub fn render_time(self) -> Duration {
-        self.grid_time
-            + self.dom_collect_time
-            + self.dom_paint_time
-            + self.overlay_paint_time
-            + self.diff_time
-            + self.flush_time
-    }
-}
 
 /// Timings for backend-neutral grid rendering.
 #[derive(Debug, Clone, Copy, Default)]
@@ -63,9 +27,7 @@ pub(crate) struct GridRenderStats {
     /// Time spent painting DOM nodes into the grid.
     pub dom_paint_time: Duration,
     /// Detailed instrumentation for DOM painting.
-    pub paint_profile: paint::PaintProfile,
-    /// Time spent painting the debug overlay into the grid.
-    pub overlay_paint_time: Duration,
+    pub paint_profile: PaintProfile,
 }
 
 /// Cursor metadata produced by rendering a focused input node.
@@ -140,18 +102,8 @@ fn render_grid(
     rgb_cache: &mut RgbCache,
     clear_grid: bool,
 ) -> RenderGridOutput {
-    let instrument_paint = lock::mutex(&doc.inner.debug_overlay).enabled;
+    let instrument_paint = lock::mutex(&doc.inner.performance).detail().is_detailed();
     let dom_output = paint::paint(doc, grid, rgb_cache, instrument_paint, clear_grid);
-
-    let mut overlay_paint_time = Duration::ZERO;
-    {
-        let overlay = lock::mutex(&doc.inner.debug_overlay);
-        if overlay.enabled {
-            let overlay_paint_start = std::time::Instant::now();
-            overlay.render(grid);
-            overlay_paint_time = overlay_paint_start.elapsed();
-        }
-    }
 
     RenderGridOutput {
         cursor: dom_output.cursor,
@@ -161,7 +113,6 @@ fn render_grid(
             dom_collect_time: dom_output.stats.collect_time,
             dom_paint_time: dom_output.stats.paint_time,
             paint_profile: dom_output.stats.profile,
-            overlay_paint_time,
         },
     }
 }
@@ -197,7 +148,7 @@ impl Renderer {
     }
 
     /// Render a single frame: layout (already done), paint, diff, flush.
-    pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderStats> {
+    pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderMetrics> {
         let output = render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache);
         let grid_stats = output.stats;
         let cursor = output.cursor;
@@ -205,7 +156,7 @@ impl Renderer {
         let clear_base_changed = self.old_clear_base != output.clear_base;
         let dirty_spans = (!clear_base_changed)
             .then(|| (self.old_grid.touched_spans(), self.new_grid.touched_spans()));
-        let instrument_diff = lock::mutex(&doc.inner.debug_overlay).enabled;
+        let instrument_diff = lock::mutex(&doc.inner.performance).detail().is_detailed();
         let diff_start = std::time::Instant::now();
         let diff_output = diff::diff_profiled_with_hints(
             &self.old_grid,
@@ -225,23 +176,28 @@ impl Renderer {
             self.terminal.flush_changes(&changes, cursor)?;
         }
         let flush_time = flush_start.elapsed();
-        let cells_changed = if full_redraw {
+        let cells_flushed = if full_redraw {
             total_cells
         } else {
             changes.len()
+        };
+        let flush_mode = if full_redraw {
+            FlushMode::FullRedraw
+        } else {
+            FlushMode::Changes
         };
 
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
         self.old_clear_base = output.clear_base;
 
-        Ok(RenderStats {
-            cells_changed,
-            full_redraw,
+        Ok(RenderMetrics {
+            diff_dirty_cells: changes.len(),
+            cells_flushed,
+            flush_mode,
             grid_time: grid_stats.grid_time,
             dom_collect_time: grid_stats.dom_collect_time,
             dom_paint_time: grid_stats.dom_paint_time,
             paint_profile: grid_stats.paint_profile,
-            overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time,
             diff_profile: diff_output.profile,
             flush_time,
@@ -256,7 +212,7 @@ impl Renderer {
     }
 
     /// Render a full-screen redraw (e.g. after resize) — skips diffing.
-    pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderStats> {
+    pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderMetrics> {
         let output = render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache);
         let grid_stats = output.stats;
         let cursor = output.cursor;
@@ -269,16 +225,16 @@ impl Renderer {
         std::mem::swap(&mut self.old_grid, &mut self.new_grid);
         self.old_clear_base = output.clear_base;
 
-        Ok(RenderStats {
-            cells_changed: cells,
-            full_redraw: true,
+        Ok(RenderMetrics {
+            diff_dirty_cells: cells,
+            cells_flushed: cells,
+            flush_mode: FlushMode::FullRedraw,
             grid_time: grid_stats.grid_time,
             dom_collect_time: grid_stats.dom_collect_time,
             dom_paint_time: grid_stats.dom_paint_time,
             paint_profile: grid_stats.paint_profile,
-            overlay_paint_time: grid_stats.overlay_paint_time,
             diff_time: Duration::ZERO,
-            diff_profile: diff::DiffProfile::default(),
+            diff_profile: DiffProfile::default(),
             flush_time,
         })
     }

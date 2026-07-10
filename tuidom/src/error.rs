@@ -52,6 +52,13 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node exists but is not a text node.
+    #[error("node {id:?} is not text")]
+    NodeNotText {
+        /// The node that is not text.
+        id: NodeId,
+    },
+
     /// An attribute key is invalid.
     #[error("attribute key cannot be empty")]
     InvalidAttributeKey,

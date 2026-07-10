@@ -192,7 +192,7 @@ async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
     doc.inner.event_rx.lock().await.recv().await
 }
 
-/// Render a diffed frame with timing for the debug overlay.
+/// Render a diffed frame with timing for the performance API.
 fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
     let frame_start = Instant::now();
 
@@ -207,7 +207,7 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
     Ok(())
 }
 
-/// Render a full redraw with timing for the debug overlay.
+/// Render a full redraw with timing for the performance API.
 fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
     let frame_start = Instant::now();
 

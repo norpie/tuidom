@@ -3,36 +3,12 @@
 //! Wide glyphs occupy multiple terminal cells, so dirty cells are expanded
 //! through both the old and new wide spans before flushing.
 
+use crate::performance::DiffProfile;
 use crate::render::grid::Cell;
 use crate::render::grid::CellContent;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::render::grid::{Grid, TouchedSpan};
-
-/// Detailed frame diff instrumentation.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct DiffProfile {
-    /// Whether detailed diff instrumentation was enabled for this frame.
-    pub enabled: bool,
-    /// Number of rows in the new grid.
-    pub rows: usize,
-    /// Number of rows skipped by render-provided dirty row hints.
-    pub hint_skipped_rows: usize,
-    /// Number of rows skipped by exact row equality.
-    pub unchanged_rows: usize,
-    /// Number of rows that required cell-level scanning.
-    pub changed_rows: usize,
-    /// Number of cells compared inside changed rows.
-    pub cells_compared: usize,
-    /// Number of dirty cells emitted.
-    pub dirty_cells: usize,
-    /// Time spent checking row equality.
-    pub row_equality_time: Duration,
-    /// Time spent scanning cells in changed rows.
-    pub cell_scan_time: Duration,
-    /// Time spent emitting dirty cells from dirty row buffers.
-    pub emit_time: Duration,
-}
 
 /// Frame diff output.
 #[derive(Debug)]

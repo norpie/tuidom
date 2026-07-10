@@ -11,62 +11,11 @@ use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
 };
 use crate::paint_order::{PaintEntry, paint_order};
+use crate::performance::{LargestFillProfile, PaintProfile};
 use crate::render::RenderCursor;
 use crate::render::grid::{Cell, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
 use crate::style::{Color, CursorShape};
-
-/// Largest background fill observed during a profiled paint pass.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct LargestFillProfile {
-    /// Node id that requested the fill.
-    pub node_id: crate::id::NodeId,
-    /// Node kind that requested the fill.
-    pub node_kind: &'static str,
-    /// Requested fill x coordinate before clipping.
-    pub x: i32,
-    /// Requested fill y coordinate before clipping.
-    pub y: i32,
-    /// Requested fill width before clipping.
-    pub width: u16,
-    /// Requested fill height before clipping.
-    pub height: u16,
-    /// Requested area before clipping.
-    pub requested_cells: usize,
-    /// Actual grid cells touched after clipping.
-    pub clipped_cells: usize,
-}
-
-/// Detailed DOM paint instrumentation.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct PaintProfile {
-    /// Whether detailed paint instrumentation was enabled for this frame.
-    pub enabled: bool,
-    /// Time spent converting resolved colors to terminal RGB.
-    pub rgb_resolve_time: Duration,
-    /// Number of resolved colors converted or read from the RGB cache.
-    pub rgb_resolves: usize,
-    /// Time spent filling node backgrounds into the grid.
-    pub background_fill_time: Duration,
-    /// Number of background fill calls.
-    pub background_fill_calls: usize,
-    /// Number of grid cells touched by background fills.
-    pub filled_cells: usize,
-    /// Total requested background fill area before clipping.
-    pub requested_fill_cells: usize,
-    /// Number of fully opaque background fill calls.
-    pub opaque_fill_calls: usize,
-    /// Number of cells touched by fully opaque background fills.
-    pub opaque_filled_cells: usize,
-    /// Largest background fill in this frame.
-    pub largest_fill: Option<LargestFillProfile>,
-    /// Time spent writing text glyphs into the grid.
-    pub text_write_time: Duration,
-    /// Number of glyph heads written into the grid.
-    pub glyphs_written: usize,
-    /// Time spent formatting input display content before text paint.
-    pub input_format_time: Duration,
-}
 
 /// Base cell state used to clear a frame before painting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

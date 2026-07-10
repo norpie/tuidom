@@ -349,6 +349,7 @@ impl Grid {
 
     /// Write one line of text at a position, clipped to the screen width.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
+    #[cfg(test)]
     pub fn write_text(&mut self, x: i32, y: i32, text: &str, fg: Option<Rgb>, alpha: f64) -> usize {
         if y < 0 || y >= self.height as i32 {
             return 0;
