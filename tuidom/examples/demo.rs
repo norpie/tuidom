@@ -21,7 +21,7 @@ use std::time::Duration;
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
-    AlignItems, Color, CursorShape, FlexDirection, FlexGap, JustifyContent, Length, Style,
+    AlignItems, Color, CursorShape, FlexDirection, FlexGap, JustifyContent, Length, Position, Style,
 };
 
 fn init_logging() {
@@ -106,6 +106,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     focus_style.color(Color::black());
     focus_style.background(Color::yellow());
 
+    // Anchored to the button's own box, so it follows the button as the layout
+    // recenters, and overhangs the button's bounds instead of being clipped to them.
+    let mut badge_style = Style::new();
+    badge_style.position(Position::Absolute { x: 15, y: -1 });
+    badge_style.color(Color::black());
+    badge_style.background(Color::oklch(0.75, 0.19, 40.0));
+
     let mut input_style = Style::new();
     input_style.width(Length::Pixels(24));
     input_style.height(Length::Pixels(1));
@@ -158,10 +165,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let button_label = doc.create_text("Buttons")?;
     doc.set_style(button_label, &section_label_style)?;
 
+    let toggle_button = doc.create_box()?;
+    let mut toggle_button_style = Style::new();
+    toggle_button_style.width(Length::Auto);
+    toggle_button_style.height(Length::Auto);
+    doc.set_style(toggle_button, &toggle_button_style)?;
+
     let text = doc.create_text("  Toggle opacity  ")?;
     doc.set_style(text, &text_style)?;
     doc.set_focusable(text, true)?;
     doc.set_focus_style(text, &focus_style)?;
+
+    let badge = doc.create_text(" 3 ")?;
+    doc.set_style(badge, &badge_style)?;
 
     let second = doc.create_text("  Focus target  ")?;
     doc.set_style(second, &secondary_text_style)?;
@@ -188,7 +204,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     doc.append_child(top_bar, perf_counter)?;
 
-    doc.append_child(button_row, text)?;
+    doc.append_child(toggle_button, text)?;
+    doc.append_child(toggle_button, badge)?;
+    doc.append_child(button_row, toggle_button)?;
     doc.append_child(button_row, second)?;
 
     doc.append_child(editable_field, editable_label)?;
