@@ -72,6 +72,7 @@ impl Document {
                 focus_keys: Mutex::new(FocusKeys::default()),
                 pseudo_styles: Mutex::new(HashMap::new()),
                 active_node: Mutex::new(None),
+                disabled_nodes: Mutex::new(HashSet::new()),
                 tree_mutation: RwLock::new(()),
                 notify: Notify::new(),
                 shutdown: RwLock::new(false),

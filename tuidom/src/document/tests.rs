@@ -419,6 +419,172 @@ fn removing_the_active_node_clears_active_state() {
 }
 
 #[test]
+fn disabled_is_inherited_by_the_whole_subtree() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, child).unwrap();
+
+    doc.set_disabled(panel, true).unwrap();
+
+    assert!(doc.is_disabled(panel).unwrap());
+    assert!(doc.is_effectively_disabled(child).unwrap());
+    // The child is disabled through its ancestor, not in its own right.
+    assert!(!doc.is_disabled(child).unwrap());
+
+    doc.set_disabled(panel, false).unwrap();
+    assert!(!doc.is_effectively_disabled(child).unwrap());
+}
+
+#[test]
+fn disabled_nodes_cannot_be_focused_and_are_skipped_by_tab() {
+    let doc = Document::new().unwrap();
+    let first = doc.create_box().unwrap();
+    let panel = doc.create_box().unwrap();
+    let inside_panel = doc.create_box().unwrap();
+    let last = doc.create_box().unwrap();
+
+    doc.append_child(doc.root(), first).unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, inside_panel).unwrap();
+    doc.append_child(doc.root(), last).unwrap();
+    for node in [first, inside_panel, last] {
+        doc.set_focusable(node, true).unwrap();
+    }
+
+    doc.set_disabled(panel, true).unwrap();
+
+    // Tab skips the whole disabled subtree rather than just the disabled node.
+    doc.focus(first).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(last));
+
+    assert!(doc.focus(inside_panel).is_err());
+}
+
+#[test]
+fn disabling_a_node_blurs_it_and_clears_active() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let button = doc.create_box().unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, button).unwrap();
+    doc.set_focusable(button, true).unwrap();
+
+    doc.focus(button).unwrap();
+    doc.set_active(button, true).unwrap();
+    assert_eq!(doc.focused(), Some(button));
+    assert_eq!(doc.active(), Some(button));
+
+    // Disabling the ancestor must release focus and the pressed state held by the child.
+    doc.set_disabled(panel, true).unwrap();
+    assert_eq!(doc.focused(), None);
+    assert_eq!(doc.active(), None);
+
+    // An effectively disabled node cannot be made active again.
+    doc.set_active(button, true).unwrap();
+    assert_eq!(doc.active(), None);
+}
+
+#[test]
+fn disabled_nodes_swallow_targeted_events() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let button = doc.create_box().unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, button).unwrap();
+
+    // Empty boxes measure zero, so give them size for the hit test to land on the button.
+    let mut sized = Style::new();
+    sized.width(Length::Pixels(2));
+    sized.height(Length::Pixels(1));
+    doc.set_style(panel, &sized).unwrap();
+    doc.set_style(button, &sized).unwrap();
+
+    let panel_clicks = Arc::new(AtomicUsize::new(0));
+    let button_clicks = Arc::new(AtomicUsize::new(0));
+    {
+        let panel_clicks = panel_clicks.clone();
+        doc.on_click(panel, move |_| {
+            panel_clicks.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+        let button_clicks = button_clicks.clone();
+        doc.on_click(button, move |_| {
+            button_clicks.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    runtime.simulate_click(0, 0);
+    assert_eq!(button_clicks.load(Ordering::SeqCst), 1);
+    assert_eq!(panel_clicks.load(Ordering::SeqCst), 1);
+
+    // The disabled button drops the event rather than bubbling it to the enabled panel.
+    doc.set_disabled(button, true).unwrap();
+    runtime.simulate_click(0, 0);
+    assert_eq!(button_clicks.load(Ordering::SeqCst), 1);
+    assert_eq!(panel_clicks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn disabled_style_merges_over_focus_and_active_styles() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut base = Style::new();
+    base.color(Color::white());
+    base.background(Color::blue());
+    doc.set_style(node, &base).unwrap();
+
+    let mut focus_style = Style::new();
+    focus_style.background(Color::yellow());
+    doc.set_focus_style(node, &focus_style).unwrap();
+
+    let mut disabled_style = Style::new();
+    disabled_style.color(Color::black());
+    doc.set_disabled_style(node, &disabled_style).unwrap();
+
+    doc.focus(node).unwrap();
+    assert_eq!(doc.resolved_style(node).unwrap().color, Color::white());
+
+    // Disabling blurs the node, so the focus style drops and the disabled style applies.
+    doc.set_disabled(node, true).unwrap();
+    let disabled = doc.resolved_style(node).unwrap();
+    assert_eq!(disabled.color, Color::black());
+    assert_eq!(disabled.background, Some(Color::blue()));
+}
+
+#[test]
+fn descendant_disabled_style_applies_through_a_disabled_ancestor() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, child).unwrap();
+
+    let mut base = Style::new();
+    base.color(Color::white());
+    doc.set_style(child, &base).unwrap();
+
+    let mut disabled_style = Style::new();
+    disabled_style.color(Color::black());
+    doc.set_disabled_style(child, &disabled_style).unwrap();
+
+    assert_eq!(doc.resolved_style(child).unwrap().color, Color::white());
+
+    // The child defines its own disabled style, so disabling the panel restyles it.
+    doc.set_disabled(panel, true).unwrap();
+    assert_eq!(doc.resolved_style(child).unwrap().color, Color::black());
+}
+
+#[test]
 fn input_state_apis_read_write_and_normalize_offsets() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("a\u{301}b").unwrap();

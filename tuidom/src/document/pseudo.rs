@@ -51,6 +51,9 @@ impl Document {
     /// Returns an error if `node` does not exist in this document.
     pub fn set_active(&self, node: NodeId, active: bool) -> Result<()> {
         self.ensure_pseudo_node_exists(node)?;
+        if active && self.is_effectively_disabled_unlocked(node) {
+            return Ok(());
+        }
         let target = if active { Some(node) } else { None };
         self.set_active_node(target)
     }
@@ -76,6 +79,133 @@ impl Document {
         }
         self.inner.notify.notify_one();
         Ok(())
+    }
+
+    /// Set the style merged into a node's resolved style while it is effectively disabled.
+    ///
+    /// A node merges its own disabled style whenever it or an ancestor is disabled, so
+    /// disabling a container restyles descendants that define a disabled style and
+    /// leaves the rest untouched.
+    pub fn set_disabled_style(&self, node: NodeId, style: &Style) -> Result<()> {
+        self.ensure_pseudo_node_exists(node)?;
+        lock::mutex(&self.inner.pseudo_styles)
+            .entry(node)
+            .or_default()
+            .disabled = Some(style.clone());
+        if self.is_effectively_disabled_unlocked(node) {
+            self.refresh_pseudo_style_effect(node)?;
+        }
+        Ok(())
+    }
+
+    /// Clear a node's disabled style.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn clear_disabled_style(&self, node: NodeId) -> Result<()> {
+        self.ensure_pseudo_node_exists(node)?;
+        self.clear_pseudo_style(node, |pseudo| pseudo.disabled = None);
+        if self.is_effectively_disabled_unlocked(node) {
+            self.refresh_pseudo_style_effect(node)?;
+        }
+        Ok(())
+    }
+
+    /// Whether this node is itself marked disabled, ignoring its ancestors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn is_disabled(&self, node: NodeId) -> Result<bool> {
+        self.ensure_pseudo_node_exists(node)?;
+        Ok(lock::mutex(&self.inner.disabled_nodes).contains(&node))
+    }
+
+    /// Whether this node is disabled, either directly or through an ancestor.
+    ///
+    /// Effectively disabled nodes cannot be focused, are skipped by tab and spatial
+    /// navigation, and swallow targeted events rather than bubbling them to enabled
+    /// ancestors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn is_effectively_disabled(&self, node: NodeId) -> Result<bool> {
+        self.ensure_pseudo_node_exists(node)?;
+        Ok(self.is_effectively_disabled_unlocked(node))
+    }
+
+    /// Disable or re-enable a node and, with it, its whole subtree.
+    ///
+    /// Disabling blurs the node or a focused descendant and clears a pressed node inside
+    /// the subtree, so a disabled node never retains focus or an active state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn set_disabled(&self, node: NodeId, disabled: bool) -> Result<()> {
+        self.ensure_pseudo_node_exists(node)?;
+
+        let changed = {
+            let mut disabled_nodes = lock::mutex(&self.inner.disabled_nodes);
+            if disabled {
+                disabled_nodes.insert(node)
+            } else {
+                disabled_nodes.remove(&node)
+            }
+        };
+        if !changed {
+            return Ok(());
+        }
+
+        if disabled {
+            if let Some(focused) = self.focused()
+                && self.is_self_or_descendant(node, focused)
+            {
+                self.blur();
+            }
+            if let Some(active) = self.active()
+                && self.is_self_or_descendant(node, active)
+            {
+                self.set_active_node(None)?;
+            }
+        }
+
+        // Effective disabled state changed for the whole subtree, so every descendant may
+        // now merge or drop its disabled style.
+        self.invalidate_resolved_style(node);
+        self.sync_layout_subtree_styles(node)?;
+        self.inner.notify.notify_one();
+        Ok(())
+    }
+
+    pub(crate) fn is_effectively_disabled_unlocked(&self, node: NodeId) -> bool {
+        let disabled_nodes = lock::mutex(&self.inner.disabled_nodes);
+        if disabled_nodes.is_empty() {
+            return false;
+        }
+
+        let mut current = Some(node);
+        while let Some(id) = current {
+            if disabled_nodes.contains(&id) {
+                return true;
+            }
+            current = self.get_parent_unlocked(id);
+        }
+        false
+    }
+
+    /// Whether `candidate` is `ancestor` itself or sits below it in the tree.
+    fn is_self_or_descendant(&self, ancestor: NodeId, candidate: NodeId) -> bool {
+        let mut current = Some(candidate);
+        while let Some(id) = current {
+            if id == ancestor {
+                return true;
+            }
+            current = self.get_parent(id);
+        }
+        false
     }
 
     pub(super) fn refresh_pseudo_style_effect(&self, node: NodeId) -> Result<()> {

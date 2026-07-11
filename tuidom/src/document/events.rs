@@ -304,6 +304,12 @@ impl Document {
     ) where
         E: TargetedEvent,
     {
+        // A disabled node swallows targeted events instead of letting them bubble to
+        // enabled ancestors, matching how disabled controls behave in HTML.
+        if self.is_effectively_disabled_unlocked(target) {
+            return;
+        }
+
         let path = self.event_path(target);
         if path.is_empty() {
             return;

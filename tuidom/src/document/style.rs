@@ -151,7 +151,9 @@ impl Document {
             }
         };
 
-        // Merge order is base → focus → active, so active wins on conflict.
+        // Merge order is base → focus → active → disabled, so disabled wins on conflict.
+        // Disabling blurs and deactivates the node, so disabled rarely coexists with the
+        // others; the order is a safety net rather than a common path.
         let pseudo = lock::mutex(&self.inner.pseudo_styles).get(&id).cloned();
         if let Some(pseudo) = pseudo {
             if self.focused() == Some(id)
@@ -163,6 +165,11 @@ impl Document {
                 && let Some(active_style) = &pseudo.active
             {
                 resolved.apply_overrides(active_style, parent_resolved.as_ref(), &defaults);
+            }
+            if let Some(disabled_style) = &pseudo.disabled
+                && self.is_effectively_disabled_unlocked(id)
+            {
+                resolved.apply_overrides(disabled_style, parent_resolved.as_ref(), &defaults);
             }
         }
 

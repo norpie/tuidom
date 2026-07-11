@@ -48,10 +48,13 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// Returns an error if `node` does not exist in this document or is not focusable.
+    /// Returns an error if `node` does not exist in this document, is not focusable, or
+    /// is effectively disabled.
     pub fn focus(&self, node: NodeId) -> Result<()> {
         self.ensure_focus_node_exists(node)?;
-        if !lock::mutex(&self.inner.focusable_nodes).contains(&node) {
+        if !lock::mutex(&self.inner.focusable_nodes).contains(&node)
+            || self.is_effectively_disabled_unlocked(node)
+        {
             return Err(TuidomError::NodeNotFocusable { id: node });
         }
 
@@ -155,6 +158,12 @@ impl Document {
     }
 
     pub(crate) fn focus_target_from_hit(&self, hit: NodeId) -> Option<NodeId> {
+        // A disabled node swallows the interaction instead of handing it to an enabled
+        // ancestor, matching how disabled targets drop events.
+        if self.is_effectively_disabled_unlocked(hit) {
+            return None;
+        }
+
         let focusable = lock::mutex(&self.inner.focusable_nodes).clone();
         let mut current = Some(hit);
         while let Some(node) = current {
@@ -277,6 +286,11 @@ impl Document {
         focusable: &HashSet<NodeId>,
         nodes: &mut Vec<NodeId>,
     ) {
+        // A disabled node disables its whole subtree, so prune instead of descending.
+        if lock::mutex(&self.inner.disabled_nodes).contains(&node) {
+            return;
+        }
+
         if focusable.contains(&node) && self.inner.nodes.contains_key(&node) {
             nodes.push(node);
         }
@@ -314,6 +328,7 @@ impl Document {
                     && focusable.contains(&entry.id)
                     && entry.layout.width > 0
                     && entry.layout.height > 0
+                    && !self.is_effectively_disabled_unlocked(entry.id)
             })
             .filter_map(|(paint_rank, entry)| {
                 let distance = directional_distance(current_layout, entry.layout, direction)?;
