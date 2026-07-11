@@ -28,7 +28,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Position::Flow** — Default positioning mode. Node participates in normal flexbox layout.
 
-**Position::Absolute** — Node positioned at specific coordinates relative to screen root, removed from flow.
+**Position::Absolute** — Node removed from normal flow and positioned at a signed cell offset from its parent's box origin. Screen-root placement is expressed by parenting the node to the root. Published layout rectangles remain screen-absolute regardless of positioning mode.
 
 ## Styling
 

@@ -104,7 +104,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Careful integer rounding of layout results to avoid gaps/overlaps
 - [ ] Positioning modes:
   - [ ] `Position::Flow` (default) — normal flexbox layout
-  - [ ] `Position::Absolute { x, y }` — coordinates relative to stacking context
+  - [ ] `Position::Absolute { x, y }` — signed cell offset from the parent's box origin, removed from flow
 - [ ] Centering helpers (terminal cells are discrete — can't always center perfectly):
   - [ ] `center_x()` / `center_y()` — returns `Centered::Even(x)` or `Centered::Uneven(left, right)` when margins differ by 1
   - [ ] `any_center_x()` / `any_center_y()` — returns single coordinate (left/top-biased) when you don't care about off-by-one
