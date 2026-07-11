@@ -263,6 +263,64 @@ fn padding_affects_rendered_child_position() {
     assert_eq!(runtime.get_cell(2, 1).unwrap().text, "A");
 }
 
+/// An absolute node overflowing its parent must paint and hit-test at its offset
+/// position, which exercises layout, paint, and `node_at` against real layout rects.
+#[test]
+fn absolute_node_paints_and_hit_tests_outside_its_parent() {
+    let doc = Document::new().unwrap();
+
+    let parent = doc.create_box().unwrap();
+    let mut parent_style = Style::new();
+    parent_style.width(Length::Pixels(2));
+    parent_style.height(Length::Pixels(1));
+    doc.set_style(parent, &parent_style).unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+
+    // Anchored below-right of a 2x1 parent that sits at the origin.
+    let badge = doc.create_text("X").unwrap();
+    let mut badge_style = Style::new();
+    badge_style.position(Position::Absolute { x: 3, y: 2 });
+    doc.set_style(badge, &badge_style).unwrap();
+    doc.append_child(parent, badge).unwrap();
+
+    let mut root_style = Style::new();
+    root_style.align_items(AlignItems::FlexStart);
+    doc.set_style(doc.root(), &root_style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 6, 4);
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(3, 2).unwrap().text, "X");
+    assert_eq!(doc.node_at(3, 2), Some(badge));
+    assert_eq!(doc.get_node(badge).unwrap().layout.unwrap().x, 3);
+}
+
+/// Absolute positioning must not let a descendant's `z_index` escape its parent
+/// subtree: paint order stays subtree-atomic regardless of positioning mode.
+#[test]
+fn absolute_descendant_z_index_stays_inside_parent_subtree() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let parent = doc.create_box().unwrap();
+    let absolute_child = doc.create_box().unwrap();
+    let sibling = doc.create_box().unwrap();
+
+    set_z_index(&doc, parent, 0);
+    set_z_index(&doc, absolute_child, 999);
+    set_z_index(&doc, sibling, 1);
+    doc.update_style(absolute_child, |style| {
+        style.position(Position::Absolute { x: 0, y: 0 })
+    })
+    .unwrap();
+
+    doc.append_child(root, parent).unwrap();
+    doc.append_child(parent, absolute_child).unwrap();
+    doc.append_child(root, sibling).unwrap();
+    set_one_cell_layouts(&doc, &[root, parent, absolute_child, sibling]);
+
+    assert_eq!(doc.node_at(0, 0), Some(sibling));
+}
+
 #[test]
 fn input_state_apis_read_write_and_normalize_offsets() {
     let doc = Document::new().unwrap();
@@ -1476,6 +1534,45 @@ fn spatial_navigation_chooses_nearest_focusable_node() {
     doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
 
     assert_eq!(doc.focused(), Some(near_right));
+}
+
+/// Spatial navigation reads published layout rects, so an absolute node must be
+/// reachable at the position its offset puts it, not at its DOM-order flow slot.
+#[test]
+fn spatial_navigation_reaches_absolute_node_at_its_offset_position() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let current = doc.create_box().unwrap();
+    let absolute = doc.create_box().unwrap();
+
+    let mut root_style = Style::new();
+    root_style.align_items(AlignItems::FlexStart);
+    doc.set_style(root, &root_style).unwrap();
+
+    let mut current_style = Style::new();
+    current_style.width(Length::Pixels(2));
+    current_style.height(Length::Pixels(2));
+    doc.set_style(current, &current_style).unwrap();
+
+    let mut absolute_style = Style::new();
+    absolute_style.width(Length::Pixels(2));
+    absolute_style.height(Length::Pixels(2));
+    absolute_style.position(Position::Absolute { x: 10, y: 0 });
+    doc.set_style(absolute, &absolute_style).unwrap();
+
+    doc.append_child(root, current).unwrap();
+    doc.append_child(root, absolute).unwrap();
+    for node in [current, absolute] {
+        doc.set_focusable(node, true).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 10);
+    runtime.render().unwrap();
+
+    doc.focus(current).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+
+    assert_eq!(doc.focused(), Some(absolute));
 }
 
 #[test]

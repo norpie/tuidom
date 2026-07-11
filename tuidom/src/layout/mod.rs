@@ -15,9 +15,11 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::{LayoutRect, NodeKind};
 use crate::style::resolution::ResolvedStyle;
+// `Position` shadows `taffy::prelude::Position`; taffy's own positioning types are
+// referenced through `taffy::style::` below.
 use crate::style::{
     AlignContent, AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap,
-    JustifyContent, Length,
+    JustifyContent, Length, Position,
 };
 
 // ---------------------------------------------------------------------------
@@ -401,7 +403,31 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         align_items: Some(to_align_items(resolved.align_items)),
         align_content: Some(to_align_content(resolved.align_content)),
         justify_content: Some(to_justify_content(resolved.justify_content)),
+        position: to_taffy_position(resolved.position),
+        inset: to_taffy_inset(resolved.position),
         ..Default::default()
+    }
+}
+
+fn to_taffy_position(position: Position) -> taffy::style::Position {
+    match position {
+        Position::Flow => taffy::style::Position::Relative,
+        Position::Absolute { .. } => taffy::style::Position::Absolute,
+    }
+}
+
+/// Absolute offsets are anchored from the parent's top-left, so only `left`/`top`
+/// are set. Leaving `right`/`bottom` auto keeps the node sized by its own style
+/// rather than stretched between opposing insets.
+fn to_taffy_inset(position: Position) -> Rect<LengthPercentageAuto> {
+    match position {
+        Position::Flow => Rect::auto(),
+        Position::Absolute { x, y } => Rect {
+            left: LengthPercentageAuto::length(x as f32),
+            top: LengthPercentageAuto::length(y as f32),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
     }
 }
 
@@ -811,6 +837,188 @@ mod tests {
         assert_eq!(first_layout.width, 5);
         assert_eq!(second_layout.width, 3);
         assert_eq!(second_layout.x, 5);
+    }
+
+    /// Absolute insets resolve against the parent's padding box, so the parent's own
+    /// padding does not push an absolute child inward. With no border support yet, the
+    /// padding box origin coincides with the parent's box origin; revisit when borders
+    /// land (roadmap section 8).
+    #[test]
+    fn absolute_offset_resolves_against_parent_origin_ignoring_parent_padding() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let parent = doc.create_box().unwrap();
+        let flush = doc.create_box().unwrap();
+        let offset = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(20));
+        root_style.height(Length::Pixels(10));
+        root_style.padding(EdgeInsets::all(4));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut parent_style = DomStyle::new();
+        parent_style.width(Length::Pixels(10));
+        parent_style.height(Length::Pixels(5));
+        parent_style.padding(EdgeInsets::new(3, 0, 0, 2));
+        doc.set_style(parent, &parent_style).unwrap();
+        doc.append_child(root, parent).unwrap();
+
+        for (child, position) in [
+            (flush, Position::Absolute { x: 0, y: 0 }),
+            (offset, Position::Absolute { x: 3, y: 1 }),
+        ] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(1));
+            child_style.height(Length::Pixels(1));
+            child_style.position(position);
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(parent, child).unwrap();
+        }
+
+        compute_layout(&doc, 20, 10).unwrap();
+
+        // The parent sits at the root's padding origin, and published rects are screen-absolute.
+        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap();
+        assert_eq!((parent_layout.x, parent_layout.y), (4, 4));
+
+        let flush_layout = doc.get_node(flush).unwrap().layout.unwrap();
+        assert_eq!((flush_layout.x, flush_layout.y), (4, 4));
+
+        let offset_layout = doc.get_node(offset).unwrap().layout.unwrap();
+        assert_eq!((offset_layout.x, offset_layout.y), (7, 5));
+    }
+
+    #[test]
+    fn absolute_node_is_removed_from_sibling_flow() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let absolute = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(2));
+        root_style.align_items(AlignItems::FlexStart);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, absolute, second] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            if child == absolute {
+                child_style.position(Position::Absolute { x: 7, y: 1 });
+            }
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 10, 2).unwrap();
+
+        // `second` takes the slot the absolute node would have occupied in flow.
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!((first_layout.x, first_layout.y), (0, 0));
+        assert_eq!((second_layout.x, second_layout.y), (2, 0));
+
+        let absolute_layout = doc.get_node(absolute).unwrap().layout.unwrap();
+        assert_eq!((absolute_layout.x, absolute_layout.y), (7, 1));
+    }
+
+    #[test]
+    fn children_of_absolute_node_lay_out_relative_to_it() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let absolute = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(20));
+        root_style.height(Length::Pixels(10));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut absolute_style = DomStyle::new();
+        absolute_style.width(Length::Pixels(8));
+        absolute_style.height(Length::Pixels(4));
+        absolute_style.padding(EdgeInsets::all(1));
+        absolute_style.position(Position::Absolute { x: 5, y: 2 });
+        doc.set_style(absolute, &absolute_style).unwrap();
+        doc.append_child(root, absolute).unwrap();
+
+        let mut child_style = DomStyle::new();
+        child_style.width(Length::Pixels(2));
+        child_style.height(Length::Pixels(1));
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(absolute, child).unwrap();
+
+        compute_layout(&doc, 20, 10).unwrap();
+
+        // Flow child of an absolute node still honors that node's padding.
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!((child_layout.x, child_layout.y), (6, 3));
+    }
+
+    #[test]
+    fn absolute_node_may_overflow_parent_bounds_with_negative_offsets() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(20));
+        root_style.height(Length::Pixels(10));
+        root_style.padding(EdgeInsets::all(2));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut parent_style = DomStyle::new();
+        parent_style.width(Length::Pixels(4));
+        parent_style.height(Length::Pixels(2));
+        doc.set_style(parent, &parent_style).unwrap();
+        doc.append_child(root, parent).unwrap();
+
+        let mut child_style = DomStyle::new();
+        child_style.width(Length::Pixels(1));
+        child_style.height(Length::Pixels(1));
+        child_style.position(Position::Absolute { x: -3, y: -3 });
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        compute_layout(&doc, 20, 10).unwrap();
+
+        // Escapes the parent box entirely; paint clips to the screen, not to the parent.
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!((child_layout.x, child_layout.y), (-1, -1));
+    }
+
+    #[test]
+    fn absolute_node_honors_display_none() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let absolute = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(5));
+        doc.set_style(root, &root_style).unwrap();
+
+        let mut absolute_style = DomStyle::new();
+        absolute_style.width(Length::Pixels(2));
+        absolute_style.height(Length::Pixels(1));
+        absolute_style.position(Position::Absolute { x: 3, y: 3 });
+        absolute_style.display(Display::None);
+        doc.set_style(absolute, &absolute_style).unwrap();
+        doc.append_child(root, absolute).unwrap();
+
+        compute_layout(&doc, 10, 5).unwrap();
+
+        assert!(doc.get_node(absolute).unwrap().layout.is_none());
     }
 
     #[test]
