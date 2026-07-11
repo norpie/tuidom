@@ -36,7 +36,13 @@ Terms and concepts used throughout the tuidom codebase.
 
 **ResolvedStyle** — Computed style with all values resolved. Inheritance is computed and defaults are applied; colors remain in OKLCH until render-time RGB conversion.
 
-**PseudoState** — Visual state affecting style: `Normal`, `Focused`, `Active`, `Disabled`.
+**PseudoState** — State that merges an extra style on top of a node's base style: focused, active, or disabled. Styles merge in the order base → focus → active → disabled, so disabled wins on conflict.
+
+**Active** — The node currently being pressed. The engine sets it from mouse down on the hit's focus target and clears it on mouse up anywhere, so a drag off the node leaves nothing stuck pressed. `Document::set_active` drives it for activation the engine cannot see, such as keyboard presses.
+
+**Disabled** — State that blocks interaction across a whole subtree. A node is *effectively disabled* when it or any ancestor is disabled: it cannot be focused, is skipped by tab and spatial navigation, and swallows targeted events instead of bubbling them to enabled ancestors. Each node merges its own disabled style whenever it is effectively disabled.
+
+**Centered** — Result of a centering helper. `Even(offset)` when the leftover space divides evenly; `Uneven { low, high }` when terminal cells make exact centering impossible and the two closest offsets are equally valid.
 
 **StyleValue** — Wrapper for style properties. `Unset` uses the document/default style, `Inherit` resolves from the parent, and `Set(value)` uses an explicit value.
 

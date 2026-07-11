@@ -113,6 +113,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     badge_style.color(Color::black());
     badge_style.background(Color::oklch(0.75, 0.19, 40.0));
 
+    let mut active_style = Style::new();
+    active_style.color(Color::white());
+    active_style.background(Color::oklch(0.55, 0.2, 25.0));
+
+    let mut disabled_style = Style::new();
+    disabled_style.color(Color::oklch(0.55, 0.0, 260.0));
+    disabled_style.background(Color::oklch(0.25, 0.0, 260.0));
+
     let mut input_style = Style::new();
     input_style.width(Length::Pixels(24));
     input_style.height(Length::Pixels(1));
@@ -175,6 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.set_style(text, &text_style)?;
     doc.set_focusable(text, true)?;
     doc.set_focus_style(text, &focus_style)?;
+    doc.set_active_style(text, &active_style)?;
 
     let badge = doc.create_text(" 3 ")?;
     doc.set_style(badge, &badge_style)?;
@@ -183,6 +192,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.set_style(second, &secondary_text_style)?;
     doc.set_focusable(second, true)?;
     doc.set_focus_style(second, &focus_style)?;
+    doc.set_active_style(second, &active_style)?;
+
+    // Focusable, but disabled — so tab, arrows, and clicks all skip it.
+    let disabled = doc.create_text("  Disabled  ")?;
+    doc.set_style(disabled, &secondary_text_style)?;
+    doc.set_focusable(disabled, true)?;
+    doc.set_focus_style(disabled, &focus_style)?;
+    doc.set_disabled_style(disabled, &disabled_style)?;
+    doc.set_disabled(disabled, true)?;
 
     let input_label = doc.create_text("Inputs")?;
     doc.set_style(input_label, &section_label_style)?;
@@ -208,6 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(toggle_button, badge)?;
     doc.append_child(button_row, toggle_button)?;
     doc.append_child(button_row, second)?;
+    doc.append_child(button_row, disabled)?;
 
     doc.append_child(editable_field, editable_label)?;
     doc.append_child(editable_field, editable)?;

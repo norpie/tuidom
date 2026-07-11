@@ -105,19 +105,21 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Positioning modes:
   - [x] `Position::Flow` (default) — normal flexbox layout
   - [x] `Position::Absolute { x, y }` — signed cell offset from the parent's box origin, removed from flow
-- [ ] Centering helpers (terminal cells are discrete — can't always center perfectly):
-  - [ ] `center_x()` / `center_y()` — returns `Centered::Even(x)` or `Centered::Uneven(left, right)` when margins differ by 1
-  - [ ] `any_center_x()` / `any_center_y()` — returns single coordinate (left/top-biased) when you don't care about off-by-one
+- [x] Centering helpers (terminal cells are discrete — can't always center perfectly):
+  - [x] `center_x()` / `center_y()` — returns `Centered::Even(x)` or `Centered::Uneven { low, high }` when margins differ by 1
+  - [x] `any_center_x()` / `any_center_y()` — returns single coordinate (left/top-biased) when you don't care about off-by-one
 
 ## Styling
 
 - [x] Inline styles only — no CSS selectors, no stylesheets, no cascade
 - [x] Explicit inheritance via `StyleValue::Inherit` — nothing inherits unless specified
 - [x] Style resolution walks parent chain for inherited values, caches results
-- [ ] Pseudo-state style overrides (merged on top of base style):
-  - [ ] `set_focus_style()` — when node is focused (hover = focus)
-  - [ ] `set_active_style()` — when node is being pressed
-  - [ ] `set_disabled_style()` — when node is disabled
+- [x] Pseudo-state style overrides (merged on top of base style):
+  - [x] `set_focus_style()` — when node is focused (hover = focus)
+  - [x] `set_active_style()` — when node is being pressed
+  - [x] `set_disabled_style()` — when node is disabled
+  - [x] Merge order: base → focus → active → disabled
+  - [x] Disabled is subtree-wide — disabled nodes are non-focusable and swallow targeted events
 
 ## Borders
 
