@@ -15,6 +15,8 @@ mod error;
 pub mod event;
 /// Render + event loop.
 mod event_loop;
+/// Centering and other geometry helpers.
+pub mod geometry;
 /// Headless runtime and screen inspection APIs.
 pub mod headless;
 /// Node handle types.
