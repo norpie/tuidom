@@ -33,6 +33,13 @@ Plans live in `.plans/` directory (gitignored).
 - No silent workarounds or compromise on design
 - User needs to know about issues early
 
+## Verification
+
+- **Never run the TUI to verify your work.** Do not launch the demo, do not drive it in a pty, do not scrape its escape output.
+- The test suite is the verification path. It exists for this reason — headless rendering, screen inspection, and simulated input all exist so behavior can be asserted without a terminal.
+- `examples/demo.rs` is for humans. Keep it working and update it when a feature warrants a smoke surface, but it is not your feedback loop.
+- If something cannot be verified through tests, say so and discuss it with the user instead of reaching for the demo.
+
 ## Git
 
 Only applicable when asked to commit automatically. If not asked, do not touch git, no "end of feature" summaries, no "final" commits, no "cleanup" commits.
