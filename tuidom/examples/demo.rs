@@ -5,13 +5,15 @@
 //!
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Arrows / hjkl        — move focus spatially, or move input cursor
-//! Esc                  — blur focused node
+//! Esc                  — blur focused node; press again in the modal to close it
 //! Hover buttons/input  — focus node
 //! Type in inputs       — edit text / masked password input
 //! Space outside input  — toggle first button opacity (fade in/out)
 //! Click first button   — toggle button background, stop propagation
 //! Click background     — toggle container background
 //! Wheel anywhere       — adjust text opacity via container wheel handler
+//! m outside input      — open the modal: focus is trapped inside it and the
+//!                        content behind it goes inert (no tab, hover, or clicks)
 //! q outside input      — quit
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +23,8 @@ use std::time::Duration;
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
-    AlignItems, Color, CursorShape, FlexDirection, FlexGap, JustifyContent, Length, Position, Style,
+    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, JustifyContent,
+    Length, Position, Style,
 };
 
 fn init_logging() {
@@ -120,6 +123,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut disabled_style = Style::new();
     disabled_style.color(Color::oklch(0.55, 0.0, 260.0));
     disabled_style.background(Color::oklch(0.25, 0.0, 260.0));
+
+    // The modal layer is a stacking context, which is what lets it trap focus. Its
+    // translucent fill blends with the UI behind it instead of hiding it.
+    let mut modal_layer_style = Style::new();
+    modal_layer_style.stacking_context(true);
+    modal_layer_style.z_index(10);
+    modal_layer_style.display(Display::None);
+    modal_layer_style.position(Position::Absolute { x: 0, y: 0 });
+    modal_layer_style.width(Length::Percent(100.0));
+    modal_layer_style.height(Length::Percent(100.0));
+    modal_layer_style.background(Color::oklcha(0.15, 0.03, 260.0, 0.6));
+    modal_layer_style.justify_content(JustifyContent::Center);
+    modal_layer_style.align_items(AlignItems::Center);
+
+    let mut dialog_style = Style::new();
+    dialog_style.width(Length::Auto);
+    dialog_style.height(Length::Auto);
+    dialog_style.flex_direction(FlexDirection::Column);
+    dialog_style.align_items(AlignItems::Center);
+    dialog_style.gap(FlexGap::new(1, 0));
+    dialog_style.padding(EdgeInsets::all(1));
+    dialog_style.background(Color::oklch(0.28, 0.06, 280.0));
 
     let mut input_style = Style::new();
     input_style.width(Length::Pixels(24));
@@ -242,9 +267,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, input_label)?;
     doc.append_child(stack, input_row)?;
 
+    // --- Modal --------------------------------------------------------
+
+    let modal_layer = doc.create_box()?;
+    doc.set_style(modal_layer, &modal_layer_style)?;
+
+    let dialog = doc.create_box()?;
+    doc.set_style(dialog, &dialog_style)?;
+
+    let modal_title = doc.create_text(" Focus is trapped in here ")?;
+    doc.set_style(modal_title, &title_style)?;
+
+    let modal_hint = doc.create_text("Tab cycles these two only. Esc twice closes.")?;
+    doc.set_style(modal_hint, &label_style)?;
+
+    let modal_buttons = doc.create_box()?;
+    doc.set_style(modal_buttons, &row_style)?;
+
+    let confirm = doc.create_text("  Confirm  ")?;
+    doc.set_style(confirm, &text_style)?;
+    doc.set_focusable(confirm, true)?;
+    doc.set_focus_style(confirm, &focus_style)?;
+    doc.set_active_style(confirm, &active_style)?;
+
+    let cancel = doc.create_text("  Cancel  ")?;
+    doc.set_style(cancel, &secondary_text_style)?;
+    doc.set_focusable(cancel, true)?;
+    doc.set_focus_style(cancel, &focus_style)?;
+    doc.set_active_style(cancel, &active_style)?;
+
+    doc.append_child(modal_buttons, confirm)?;
+    doc.append_child(modal_buttons, cancel)?;
+    doc.append_child(dialog, modal_title)?;
+    doc.append_child(dialog, modal_hint)?;
+    doc.append_child(dialog, modal_buttons)?;
+    doc.append_child(modal_layer, dialog)?;
+
     doc.append_child(center_area, stack)?;
     doc.append_child(container, top_bar)?;
     doc.append_child(container, center_area)?;
+    doc.append_child(container, modal_layer)?;
     doc.append_child(doc.root(), container)?;
 
     let mut focus_keys = FocusKeys::default();
@@ -291,9 +353,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let _ = d.update_style(text, |s| s.opacity(target));
             }
+            KeyCode::Char('m') => {
+                let _ = d.update_style(modal_layer, |s| s.display(Display::Flex));
+                let _ = d.push_focus_context(modal_layer);
+            }
             KeyCode::Char('q') => d.quit(),
             _ => {}
         }
+    })?;
+
+    // --- Modal handlers ------------------------------------------------
+
+    let close_modal = {
+        let d = doc.clone();
+        move || {
+            let _ = d.pop_focus_context();
+            let _ = d.update_style(modal_layer, |s| s.display(Display::None));
+        }
+    };
+
+    // Esc first blurs the focused button; the second press reaches the modal itself, which
+    // only receives it because keys dispatch from the active focus context, not the root.
+    let d = doc.clone();
+    let close_on_key = close_modal.clone();
+    doc.on_key_press(modal_layer, move |key| {
+        if key.code == KeyCode::Esc && d.focused().is_none() {
+            close_on_key();
+        }
+    })?;
+
+    let close_on_confirm = close_modal.clone();
+    doc.on_click(confirm, move |event| {
+        event.stop_propagation();
+        close_on_confirm();
+    })?;
+
+    doc.on_click(cancel, move |event| {
+        event.stop_propagation();
+        close_modal();
     })?;
 
     // --- Focus handlers ----------------------------------------------
