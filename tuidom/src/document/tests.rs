@@ -321,6 +321,103 @@ fn absolute_descendant_z_index_stays_inside_parent_subtree() {
     assert_eq!(doc.node_at(0, 0), Some(sibling));
 }
 
+/// The pressed node is the focus target of the hit, so pressing a child marks the
+/// focusable ancestor active rather than the child itself.
+#[test]
+fn mouse_down_activates_focus_target_and_mouse_up_clears_it() {
+    let doc = Document::new().unwrap();
+    let button = doc.create_box().unwrap();
+    let label = doc.create_text("X").unwrap();
+    doc.append_child(doc.root(), button).unwrap();
+    doc.append_child(button, label).unwrap();
+    doc.set_focusable(button, true).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    assert_eq!(doc.active(), None);
+
+    runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+    assert_eq!(doc.active(), Some(button));
+
+    runtime.simulate_mouse_up(0, 0, MouseButton::Left);
+    assert_eq!(doc.active(), None);
+}
+
+/// Releasing away from the pressed node must not leave it stuck active.
+#[test]
+fn mouse_up_outside_pressed_node_still_clears_active() {
+    let doc = Document::new().unwrap();
+    let button = doc.create_box().unwrap();
+    let mut button_style = Style::new();
+    button_style.width(Length::Pixels(1));
+    button_style.height(Length::Pixels(1));
+    doc.set_style(button, &button_style).unwrap();
+    doc.append_child(doc.root(), button).unwrap();
+    doc.set_focusable(button, true).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 6, 3);
+    runtime.render().unwrap();
+
+    runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+    assert_eq!(doc.active(), Some(button));
+
+    runtime.simulate_mouse_up(5, 2, MouseButton::Left);
+    assert_eq!(doc.active(), None);
+}
+
+#[test]
+fn active_style_merges_over_focus_style_while_pressed() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut base = Style::new();
+    base.color(Color::white());
+    base.background(Color::blue());
+    doc.set_style(node, &base).unwrap();
+
+    let mut focus_style = Style::new();
+    focus_style.background(Color::yellow());
+    doc.set_focus_style(node, &focus_style).unwrap();
+
+    let mut active_style = Style::new();
+    active_style.background(Color::red());
+    doc.set_active_style(node, &active_style).unwrap();
+
+    doc.focus(node).unwrap();
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(Color::yellow())
+    );
+
+    // Active merges on top of focus, and only overrides what it sets.
+    doc.set_active(node, true).unwrap();
+    let pressed = doc.resolved_style(node).unwrap();
+    assert_eq!(pressed.background, Some(Color::red()));
+    assert_eq!(pressed.color, Color::white());
+
+    doc.set_active(node, false).unwrap();
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(Color::yellow())
+    );
+}
+
+#[test]
+fn removing_the_active_node_clears_active_state() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    doc.set_active(node, true).unwrap();
+    assert_eq!(doc.active(), Some(node));
+
+    doc.remove_child(doc.root(), node).unwrap();
+    assert_eq!(doc.active(), None);
+}
+
 #[test]
 fn input_state_apis_read_write_and_normalize_offsets() {
     let doc = Document::new().unwrap();

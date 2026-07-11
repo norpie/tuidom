@@ -49,6 +49,9 @@ pub(crate) fn process_runtime_event(
         }
         RuntimeEvent::MouseDown(mut mouse) => {
             let target = mouse_target(doc, mouse.x, mouse.y);
+            // The pressed node is the node that would take focus from this hit, so
+            // "being pressed" and "would be focused" never disagree.
+            set_active_node(doc, doc.focus_target_from_hit(target));
             doc.dispatch_mouse_down_to(target, &mut mouse);
             state.pending_click = Some(ClickCandidate {
                 target,
@@ -62,6 +65,9 @@ pub(crate) fn process_runtime_event(
         }
         RuntimeEvent::MouseUp(mut mouse) => {
             let target = mouse_target(doc, mouse.x, mouse.y);
+            // Release clears the pressed state wherever the cursor ended up, so dragging
+            // off a node before releasing leaves nothing stuck active.
+            set_active_node(doc, None);
             doc.dispatch_mouse_up_to(target, &mut mouse);
 
             if state.pending_click.is_some_and(|down| {
@@ -89,6 +95,12 @@ pub(crate) fn process_runtime_event(
 
 fn mouse_target(doc: &Document, x: i32, y: i32) -> NodeId {
     doc.node_at(x, y).unwrap_or_else(|| doc.root())
+}
+
+fn set_active_node(doc: &Document, node: Option<NodeId>) {
+    if let Err(err) = doc.set_active_node(node) {
+        log::error!("active state update failed: {err}");
+    }
 }
 
 fn focus_hover_target(doc: &Document, x: i32, y: i32) {

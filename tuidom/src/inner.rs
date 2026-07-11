@@ -20,15 +20,17 @@ use crate::style::Style;
 ///
 /// One entry per node keeps pseudo-state lookup and cleanup on a single path as
 /// more states are added.
+/// Merge order is base → focus → active, so active wins on conflict.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PseudoStyles {
     pub focus: Option<Style>,
+    pub active: Option<Style>,
 }
 
 impl PseudoStyles {
     /// Whether no pseudo-style remains, so the entry can be dropped.
     pub fn is_empty(&self) -> bool {
-        self.focus.is_none()
+        self.focus.is_none() && self.active.is_none()
     }
 }
 
@@ -63,6 +65,9 @@ pub(crate) struct DocumentInner {
 
     /// Per-node styles merged when the node enters a pseudo-state.
     pub pseudo_styles: Mutex<HashMap<NodeId, PseudoStyles>>,
+
+    /// The node currently being pressed, if any.
+    pub active_node: Mutex<Option<NodeId>>,
 
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,

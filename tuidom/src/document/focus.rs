@@ -181,6 +181,17 @@ impl Document {
     pub(super) fn remove_focus_side_state(&self, node: NodeId) {
         lock::mutex(&self.inner.focusable_nodes).remove(&node);
         lock::mutex(&self.inner.pseudo_styles).remove(&node);
+
+        let removed_active = {
+            let mut active = lock::mutex(&self.inner.active_node);
+            if *active == Some(node) {
+                *active = None;
+                true
+            } else {
+                false
+            }
+        };
+
         let removed_focus = {
             let mut focused = lock::mutex(&self.inner.focused_node);
             if *focused == Some(node) {
@@ -191,7 +202,7 @@ impl Document {
             }
         };
 
-        if removed_focus {
+        if removed_focus || removed_active {
             self.inner.notify.notify_one();
         }
     }

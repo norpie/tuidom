@@ -23,6 +23,7 @@ mod events;
 mod focus;
 mod input;
 mod layout;
+mod pseudo;
 mod style;
 mod tree;
 
@@ -70,6 +71,7 @@ impl Document {
                 focusable_nodes: Mutex::new(HashSet::new()),
                 focus_keys: Mutex::new(FocusKeys::default()),
                 pseudo_styles: Mutex::new(HashMap::new()),
+                active_node: Mutex::new(None),
                 tree_mutation: RwLock::new(()),
                 notify: Notify::new(),
                 shutdown: RwLock::new(false),

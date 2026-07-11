@@ -151,12 +151,19 @@ impl Document {
             }
         };
 
-        if self.focused() == Some(id)
-            && let Some(focus_style) = lock::mutex(&self.inner.pseudo_styles)
-                .get(&id)
-                .and_then(|pseudo| pseudo.focus.clone())
-        {
-            resolved.apply_overrides(&focus_style, parent_resolved.as_ref(), &defaults);
+        // Merge order is base → focus → active, so active wins on conflict.
+        let pseudo = lock::mutex(&self.inner.pseudo_styles).get(&id).cloned();
+        if let Some(pseudo) = pseudo {
+            if self.focused() == Some(id)
+                && let Some(focus_style) = &pseudo.focus
+            {
+                resolved.apply_overrides(focus_style, parent_resolved.as_ref(), &defaults);
+            }
+            if self.active() == Some(id)
+                && let Some(active_style) = &pseudo.active
+            {
+                resolved.apply_overrides(active_style, parent_resolved.as_ref(), &defaults);
+            }
         }
 
         let Some(node) = self.inner.nodes.get(&id) else {
