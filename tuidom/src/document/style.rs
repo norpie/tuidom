@@ -152,9 +152,11 @@ impl Document {
         };
 
         if self.focused() == Some(id)
-            && let Some(focus_style) = lock::mutex(&self.inner.focus_styles).get(&id)
+            && let Some(focus_style) = lock::mutex(&self.inner.pseudo_styles)
+                .get(&id)
+                .and_then(|pseudo| pseudo.focus.clone())
         {
-            resolved.apply_overrides(focus_style, parent_resolved.as_ref(), &defaults);
+            resolved.apply_overrides(&focus_style, parent_resolved.as_ref(), &defaults);
         }
 
         let Some(node) = self.inner.nodes.get(&id) else {

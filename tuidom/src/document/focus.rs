@@ -4,6 +4,7 @@ use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{FocusKeys, KeyCode};
 use crate::id::NodeId;
+use crate::inner::PseudoStyles;
 use crate::lock;
 use crate::node::LayoutRect;
 use crate::paint_order::paint_order;
@@ -111,7 +112,10 @@ impl Document {
     /// inheritance semantics.
     pub fn set_focus_style(&self, node: NodeId, style: &Style) -> Result<()> {
         self.ensure_focus_node_exists(node)?;
-        lock::mutex(&self.inner.focus_styles).insert(node, style.clone());
+        lock::mutex(&self.inner.pseudo_styles)
+            .entry(node)
+            .or_default()
+            .focus = Some(style.clone());
         if self.focused() == Some(node) {
             self.refresh_focus_style_effect(node)?;
             self.inner.notify.notify_one();
@@ -126,7 +130,7 @@ impl Document {
     /// Returns an error if `node` does not exist in this document.
     pub fn clear_focus_style(&self, node: NodeId) -> Result<()> {
         self.ensure_focus_node_exists(node)?;
-        lock::mutex(&self.inner.focus_styles).remove(&node);
+        self.clear_pseudo_style(node, |pseudo| pseudo.focus = None);
         if self.focused() == Some(node) {
             self.refresh_focus_style_effect(node)?;
             self.inner.notify.notify_one();
@@ -162,9 +166,21 @@ impl Document {
         None
     }
 
+    /// Drop one pseudo-style, discarding the entry once no pseudo-style remains.
+    pub(super) fn clear_pseudo_style(&self, node: NodeId, clear: impl FnOnce(&mut PseudoStyles)) {
+        let mut pseudo_styles = lock::mutex(&self.inner.pseudo_styles);
+        let Some(pseudo) = pseudo_styles.get_mut(&node) else {
+            return;
+        };
+        clear(pseudo);
+        if pseudo.is_empty() {
+            pseudo_styles.remove(&node);
+        }
+    }
+
     pub(super) fn remove_focus_side_state(&self, node: NodeId) {
         lock::mutex(&self.inner.focusable_nodes).remove(&node);
-        lock::mutex(&self.inner.focus_styles).remove(&node);
+        lock::mutex(&self.inner.pseudo_styles).remove(&node);
         let removed_focus = {
             let mut focused = lock::mutex(&self.inner.focused_node);
             if *focused == Some(node) {

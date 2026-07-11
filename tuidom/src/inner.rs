@@ -14,6 +14,23 @@ use crate::layout::LayoutEngine;
 use crate::node::{LayoutRect, NodeData};
 use crate::performance::PerformanceState;
 use crate::runtime_event::RuntimeEvent;
+use crate::style::Style;
+
+/// Styles merged into a node's resolved style while it is in a pseudo-state.
+///
+/// One entry per node keeps pseudo-state lookup and cleanup on a single path as
+/// more states are added.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct PseudoStyles {
+    pub focus: Option<Style>,
+}
+
+impl PseudoStyles {
+    /// Whether no pseudo-style remains, so the entry can be dropped.
+    pub fn is_empty(&self) -> bool {
+        self.focus.is_none()
+    }
+}
 
 /// Internal state of a [`Document`](crate::Document).
 ///
@@ -44,8 +61,8 @@ pub(crate) struct DocumentInner {
     /// Keyboard bindings for document-level focus default actions.
     pub focus_keys: Mutex<FocusKeys>,
 
-    /// Per-node style merged when the node is focused.
-    pub focus_styles: Mutex<HashMap<NodeId, crate::style::Style>>,
+    /// Per-node styles merged when the node enters a pseudo-state.
+    pub pseudo_styles: Mutex<HashMap<NodeId, PseudoStyles>>,
 
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,
