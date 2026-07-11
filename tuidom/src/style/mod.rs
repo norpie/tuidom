@@ -226,6 +226,36 @@ pub enum JustifyContent {
 }
 
 // ---------------------------------------------------------------------------
+// Positioning
+// ---------------------------------------------------------------------------
+
+/// Positioning mode for a node.
+///
+/// Absolute offsets are parent-relative rather than screen-relative: place a node
+/// at screen coordinates by making it a child of the root, whose origin is `(0, 0)`.
+/// This keeps anchoring (badges, tooltips, dropdowns) working across reflow without
+/// downstream recomputation, and matches the paint model, where a descendant's
+/// `z_index` cannot escape its parent subtree.
+///
+/// Published layout rectangles are screen-absolute regardless of positioning mode.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum Position {
+    /// Participate in normal flex layout.
+    #[default]
+    Flow,
+    /// Remove the node from flow and offset it from its parent's box origin.
+    ///
+    /// Offsets are signed terminal cells; negative values place the node above or
+    /// left of its parent, and the node may overflow its parent's bounds.
+    Absolute {
+        /// Horizontal offset from the parent's box origin.
+        x: i32,
+        /// Vertical offset from the parent's box origin.
+        y: i32,
+    },
+}
+
+// ---------------------------------------------------------------------------
 // Style
 // ---------------------------------------------------------------------------
 
@@ -285,6 +315,8 @@ pub struct Style {
     pub(crate) align_content: StyleValue<AlignContent>,
     /// Main-axis alignment (flex container).
     pub(crate) justify_content: StyleValue<JustifyContent>,
+    /// Positioning mode.
+    pub(crate) position: StyleValue<Position>,
     /// Paint order within the current stacking context.
     pub(crate) z_index: StyleValue<i32>,
     /// Whether this node creates an isolated stacking context for descendants.
@@ -325,6 +357,7 @@ impl Style {
             align_items: StyleValue::Unset,
             align_content: StyleValue::Unset,
             justify_content: StyleValue::Unset,
+            position: StyleValue::Unset,
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
             cursor_shape: StyleValue::Unset,
@@ -638,6 +671,23 @@ impl Style {
         self.justify_content = StyleValue::Unset;
     }
 
+    // -- Position -------------------------------------------------------
+
+    /// Set the positioning mode.
+    pub fn position(&mut self, value: Position) {
+        self.position = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the positioning mode from the parent node.
+    pub fn inherit_position(&mut self) {
+        self.position = StyleValue::Inherit;
+    }
+
+    /// Reset the positioning mode to the document/default style.
+    pub fn unset_position(&mut self) {
+        self.position = StyleValue::Unset;
+    }
+
     // -- Z Index --------------------------------------------------------
 
     /// Set the paint order within the current stacking context.
@@ -732,6 +782,7 @@ mod tests {
         style.gap(FlexGap::new(1, 2));
         style.align_self(AlignSelf::Center);
         style.align_content(AlignContent::Center);
+        style.position(Position::Absolute { x: 4, y: -2 });
 
         style.z_index(10);
         style.stacking_context(true);
@@ -751,6 +802,10 @@ mod tests {
         assert_eq!(style.gap, StyleValue::Set(FlexGap::new(1, 2)));
         assert_eq!(style.align_self, StyleValue::Set(AlignSelf::Center));
         assert_eq!(style.align_content, StyleValue::Set(AlignContent::Center));
+        assert_eq!(
+            style.position,
+            StyleValue::Set(Position::Absolute { x: 4, y: -2 })
+        );
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
@@ -773,6 +828,7 @@ mod tests {
         assert_eq!(style.gap, StyleValue::Unset);
         assert_eq!(style.align_self, StyleValue::Unset);
         assert_eq!(style.align_content, StyleValue::Unset);
+        assert_eq!(style.position, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
@@ -809,6 +865,7 @@ mod tests {
         style.inherit_gap();
         style.inherit_align_self();
         style.inherit_align_content();
+        style.inherit_position();
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_cursor_shape();
@@ -826,6 +883,7 @@ mod tests {
         assert_eq!(style.gap, StyleValue::Inherit);
         assert_eq!(style.align_self, StyleValue::Inherit);
         assert_eq!(style.align_content, StyleValue::Inherit);
+        assert_eq!(style.position, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);

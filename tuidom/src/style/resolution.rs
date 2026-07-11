@@ -6,7 +6,7 @@
 use crate::node::NodeData;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, FlexWrap, JustifyContent, Length, Style, StyleValue,
+    FlexGap, FlexWrap, JustifyContent, Length, Position, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -48,6 +48,8 @@ pub struct ResolvedStyle {
     pub align_content: AlignContent,
     /// Resolved main-axis alignment.
     pub justify_content: JustifyContent,
+    /// Resolved positioning mode.
+    pub position: Position,
     /// Resolved paint order within the current stacking context.
     pub z_index: i32,
     /// Whether this node creates an isolated stacking context.
@@ -83,6 +85,7 @@ pub(crate) struct StyleDefaults {
     align_items: AlignItems,
     align_content: AlignContent,
     justify_content: JustifyContent,
+    position: Position,
     z_index: i32,
     stacking_context: bool,
     cursor_shape: CursorShape,
@@ -109,6 +112,7 @@ impl Default for StyleDefaults {
             align_items: AlignItems::Stretch,
             align_content: AlignContent::Stretch,
             justify_content: JustifyContent::FlexStart,
+            position: Position::Flow,
             z_index: 0,
             stacking_context: false,
             cursor_shape: CursorShape::Block,
@@ -146,6 +150,7 @@ impl StyleDefaults {
             align_items: self.align_items,
             align_content: self.align_content,
             justify_content: self.justify_content,
+            position: self.position,
             z_index: self.z_index,
             stacking_context: self.stacking_context,
             cursor_shape: self.cursor_shape,
@@ -245,6 +250,11 @@ impl ResolvedStyle {
                 &data.style.justify_content,
                 parent.map(|p| &p.justify_content),
                 &defaults.justify_content,
+            ),
+            position: resolve(
+                &data.style.position,
+                parent.map(|p| &p.position),
+                &defaults.position,
             ),
             z_index: resolve(
                 &data.style.z_index,
@@ -377,6 +387,12 @@ impl ResolvedStyle {
             &style.justify_content,
             parent.map(|p| &p.justify_content),
             &defaults.justify_content,
+        );
+        apply_override(
+            &mut self.position,
+            &style.position,
+            parent.map(|p| &p.position),
+            &defaults.position,
         );
         apply_override(
             &mut self.z_index,

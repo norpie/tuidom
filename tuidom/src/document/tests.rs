@@ -15,7 +15,7 @@ use crate::node::{LayoutRect, NodeKindView};
 use crate::performance::PerformanceDetail;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, FlexWrap, Length, Style,
+    FlexGap, FlexWrap, Length, Position, Style,
 };
 
 #[test]
@@ -191,6 +191,38 @@ fn style_custom_properties_are_raw_inline_metadata() {
 
     let resolved = doc.resolved_style(node).unwrap();
     assert_eq!(resolved.width, Length::Auto);
+}
+
+#[test]
+fn position_resolves_from_set_inherit_and_default() {
+    let doc = Document::new().unwrap();
+    let parent = doc.create_box().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    doc.append_child(parent, child).unwrap();
+
+    assert_eq!(doc.resolved_style(child).unwrap().position, Position::Flow);
+
+    doc.update_style(parent, |style| {
+        style.position(Position::Absolute { x: 3, y: -1 })
+    })
+    .unwrap();
+    assert_eq!(
+        doc.resolved_style(parent).unwrap().position,
+        Position::Absolute { x: 3, y: -1 }
+    );
+    assert_eq!(doc.resolved_style(child).unwrap().position, Position::Flow);
+
+    doc.update_style(child, |style| style.inherit_position())
+        .unwrap();
+    assert_eq!(
+        doc.resolved_style(child).unwrap().position,
+        Position::Absolute { x: 3, y: -1 }
+    );
+
+    doc.update_style(child, |style| style.unset_position())
+        .unwrap();
+    assert_eq!(doc.resolved_style(child).unwrap().position, Position::Flow);
 }
 
 #[test]
