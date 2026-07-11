@@ -39,7 +39,7 @@
 
 ## Focus Management
 
-- [ ] Focus is `Option<NodeId>` per stacking context — can be `None`
+- [x] Focus is `Option<NodeId>` per focus context — can be `None`
 - [ ] Tab order follows DOM definition order
 - [ ] Arrow key navigation based on visual/spatial distance:
   - [ ] Press arrow → focus nearest focusable node in that direction
@@ -47,14 +47,14 @@
   - [ ] Tiebreaker: topmost (smallest y)
   - [ ] No wrap — if nothing in that direction, do nothing (downstream can override via events)
 - [ ] Tab when focus is `None` focuses first focusable node (re-enter cycle)
-- [ ] Imperative control:
-  - [ ] `doc.focus(node_id)` — succeeds only if node is in active context (not behind a modal)
-  - [ ] `doc.blur()` — sets focus to `None` within current context
+- [x] Imperative control:
+  - [x] `doc.focus(node_id)` — succeeds only if node is in active context (not behind a modal)
+  - [x] `doc.blur()` — sets focus to `None` within current context
 - [ ] Focusable property: Box defaults to false, Input defaults to true
-- [ ] Escape key behavior:
-  - [ ] First press: blur current node (focus → None)
-  - [ ] Second press (when already None): propagates to handlers (e.g., close modal)
-- [ ] Focus stack for modal nesting (see Stacking Contexts)
+- [x] Escape key behavior:
+  - [x] First press: blur current node (focus → None)
+  - [x] Second press (when already None): propagates to handlers (e.g., close modal)
+- [x] Focus stack for modal nesting (see Stacking Contexts)
 
 ## Stacking Contexts & z-index
 
@@ -65,15 +65,19 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] DOM order is the stable tiebreaker for equal values
   - [x] Descendant `z_index` values cannot escape their parent subtree
 - [x] Stacking contexts: created explicitly (`stacking_context: true`)
-  - [x] Available as an isolation marker for modal/focus policy and future positioning behavior
-- [ ] Focus integration with stacking contexts:
-  - [ ] Modal-like downstream components can trap focus within a chosen stacking context
-  - [ ] Content behind an active modal-like context can be made inert by downstream policy
-  - [ ] Nested modal-like contexts restore focus via a focus stack
-- [ ] Focus stack for modal-like contexts:
-  - [ ] On open: push current focus to stack, auto-focus first focusable in context
-  - [ ] On close: pop stack, restore focus to previous node
-  - [ ] If stored node no longer exists, fall back to first focusable in context
+  - [x] Isolation marker for modal/focus policy and future positioning behavior
+  - [x] Prerequisite for trapping focus — being a stacking context never traps focus on its own
+- [x] Focus integration with stacking contexts:
+  - [x] Modal-like downstream components trap focus within a chosen stacking context
+  - [x] Content outside the active context is inert: non-focusable, skipped by navigation, swallows input
+  - [x] Inert is not disabled — inert nodes merge no style, so background content keeps its appearance
+  - [x] Keys dispatch from the active context when nothing is focused, so its handlers see Escape
+  - [x] Nested modal-like contexts restore focus via a focus stack
+- [x] Focus stack for modal-like contexts:
+  - [x] `push_focus_context()` — auto-focus first focusable in context, remember the interrupted focus
+  - [x] `pop_focus_context()` — restore focus to the previous node
+  - [x] If stored node no longer exists, is unfocusable, or is disabled, focus is left cleared
+  - [x] Removing an open context's node closes it, so focus is never trapped in a dead subtree
 
 ## Scrolling & Virtualization
 

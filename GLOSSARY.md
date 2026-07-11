@@ -22,7 +22,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Layout Snapshot** — The document-level map of latest computed layout rectangles by `NodeId`. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state. Layout positions may be negative/offscreen; rendering clips them to the grid.
 
-**Stacking Context** — Explicit isolation marker created with `stacking_context: true`. Used by modal/focus policy and future positioning behavior; paint order already treats every node's subtree as an isolated unit.
+**Stacking Context** — Explicit isolation marker created with `stacking_context: true`. Paint order already treats every node's subtree as an isolated unit, so the marker's behavior is to make a node eligible to become a focus context: only a stacking context can trap focus, because trapping focus in a subtree a sibling could paint over would leave the user interacting with something they cannot see. Being a stacking context never traps focus on its own.
 
 **z-index** — Integer paint-order value for sibling subtrees. Lower values paint first; higher values paint later. DOM order is the stable tiebreaker for equal values. A descendant's `z_index` cannot escape its parent subtree.
 
@@ -88,9 +88,11 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Focus & Selection
 
-**Focus Context** — Focus state for a stacking context. Tracks currently focused node and focus stack for modal nesting.
+**Focus Context** — A subtree that traps focus, opened on a stacking context with `push_focus_context` and closed with `pop_focus_context`. The active context scopes everything about focus: `focused()` reports the focused node *within* it, tab order and spatial navigation search only inside it, and everything outside it is inert. The document root is a permanent focus context, so with nothing open the whole tree is in scope.
 
-**Focus Stack** — Stack of previously focused nodes. Pushed on modal open, popped on modal close to restore focus.
+**Focus Stack** — The stack of open focus contexts, innermost last, with the permanent root context at the bottom. Each level remembers its own focused node, so restoring focus when a modal closes is just a pop rather than separate bookkeeping. Nested modals unwind in order. If a remembered node no longer exists, is no longer focusable, or has been disabled, focus is left cleared instead of jumping to a node the user never selected.
+
+**Inert** — State that blocks interaction on everything outside the active focus context. Inert nodes cannot be focused, are skipped by tab and spatial navigation, and swallow input events rather than bubbling them. Unlike a disabled node, an inert node merges no style — content behind a modal keeps its own appearance. Focus and blur events are exempt from the swallow, since they report a focus change the engine has already made.
 
 **Spatial Navigation** — Arrow key focus movement based on visual distance (edge-to-edge) rather than DOM order.
 
