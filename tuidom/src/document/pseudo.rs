@@ -51,7 +51,7 @@ impl Document {
     /// Returns an error if `node` does not exist in this document.
     pub fn set_active(&self, node: NodeId, active: bool) -> Result<()> {
         self.ensure_pseudo_node_exists(node)?;
-        if active && self.is_effectively_disabled_unlocked(node) {
+        if active && self.blocks_interaction(node) {
             return Ok(());
         }
         let target = if active { Some(node) } else { None };
@@ -197,13 +197,16 @@ impl Document {
     }
 
     /// Whether `candidate` is `ancestor` itself or sits below it in the tree.
-    fn is_self_or_descendant(&self, ancestor: NodeId, candidate: NodeId) -> bool {
+    ///
+    /// Reads parents without taking the tree lock, so this stays callable from paths that
+    /// already hold it — and cannot invert lock order against the focus context stack.
+    pub(super) fn is_self_or_descendant(&self, ancestor: NodeId, candidate: NodeId) -> bool {
         let mut current = Some(candidate);
         while let Some(id) = current {
             if id == ancestor {
                 return true;
             }
-            current = self.get_parent(id);
+            current = self.get_parent_unlocked(id);
         }
         false
     }

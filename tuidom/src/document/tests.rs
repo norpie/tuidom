@@ -3018,3 +3018,221 @@ fn tab_order_is_scoped_to_the_active_focus_context() {
     doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
     assert_eq!(doc.focused(), Some(confirm));
 }
+
+/// A background button at (0,0) and a modal at (2,0) holding one button, side by side so a
+/// click can target either without overlap.
+fn modal_scene(doc: &Document) -> (NodeId, NodeId, NodeId) {
+    let mut background_style = Style::new();
+    background_style.position(Position::Absolute { x: 0, y: 0 });
+    background_style.width(Length::Pixels(2));
+    background_style.height(Length::Pixels(1));
+
+    let background = doc.create_box().unwrap();
+    doc.append_child(doc.root(), background).unwrap();
+    doc.set_style(background, &background_style).unwrap();
+    doc.set_focusable(background, true).unwrap();
+
+    let mut modal_style = Style::new();
+    modal_style.stacking_context(true);
+    modal_style.position(Position::Absolute { x: 2, y: 0 });
+    modal_style.width(Length::Pixels(2));
+    modal_style.height(Length::Pixels(1));
+
+    let modal = doc.create_box().unwrap();
+    doc.append_child(doc.root(), modal).unwrap();
+    doc.set_style(modal, &modal_style).unwrap();
+
+    let mut confirm_style = Style::new();
+    confirm_style.width(Length::Pixels(2));
+    confirm_style.height(Length::Pixels(1));
+
+    let confirm = doc.create_box().unwrap();
+    doc.append_child(modal, confirm).unwrap();
+    doc.set_style(confirm, &confirm_style).unwrap();
+    doc.set_focusable(confirm, true).unwrap();
+
+    (background, modal, confirm)
+}
+
+#[test]
+fn is_inert_reports_nodes_outside_the_active_focus_context() {
+    let doc = Document::new().unwrap();
+    let (background, modal, confirm) = modal_scene(&doc);
+
+    // Nothing is inert while the root context is active.
+    assert_eq!(doc.is_inert(background), Ok(false));
+    assert_eq!(doc.is_inert(confirm), Ok(false));
+
+    doc.push_focus_context(modal).unwrap();
+
+    assert_eq!(doc.is_inert(background), Ok(true));
+    assert_eq!(doc.is_inert(doc.root()), Ok(true));
+    assert_eq!(doc.is_inert(modal), Ok(false));
+    assert_eq!(doc.is_inert(confirm), Ok(false));
+
+    doc.pop_focus_context().unwrap();
+    assert_eq!(doc.is_inert(background), Ok(false));
+}
+
+#[test]
+fn inert_nodes_cannot_be_focused() {
+    let doc = Document::new().unwrap();
+    let (background, modal, confirm) = modal_scene(&doc);
+
+    doc.push_focus_context(modal).unwrap();
+
+    assert_eq!(
+        doc.focus(background),
+        Err(TuidomError::NodeNotFocusable { id: background })
+    );
+    assert_eq!(doc.focused(), Some(confirm));
+}
+
+#[test]
+fn inert_nodes_swallow_input_events() {
+    let doc = Document::new().unwrap();
+    let (background, modal, confirm) = modal_scene(&doc);
+
+    let background_clicks = Arc::new(AtomicUsize::new(0));
+    let confirm_clicks = Arc::new(AtomicUsize::new(0));
+    {
+        let background_clicks = background_clicks.clone();
+        doc.on_click(background, move |_| {
+            background_clicks.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+        let confirm_clicks = confirm_clicks.clone();
+        doc.on_click(confirm, move |_| {
+            confirm_clicks.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    runtime.simulate_click(0, 0);
+    assert_eq!(background_clicks.load(Ordering::SeqCst), 1);
+
+    doc.push_focus_context(modal).unwrap();
+
+    // The background is inert now: its click is dropped, not bubbled to the root.
+    runtime.simulate_click(0, 0);
+    assert_eq!(background_clicks.load(Ordering::SeqCst), 1);
+
+    // The modal still works.
+    runtime.simulate_click(2, 0);
+    assert_eq!(confirm_clicks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn events_inside_a_focus_context_still_bubble_to_the_root() {
+    let doc = Document::new().unwrap();
+    let (_, modal, confirm) = modal_scene(&doc);
+
+    let root_clicks = Arc::new(AtomicUsize::new(0));
+    {
+        let root_clicks = root_clicks.clone();
+        doc.on_click(doc.root(), move |_| {
+            root_clicks.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    doc.push_focus_context(modal).unwrap();
+    runtime.simulate_click(2, 0);
+
+    // The root is inert, but bubbling from a live target is not interaction *with* the root.
+    assert_eq!(root_clicks.load(Ordering::SeqCst), 1);
+    assert_eq!(doc.focused(), Some(confirm));
+}
+
+#[test]
+fn inert_nodes_are_not_focused_by_hover_and_cannot_be_pressed() {
+    let doc = Document::new().unwrap();
+    let (background, modal, confirm) = modal_scene(&doc);
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    doc.push_focus_context(modal).unwrap();
+
+    runtime.simulate_mouse_move(0, 0);
+    assert_eq!(doc.focused(), Some(confirm));
+
+    runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+    assert_eq!(doc.active(), None);
+    runtime.simulate_mouse_up(0, 0, MouseButton::Left);
+
+    assert_eq!(doc.set_active(background, true), Ok(()));
+    assert_eq!(doc.active(), None);
+}
+
+#[test]
+fn spatial_navigation_skips_inert_candidates_instead_of_dead_ending_on_them() {
+    let doc = Document::new().unwrap();
+
+    fn absolute_button(doc: &Document, parent: NodeId, x: i32, width: u16) -> NodeId {
+        let mut style = Style::new();
+        style.position(Position::Absolute { x, y: 0 });
+        style.width(Length::Pixels(width));
+        style.height(Length::Pixels(1));
+
+        let node = doc.create_box().unwrap();
+        doc.append_child(parent, node).unwrap();
+        doc.set_style(node, &style).unwrap();
+        doc.set_focusable(node, true).unwrap();
+        node
+    }
+
+    let mut modal_style = Style::new();
+    modal_style.stacking_context(true);
+    modal_style.position(Position::Absolute { x: 0, y: 0 });
+    modal_style.width(Length::Pixels(8));
+    modal_style.height(Length::Pixels(1));
+
+    let modal = doc.create_box().unwrap();
+    doc.append_child(doc.root(), modal).unwrap();
+    doc.set_style(modal, &modal_style).unwrap();
+
+    let far = absolute_button(&doc, modal, 0, 2);
+    let current = absolute_button(&doc, modal, 6, 2);
+
+    // A background button sits *between* the two modal buttons on screen, so it is the
+    // nearest candidate to the left even though it is outside the context.
+    let between = absolute_button(&doc, doc.root(), 3, 2);
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 8, 2);
+    runtime.render().unwrap();
+
+    doc.push_focus_context(modal).unwrap();
+    doc.focus(current).unwrap();
+
+    // Skipping the inert candidate lets the search reach the valid one behind it; without
+    // the skip, the nearest match would be `between` and the arrow key would do nothing.
+    runtime.simulate_key(KeyCode::Left);
+    assert_eq!(doc.focused(), Some(far));
+    assert_ne!(doc.focused(), Some(between));
+}
+
+#[test]
+fn inert_nodes_do_not_merge_the_disabled_style() {
+    let doc = Document::new().unwrap();
+    let (background, modal, _) = modal_scene(&doc);
+
+    let mut disabled_style = Style::new();
+    disabled_style.color(Color::red());
+    doc.set_disabled_style(background, &disabled_style).unwrap();
+
+    let before = doc.resolved_style(background).unwrap().color;
+    doc.push_focus_context(modal).unwrap();
+
+    // Inertness blocks interaction without restyling: content behind a modal keeps its
+    // own appearance rather than looking disabled.
+    assert!(doc.is_inert(background).unwrap());
+    assert_eq!(doc.resolved_style(background).unwrap().color, before);
+    assert_ne!(doc.resolved_style(background).unwrap().color, Color::red());
+}

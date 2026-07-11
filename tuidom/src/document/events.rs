@@ -304,9 +304,18 @@ impl Document {
     ) where
         E: TargetedEvent,
     {
-        // A disabled node swallows targeted events instead of letting them bubble to
-        // enabled ancestors, matching how disabled controls behave in HTML.
-        if self.is_effectively_disabled_unlocked(target) {
+        // A disabled or inert node swallows input instead of letting it bubble to an
+        // interactive ancestor, matching how disabled controls behave in HTML.
+        //
+        // Focus and blur are exempt: they report a focus change the engine has already
+        // made, and the node losing focus is often losing it *because* it just became
+        // disabled or inert. Swallowing those would hide the transition from the handler
+        // that exists to observe it.
+        let is_input = !matches!(
+            event_kind,
+            TargetedEventKind::Focus | TargetedEventKind::Blur
+        );
+        if is_input && self.blocks_interaction(target) {
             return;
         }
 

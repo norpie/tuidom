@@ -149,9 +149,9 @@ impl Document {
     }
 
     pub(crate) fn focus_target_from_hit(&self, hit: NodeId) -> Option<NodeId> {
-        // A disabled node swallows the interaction instead of handing it to an enabled
-        // ancestor, matching how disabled targets drop events.
-        if self.is_effectively_disabled_unlocked(hit) {
+        // A disabled or inert node swallows the interaction instead of handing it to an
+        // interactive ancestor, matching how those targets drop events.
+        if self.blocks_interaction(hit) {
             return None;
         }
 
@@ -170,7 +170,7 @@ impl Document {
     pub(super) fn can_focus(&self, node: NodeId) -> bool {
         self.inner.nodes.contains_key(&node)
             && lock::mutex(&self.inner.focusable_nodes).contains(&node)
-            && !self.is_effectively_disabled_unlocked(node)
+            && !self.blocks_interaction(node)
     }
 
     /// Move focus from `previous` to `next`, refreshing both styles and dispatching blur
@@ -360,7 +360,7 @@ impl Document {
                     && focusable.contains(&entry.id)
                     && entry.layout.width > 0
                     && entry.layout.height > 0
-                    && !self.is_effectively_disabled_unlocked(entry.id)
+                    && !self.blocks_interaction(entry.id)
             })
             .filter_map(|(paint_rank, entry)| {
                 let distance = directional_distance(current_layout, entry.layout, direction)?;

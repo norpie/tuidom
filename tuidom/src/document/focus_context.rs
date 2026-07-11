@@ -83,6 +83,37 @@ impl Document {
         Ok(closed)
     }
 
+    /// Whether a node is shut out of interaction because a focus context elsewhere traps it.
+    ///
+    /// Inert nodes cannot be focused, are skipped by tab and spatial navigation, and swallow
+    /// input events. Unlike a disabled node, an inert node merges no extra style — content
+    /// behind a modal keeps its own appearance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn is_inert(&self, node: NodeId) -> Result<bool> {
+        self.ensure_focus_node_exists(node)?;
+        Ok(self.is_inert_unlocked(node))
+    }
+
+    pub(crate) fn is_inert_unlocked(&self, node: NodeId) -> bool {
+        let context = self.active_focus_context();
+        if context == self.inner.root {
+            // The root context spans the whole document, so nothing is inert.
+            return false;
+        }
+        !self.is_self_or_descendant(context, node)
+    }
+
+    /// Whether a node is shut out of interaction, whether by being disabled or by being
+    /// inert.
+    ///
+    /// The two states block the same things; only disabled also merges a style.
+    pub(crate) fn blocks_interaction(&self, node: NodeId) -> bool {
+        self.is_effectively_disabled_unlocked(node) || self.is_inert_unlocked(node)
+    }
+
     /// Close focus contexts whose node has left the tree, then re-validate focus.
     ///
     /// A modal-like component that is removed without being popped would otherwise trap
@@ -104,14 +135,14 @@ impl Document {
     /// Re-focus whatever the now-active context remembers, dropping the memory if the node
     /// is no longer a valid focus target.
     fn restore_focus_in_active_context(&self, previous: Option<NodeId>) -> Result<()> {
-        let restored = {
-            let mut contexts = lock::mutex(&self.inner.focus_contexts);
-            let active = contexts.active_mut();
-            if active.focused.is_some_and(|node| !self.can_focus(node)) {
-                active.focused = None;
-            }
-            active.focused
-        };
+        let remembered = lock::mutex(&self.inner.focus_contexts).active().focused;
+
+        // `can_focus` consults the context stack itself, so it must be called with the lock
+        // released.
+        let restored = remembered.filter(|node| self.can_focus(*node));
+        if restored != remembered {
+            lock::mutex(&self.inner.focus_contexts).active_mut().focused = restored;
+        }
 
         self.transition_focus(previous, restored)
     }
