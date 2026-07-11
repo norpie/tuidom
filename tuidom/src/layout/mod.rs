@@ -461,6 +461,8 @@ fn to_taffy_flex_direction(direction: FlexDirection) -> taffy::style::FlexDirect
     match direction {
         FlexDirection::Row => taffy::style::FlexDirection::Row,
         FlexDirection::Column => taffy::style::FlexDirection::Column,
+        FlexDirection::RowReverse => taffy::style::FlexDirection::RowReverse,
+        FlexDirection::ColumnReverse => taffy::style::FlexDirection::ColumnReverse,
     }
 }
 
@@ -475,6 +477,7 @@ fn to_taffy_flex_wrap(wrap: FlexWrap) -> taffy::style::FlexWrap {
     match wrap {
         FlexWrap::NoWrap => taffy::style::FlexWrap::NoWrap,
         FlexWrap::Wrap => taffy::style::FlexWrap::Wrap,
+        FlexWrap::WrapReverse => taffy::style::FlexWrap::WrapReverse,
     }
 }
 
@@ -1019,6 +1022,102 @@ mod tests {
         compute_layout(&doc, 10, 5).unwrap();
 
         assert!(doc.get_node(absolute).unwrap().layout.is_none());
+    }
+
+    #[test]
+    fn row_reverse_lays_children_out_from_the_end_of_the_main_axis() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(10));
+        root_style.height(Length::Pixels(1));
+        root_style.flex_direction(FlexDirection::RowReverse);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 10, 1).unwrap();
+
+        // First child packs against the right edge; DOM order runs right to left.
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.x, 8);
+        assert_eq!(second_layout.x, 6);
+    }
+
+    #[test]
+    fn column_reverse_lays_children_out_from_the_bottom() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(4));
+        root_style.height(Length::Pixels(6));
+        root_style.flex_direction(FlexDirection::ColumnReverse);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(2));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 4, 6).unwrap();
+
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        assert_eq!(first_layout.y, 4);
+        assert_eq!(second_layout.y, 2);
+    }
+
+    #[test]
+    fn wrap_reverse_stacks_lines_in_reverse_cross_axis_order() {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+        let third = doc.create_box().unwrap();
+
+        let mut root_style = DomStyle::new();
+        root_style.width(Length::Pixels(5));
+        root_style.height(Length::Pixels(2));
+        root_style.flex_wrap(FlexWrap::WrapReverse);
+        root_style.align_items(AlignItems::FlexStart);
+        doc.set_style(root, &root_style).unwrap();
+
+        for child in [first, second, third] {
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(2));
+            child_style.height(Length::Pixels(1));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(root, child).unwrap();
+        }
+
+        compute_layout(&doc, 5, 2).unwrap();
+
+        // Same wrapping as `Wrap`, but the first line sits at the bottom.
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        assert_eq!((first_layout.x, first_layout.y), (0, 1));
+        assert_eq!((second_layout.x, second_layout.y), (2, 1));
+        assert_eq!((third_layout.x, third_layout.y), (0, 0));
     }
 
     #[test]

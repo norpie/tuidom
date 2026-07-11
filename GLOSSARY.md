@@ -48,13 +48,13 @@ Terms and concepts used throughout the tuidom codebase.
 
 **EdgeInsets** — Terminal-cell spacing for the top, right, bottom, and left edges of a node. Used by padding and margin style fields.
 
-**FlexDirection** — Main-axis direction for flex containers. Currently supports row and column.
+**FlexDirection** — Main-axis direction for flex containers: row, column, and their reverse variants, which lay children out from the end of the main axis.
 
 **FlexGap** — Terminal-cell spacing between flex children and flex lines. `column` is horizontal spacing and `row` is vertical spacing.
 
 **AlignSelf** — Cross-axis alignment override for one flex item. When unset, the item follows its parent container's `AlignItems` behavior.
 
-**FlexWrap** — Flex container wrapping behavior. `NoWrap` keeps children on one line; `Wrap` allows children to move onto additional lines when they exceed the available main-axis space. Reverse wrapping is deferred.
+**FlexWrap** — Flex container wrapping behavior. `NoWrap` keeps children on one line; `Wrap` allows children to move onto additional lines when they exceed the available main-axis space; `WrapReverse` wraps the same way but stacks the resulting lines in reverse cross-axis order.
 
 **AlignContent** — Cross-axis alignment for wrapped flex lines. Controls how multiple flex lines are packed or distributed inside a flex container.
 

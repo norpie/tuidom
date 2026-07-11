@@ -131,6 +131,10 @@ pub enum FlexDirection {
     Row,
     /// Lay children out vertically from top to bottom.
     Column,
+    /// Lay children out horizontally from right to left.
+    RowReverse,
+    /// Lay children out vertically from bottom to top.
+    ColumnReverse,
 }
 
 /// Whether flex children remain on one line or wrap onto multiple lines.
@@ -141,6 +145,8 @@ pub enum FlexWrap {
     NoWrap,
     /// Allow flex children to wrap onto additional lines.
     Wrap,
+    /// Allow flex children to wrap, stacking lines in reverse cross-axis order.
+    WrapReverse,
 }
 
 /// Spacing between flex children and flex lines in terminal cells.
