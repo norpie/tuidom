@@ -3291,3 +3291,32 @@ fn escape_blurs_first_then_reaches_the_focus_context_handler() {
     doc.dispatch_key_press(KeyEvent::new(KeyCode::Esc));
     assert_eq!(closes.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn tab_order_skips_hidden_subtrees() {
+    let doc = Document::new().unwrap();
+    let visible = focusable_child(&doc, doc.root());
+
+    let hidden = doc.create_box().unwrap();
+    doc.append_child(doc.root(), hidden).unwrap();
+    let mut hidden_style = Style::new();
+    hidden_style.display(Display::None);
+    doc.set_style(hidden, &hidden_style).unwrap();
+
+    // Focusable, but inside a hidden subtree — and hidden itself is not focusable, so this
+    // also covers pruning rather than merely skipping the hidden node.
+    let offscreen = focusable_child(&doc, hidden);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(visible));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(visible));
+    assert_ne!(doc.focused(), Some(offscreen));
+
+    // Showing the subtree puts it back in the tab order.
+    doc.update_style(hidden, |style| style.display(Display::Flex))
+        .unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(offscreen));
+}

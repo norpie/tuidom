@@ -8,7 +8,7 @@ use crate::inner::PseudoStyles;
 use crate::lock;
 use crate::node::LayoutRect;
 use crate::paint_order::paint_order;
-use crate::style::Style;
+use crate::style::{Display, Style};
 
 impl Document {
     /// Set whether a node can receive focus.
@@ -320,6 +320,16 @@ impl Document {
     ) {
         // A disabled node disables its whole subtree, so prune instead of descending.
         if lock::mutex(&self.inner.disabled_nodes).contains(&node) {
+            return;
+        }
+
+        // A hidden node hides its whole subtree too. Spatial navigation already skips these
+        // because they have no layout rect; without this, tab would disagree and walk into
+        // controls that are not on screen.
+        if self
+            .resolved_style(node)
+            .is_ok_and(|resolved| resolved.display == Display::None)
+        {
             return;
         }
 
