@@ -2785,3 +2785,236 @@ fn move_child_triggers_re_resolve() {
     doc.move_child(parent_blue, child, child).unwrap();
     assert_eq!(doc.resolved_style(child).unwrap().color, Color::blue());
 }
+
+fn stacking_context_box(doc: &Document) -> NodeId {
+    let node = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.stacking_context(true);
+    doc.set_style(node, &style).unwrap();
+    node
+}
+
+fn focusable_child(doc: &Document, parent: NodeId) -> NodeId {
+    let node = doc.create_box().unwrap();
+    doc.append_child(parent, node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    node
+}
+
+#[test]
+fn focus_context_defaults_to_the_document_root() {
+    let doc = Document::new().unwrap();
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focus_context_depth(), 1);
+}
+
+#[test]
+fn push_focus_context_requires_a_stacking_context() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+
+    assert_eq!(
+        doc.push_focus_context(panel),
+        Err(TuidomError::NotAStackingContext { id: panel })
+    );
+    assert_eq!(doc.active_focus_context(), doc.root());
+}
+
+#[test]
+fn push_focus_context_rejects_an_already_open_context() {
+    let doc = Document::new().unwrap();
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+
+    doc.push_focus_context(modal).unwrap();
+    assert_eq!(
+        doc.push_focus_context(modal),
+        Err(TuidomError::FocusContextAlreadyOpen { id: modal })
+    );
+    assert_eq!(doc.focus_context_depth(), 2);
+}
+
+#[test]
+fn push_focus_context_focuses_the_first_focusable_inside_it() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    let confirm = focusable_child(&doc, modal);
+    let cancel = focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    assert_eq!(doc.active_focus_context(), modal);
+    assert_eq!(doc.focused(), Some(confirm));
+    assert_ne!(doc.focused(), Some(cancel));
+}
+
+#[test]
+fn push_focus_context_dispatches_blur_then_focus_across_the_boundary() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    let confirm = focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let blur_calls = calls.clone();
+    doc.on_blur(background, move |_| {
+        blur_calls.lock().unwrap().push("blur background");
+    })
+    .unwrap();
+    let focus_calls = calls.clone();
+    doc.on_focus(confirm, move |_| {
+        focus_calls.lock().unwrap().push("focus confirm");
+    })
+    .unwrap();
+
+    doc.push_focus_context(modal).unwrap();
+
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec!["blur background", "focus confirm"]
+    );
+}
+
+#[test]
+fn pop_focus_context_restores_the_interrupted_focus() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    assert_eq!(doc.pop_focus_context(), Ok(modal));
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+}
+
+#[test]
+fn pop_focus_context_on_the_root_context_errors() {
+    let doc = Document::new().unwrap();
+    assert_eq!(
+        doc.pop_focus_context(),
+        Err(TuidomError::CannotPopRootFocusContext)
+    );
+}
+
+#[test]
+fn nested_focus_contexts_unwind_in_order() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+
+    let outer = stacking_context_box(&doc);
+    doc.append_child(doc.root(), outer).unwrap();
+    let outer_button = focusable_child(&doc, outer);
+
+    // A nested modal is a sibling of the first, not a descendant.
+    let inner = stacking_context_box(&doc);
+    doc.append_child(doc.root(), inner).unwrap();
+    let inner_button = focusable_child(&doc, inner);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(outer).unwrap();
+    assert_eq!(doc.focused(), Some(outer_button));
+
+    doc.push_focus_context(inner).unwrap();
+    assert_eq!(doc.focused(), Some(inner_button));
+    assert_eq!(doc.focus_context_depth(), 3);
+
+    doc.pop_focus_context().unwrap();
+    assert_eq!(doc.active_focus_context(), outer);
+    assert_eq!(doc.focused(), Some(outer_button));
+
+    doc.pop_focus_context().unwrap();
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+}
+
+#[test]
+fn pop_focus_context_clears_focus_when_the_remembered_node_is_gone() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+    doc.remove_child(doc.root(), background).unwrap();
+
+    doc.pop_focus_context().unwrap();
+
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn pop_focus_context_clears_focus_when_the_remembered_node_is_disabled() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+    doc.set_disabled(background, true).unwrap();
+
+    doc.pop_focus_context().unwrap();
+
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn removing_an_open_focus_context_node_closes_it() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    doc.remove_child(doc.root(), modal).unwrap();
+
+    assert_eq!(doc.focus_context_depth(), 1);
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+}
+
+#[test]
+fn tab_order_is_scoped_to_the_active_focus_context() {
+    let doc = Document::new().unwrap();
+    // Background focusables sit on both sides of the modal in DOM order, so an unscoped
+    // walk would escape the context in one direction or the other.
+    focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    let confirm = focusable_child(&doc, modal);
+    let cancel = focusable_child(&doc, modal);
+    focusable_child(&doc, doc.root());
+
+    doc.push_focus_context(modal).unwrap();
+    assert_eq!(doc.focused(), Some(confirm));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(cancel));
+
+    // Tab does not wrap, and stops at the context edge instead of falling through.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(cancel));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
+    assert_eq!(doc.focused(), Some(confirm));
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
+    assert_eq!(doc.focused(), Some(confirm));
+}

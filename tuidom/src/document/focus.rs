@@ -52,50 +52,41 @@ impl Document {
     /// is effectively disabled.
     pub fn focus(&self, node: NodeId) -> Result<()> {
         self.ensure_focus_node_exists(node)?;
-        if !lock::mutex(&self.inner.focusable_nodes).contains(&node)
-            || self.is_effectively_disabled_unlocked(node)
-        {
+        if !self.can_focus(node) {
             return Err(TuidomError::NodeNotFocusable { id: node });
         }
 
         let previous = {
-            let mut focused = lock::mutex(&self.inner.focused_node);
-            if *focused == Some(node) {
+            let mut contexts = lock::mutex(&self.inner.focus_contexts);
+            let active = contexts.active_mut();
+            if active.focused == Some(node) {
                 return Ok(());
             }
-
-            let previous = *focused;
-            *focused = Some(node);
-            previous
+            active.focused.replace(node)
         };
 
-        if let Some(previous) = previous {
-            self.refresh_focus_style_effect(previous)?;
-            self.dispatch_blur_to(previous);
-        }
-        self.refresh_focus_style_effect(node)?;
-        self.dispatch_focus_to(node);
-        self.inner.notify.notify_one();
-        Ok(())
+        self.transition_focus(previous, Some(node))
     }
 
     /// Clear the current focus, if any.
     ///
     /// Dispatches blur listeners for the previously focused node.
     pub fn blur(&self) {
-        let previous = lock::mutex(&self.inner.focused_node).take();
-        if let Some(previous) = previous {
-            if let Err(err) = self.refresh_focus_style_effect(previous) {
-                log::error!("failed to refresh focus style after blur: {err}");
-            }
-            self.dispatch_blur_to(previous);
-            self.inner.notify.notify_one();
+        let previous = lock::mutex(&self.inner.focus_contexts)
+            .active_mut()
+            .focused
+            .take();
+        if let Err(err) = self.transition_focus(previous, None) {
+            log::error!("failed to refresh focus style after blur: {err}");
         }
     }
 
     /// Return the currently focused node, if one exists.
+    ///
+    /// Focus is scoped to the active focus context, so this is the focused node *within* an
+    /// open modal-like context, not a document-wide value.
     pub fn focused(&self) -> Option<NodeId> {
-        *lock::mutex(&self.inner.focused_node)
+        lock::mutex(&self.inner.focus_contexts).active().focused
     }
 
     /// Replace the document-level focus key bindings.
@@ -175,6 +166,40 @@ impl Document {
         None
     }
 
+    /// Whether a node is allowed to take focus right now.
+    pub(super) fn can_focus(&self, node: NodeId) -> bool {
+        self.inner.nodes.contains_key(&node)
+            && lock::mutex(&self.inner.focusable_nodes).contains(&node)
+            && !self.is_effectively_disabled_unlocked(node)
+    }
+
+    /// Move focus from `previous` to `next`, refreshing both styles and dispatching blur
+    /// before focus.
+    ///
+    /// Callers update the focus context stack first; this settles the side effects, so
+    /// context pushes and pops share one focus-change path with plain `focus`/`blur`.
+    pub(super) fn transition_focus(
+        &self,
+        previous: Option<NodeId>,
+        next: Option<NodeId>,
+    ) -> Result<()> {
+        if previous == next {
+            return Ok(());
+        }
+
+        if let Some(previous) = previous {
+            self.refresh_focus_style_effect(previous)?;
+            self.dispatch_blur_to(previous);
+        }
+        if let Some(next) = next {
+            self.refresh_focus_style_effect(next)?;
+            self.dispatch_focus_to(next);
+        }
+
+        self.inner.notify.notify_one();
+        Ok(())
+    }
+
     /// Drop one pseudo-style, discarding the entry once no pseudo-style remains.
     pub(super) fn clear_pseudo_style(&self, node: NodeId, clear: impl FnOnce(&mut PseudoStyles)) {
         let mut pseudo_styles = lock::mutex(&self.inner.pseudo_styles);
@@ -202,13 +227,16 @@ impl Document {
         };
 
         let removed_focus = {
-            let mut focused = lock::mutex(&self.inner.focused_node);
-            if *focused == Some(node) {
-                *focused = None;
-                true
-            } else {
-                false
+            let mut contexts = lock::mutex(&self.inner.focus_contexts);
+            let was_focused = contexts.active().focused == Some(node);
+            // An outer context may still remember this node as its focus, so clear every
+            // level rather than only the active one.
+            for context in contexts.iter_mut() {
+                if context.focused == Some(node) {
+                    context.focused = None;
+                }
             }
+            was_focused
         };
 
         if removed_focus || removed_active {
@@ -216,7 +244,7 @@ impl Document {
         }
     }
 
-    fn ensure_focus_node_exists(&self, node: NodeId) -> Result<()> {
+    pub(super) fn ensure_focus_node_exists(&self, node: NodeId) -> Result<()> {
         if self.inner.nodes.contains_key(&node) {
             Ok(())
         } else {
@@ -273,10 +301,14 @@ impl Document {
         }
     }
 
-    fn focusable_in_dom_order(&self) -> Vec<NodeId> {
+    /// Focusable nodes in DOM order, scoped to the active focus context.
+    ///
+    /// Walking from the context node rather than the document root is what keeps tab order
+    /// inside an open modal-like context — no filtering pass is needed.
+    pub(super) fn focusable_in_dom_order(&self) -> Vec<NodeId> {
         let focusable = lock::mutex(&self.inner.focusable_nodes).clone();
         let mut nodes = Vec::new();
-        self.collect_focusable_in_dom_order(self.root(), &focusable, &mut nodes);
+        self.collect_focusable_in_dom_order(self.active_focus_context(), &focusable, &mut nodes);
         nodes
     }
 

@@ -12,7 +12,7 @@ use crate::error::{Result, TuidomError};
 use crate::event::FocusKeys;
 use crate::event_loop;
 use crate::id::{NodeId, next_document_id};
-use crate::inner::DocumentInner;
+use crate::inner::{DocumentInner, FocusStack};
 use crate::layout::LayoutEngine;
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
@@ -21,6 +21,7 @@ use crate::performance::{PerformanceDetail, PerformanceSnapshot, PerformanceStat
 mod attrs;
 mod events;
 mod focus;
+mod focus_context;
 mod input;
 mod layout;
 mod pseudo;
@@ -67,7 +68,7 @@ impl Document {
                 next_id: AtomicU64::new(1),
                 next_listener_id: AtomicU64::new(0),
                 root,
-                focused_node: Mutex::new(None),
+                focus_contexts: Mutex::new(FocusStack::new(root)),
                 focusable_nodes: Mutex::new(HashSet::new()),
                 focus_keys: Mutex::new(FocusKeys::default()),
                 pseudo_styles: Mutex::new(HashMap::new()),

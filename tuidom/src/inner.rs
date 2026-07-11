@@ -35,6 +35,98 @@ impl PseudoStyles {
     }
 }
 
+/// One level of the focus context stack.
+///
+/// A focus context traps focus inside one subtree. Each level remembers its own focused
+/// node, so restoring focus when a modal-like context closes is a stack pop rather than a
+/// separate bookkeeping path.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FocusContext {
+    /// The node whose subtree traps focus.
+    pub context: NodeId,
+
+    /// The focused node within this context, if any.
+    pub focused: Option<NodeId>,
+}
+
+impl FocusContext {
+    /// Create a context with nothing focused inside it yet.
+    fn new(context: NodeId) -> Self {
+        Self {
+            context,
+            focused: None,
+        }
+    }
+}
+
+/// The stack of focus contexts, innermost last.
+///
+/// The root context is stored outside the vector so the stack can never be empty and the
+/// active context is always reachable without a fallible lookup.
+#[derive(Debug)]
+pub(crate) struct FocusStack {
+    root: FocusContext,
+    nested: Vec<FocusContext>,
+}
+
+impl FocusStack {
+    /// Create a stack holding only the document root context.
+    pub fn new(root: NodeId) -> Self {
+        Self {
+            root: FocusContext::new(root),
+            nested: Vec::new(),
+        }
+    }
+
+    /// The innermost context — the one that currently traps focus.
+    pub fn active(&self) -> &FocusContext {
+        self.nested.last().unwrap_or(&self.root)
+    }
+
+    /// The innermost context, mutably.
+    pub fn active_mut(&mut self) -> &mut FocusContext {
+        self.nested.last_mut().unwrap_or(&mut self.root)
+    }
+
+    /// Push a nested context, which becomes the active one.
+    pub fn push(&mut self, context: NodeId) {
+        self.nested.push(FocusContext::new(context));
+    }
+
+    /// Pop the innermost nested context. Returns `None` for the root context, which is
+    /// permanent.
+    pub fn pop(&mut self) -> Option<FocusContext> {
+        self.nested.pop()
+    }
+
+    /// Number of contexts on the stack, counting the permanent root context.
+    pub fn depth(&self) -> usize {
+        self.nested.len() + 1
+    }
+
+    /// Whether `context` is a nested context on the stack.
+    pub fn contains(&self, context: NodeId) -> bool {
+        self.nested.iter().any(|entry| entry.context == context)
+    }
+
+    /// Drop nested contexts whose node no longer satisfies `exists`, innermost first.
+    ///
+    /// The root context is permanent and is never pruned.
+    pub fn prune(&mut self, exists: impl Fn(NodeId) -> bool) {
+        while let Some(active) = self.nested.last() {
+            if exists(active.context) {
+                break;
+            }
+            self.nested.pop();
+        }
+    }
+
+    /// Every context on the stack, root first.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut FocusContext> {
+        std::iter::once(&mut self.root).chain(self.nested.iter_mut())
+    }
+}
+
 /// Internal state of a [`Document`](crate::Document).
 ///
 /// Held behind `Arc` for cheap cloning and thread-safe sharing.
@@ -55,8 +147,8 @@ pub(crate) struct DocumentInner {
     /// The permanent document root node.
     pub root: NodeId,
 
-    /// The currently focused node, if any.
-    pub focused_node: Mutex<Option<NodeId>>,
+    /// The focus context stack. Focus lives in the innermost context.
+    pub focus_contexts: Mutex<FocusStack>,
 
     /// Nodes that are allowed to receive focus.
     pub focusable_nodes: Mutex<HashSet<NodeId>>,

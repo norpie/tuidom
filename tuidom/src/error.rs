@@ -45,6 +45,24 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node cannot trap focus because it is not a stacking context.
+    #[error("node {id:?} is not a stacking context and cannot become a focus context")]
+    NotAStackingContext {
+        /// The node that is not a stacking context.
+        id: NodeId,
+    },
+
+    /// A node is already an open focus context.
+    #[error("node {id:?} is already an open focus context")]
+    FocusContextAlreadyOpen {
+        /// The node that already traps focus.
+        id: NodeId,
+    },
+
+    /// The permanent root focus context cannot be popped.
+    #[error("cannot pop the root focus context")]
+    CannotPopRootFocusContext,
+
     /// A node exists but is not an input node.
     #[error("node {id:?} is not an input")]
     NodeNotInput {

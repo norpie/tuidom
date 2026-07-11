@@ -78,6 +78,10 @@ impl Document {
         let parent_still_exists = self.inner.nodes.contains_key(&parent);
         drop(tree_guard);
 
+        // Focus handlers may touch the tree, so contexts settle only once the tree lock is
+        // released.
+        self.settle_focus_contexts();
+
         if parent_still_exists {
             self.sync_layout_children(parent)?;
         }
