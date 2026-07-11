@@ -200,7 +200,13 @@ impl Document {
 
     /// Dispatch a key press from the current keyboard target.
     pub(crate) fn dispatch_key_press(&self, mut event: KeyEvent) {
-        let target = self.focused().unwrap_or_else(|| self.root());
+        // With nothing focused, keys start at the active focus context rather than the
+        // document root. Falling back to the root would dispatch from *outside* an open
+        // modal-like context, so the context's own handlers — Escape to close, say — would
+        // never see the key that was pressed while it was on screen.
+        let target = self
+            .focused()
+            .unwrap_or_else(|| self.active_focus_context());
         self.dispatch_key_press_to(target, &mut event);
         if !event.default_prevented() && !self.apply_input_default_action(event.code) {
             self.apply_focus_default_action(event.code);

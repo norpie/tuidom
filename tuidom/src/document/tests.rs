@@ -3236,3 +3236,58 @@ fn inert_nodes_do_not_merge_the_disabled_style() {
     assert_eq!(doc.resolved_style(background).unwrap().color, before);
     assert_ne!(doc.resolved_style(background).unwrap().color, Color::red());
 }
+
+#[test]
+fn key_dispatch_targets_the_active_focus_context_when_nothing_is_focused() {
+    let doc = Document::new().unwrap();
+    let (_, modal, _) = modal_scene(&doc);
+
+    let modal_keys = Arc::new(AtomicUsize::new(0));
+    {
+        let modal_keys = modal_keys.clone();
+        doc.on_key_press(modal, move |_| {
+            modal_keys.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+
+    doc.push_focus_context(modal).unwrap();
+    doc.blur();
+    assert_eq!(doc.focused(), None);
+
+    // Dispatching from the root instead would start bubbling outside the modal, so the
+    // modal's own handler would never run.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+    assert_eq!(modal_keys.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn escape_blurs_first_then_reaches_the_focus_context_handler() {
+    let doc = Document::new().unwrap();
+    let (_, modal, confirm) = modal_scene(&doc);
+
+    let closes = Arc::new(AtomicUsize::new(0));
+    {
+        let closes = closes.clone();
+        let doc_for_handler = doc.clone();
+        doc.on_key_press(modal, move |event| {
+            // The documented modal idiom: Escape closes only once focus is already cleared.
+            if event.code == KeyCode::Esc && doc_for_handler.focused().is_none() {
+                closes.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .unwrap();
+    }
+
+    doc.push_focus_context(modal).unwrap();
+    assert_eq!(doc.focused(), Some(confirm));
+
+    // First press blurs the focused node inside the context.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Esc));
+    assert_eq!(doc.focused(), None);
+    assert_eq!(closes.load(Ordering::SeqCst), 0);
+
+    // Second press reaches the modal itself.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Esc));
+    assert_eq!(closes.load(Ordering::SeqCst), 1);
+}
