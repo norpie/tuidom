@@ -1,9 +1,11 @@
 //! Smoke test exercising the full pipeline:
 //! Box + Text/Input rendering, keyboard events, focus, focus styles,
 //! configurable focus keys, targeted mouse events, bubbling, stop_propagation,
-//! wheel events, transitions, and the performance metrics API.
+//! wheel events, borders, terminal text attributes, transitions, and the
+//! performance metrics API.
 //!
 //! Tab / Shift-Tab      — move focus in DOM order
+//! Focus the "focus me" panel — its border recolors, charset and sides untouched
 //! Arrows / hjkl        — move focus spatially, or move input cursor
 //! Esc                  — blur focused node; press again in the modal to close it
 //! Hover buttons/input  — focus node
@@ -23,8 +25,8 @@ use std::time::Duration;
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
-    AlignItems, Color, CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, JustifyContent,
-    Length, Position, Style,
+    AlignItems, Border, BorderCharset, BorderSides, Color, CursorShape, Display, EdgeInsets,
+    FlexDirection, FlexGap, JustifyContent, Length, Position, Style,
 };
 
 fn init_logging() {
@@ -145,6 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dialog_style.gap(FlexGap::new(1, 0));
     dialog_style.padding(EdgeInsets::all(1));
     dialog_style.background(Color::oklch(0.28, 0.06, 280.0));
+    dialog_style.border(Border::new(BorderCharset::rounded()));
+    dialog_style.border_color(Color::oklch(0.8, 0.1, 280.0));
 
     let mut input_style = Style::new();
     input_style.width(Length::Pixels(24));
@@ -260,12 +264,102 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(input_row, editable_field)?;
     doc.append_child(input_row, password_field)?;
 
+    // --- Borders and text attributes ----------------------------------
+
+    // A bordered panel sizes to its content plus one cell per drawn side, because the border
+    // is real layout, not decoration painted over the box.
+    let mut panel_style = Style::new();
+    panel_style.width(Length::Auto);
+    panel_style.height(Length::Auto);
+    panel_style.padding(EdgeInsets::symmetric(1, 0));
+
+    let border_label = doc.create_text("Borders")?;
+    doc.set_style(border_label, &section_label_style)?;
+
+    let border_row = doc.create_box()?;
+    doc.set_style(border_row, &row_style)?;
+
+    for (name, charset) in [
+        ("single", BorderCharset::single()),
+        ("double", BorderCharset::double()),
+        ("rounded", BorderCharset::rounded()),
+        ("thick", BorderCharset::thick()),
+        ("ascii", BorderCharset::ascii()),
+    ] {
+        let panel = doc.create_box()?;
+        let mut style = panel_style.clone();
+        style.border(Border::new(charset));
+        style.border_color(Color::oklch(0.72, 0.11, 200.0));
+        doc.set_style(panel, &style)?;
+
+        let panel_label = doc.create_text(name)?;
+        doc.set_style(panel_label, &label_style)?;
+        doc.append_child(panel, panel_label)?;
+        doc.append_child(border_row, panel)?;
+    }
+
+    // The focus style recolors the border and nothing else — it never restates the charset
+    // or the sides, because border_color is its own property.
+    let focus_panel = doc.create_box()?;
+    let mut focus_panel_style = panel_style.clone();
+    focus_panel_style.border(Border::new(BorderCharset::rounded()));
+    focus_panel_style.border_color(Color::oklch(0.55, 0.02, 260.0));
+    doc.set_style(focus_panel, &focus_panel_style)?;
+    doc.set_focusable(focus_panel, true)?;
+
+    let mut focus_panel_focus_style = Style::new();
+    focus_panel_focus_style.border_color(Color::oklch(0.85, 0.2, 90.0));
+    doc.set_focus_style(focus_panel, &focus_panel_focus_style)?;
+
+    let focus_panel_label = doc.create_text("focus me")?;
+    doc.set_style(focus_panel_label, &label_style)?;
+    doc.append_child(focus_panel, focus_panel_label)?;
+    doc.append_child(border_row, focus_panel)?;
+
+    // Per-side control is presence, not width: a top-only border is a horizontal rule.
+    let separator = doc.create_box()?;
+    let mut separator_style = Style::new();
+    separator_style.width(Length::Percent(100.0));
+    separator_style.height(Length::Pixels(1));
+    separator_style.border(
+        Border::new(BorderCharset::single())
+            .with_sides(BorderSides::new(true, false, false, false)),
+    );
+    separator_style.border_color(Color::oklch(0.5, 0.02, 260.0));
+    doc.set_style(separator, &separator_style)?;
+
+    let attrs_label = doc.create_text("Text attributes")?;
+    doc.set_style(attrs_label, &section_label_style)?;
+
+    let attrs_row = doc.create_box()?;
+    doc.set_style(attrs_row, &row_style)?;
+
+    for (name, bold, italic, underline) in [
+        ("bold", true, false, false),
+        ("italic", false, true, false),
+        ("underline", false, false, true),
+        ("all three", true, true, true),
+    ] {
+        let sample = doc.create_text(name)?;
+        let mut style = label_style.clone();
+        style.bold(bold);
+        style.italic(italic);
+        style.underline(underline);
+        doc.set_style(sample, &style)?;
+        doc.append_child(attrs_row, sample)?;
+    }
+
     doc.append_child(stack, title)?;
     doc.append_child(stack, hint)?;
     doc.append_child(stack, button_label)?;
     doc.append_child(stack, button_row)?;
     doc.append_child(stack, input_label)?;
     doc.append_child(stack, input_row)?;
+    doc.append_child(stack, separator)?;
+    doc.append_child(stack, border_label)?;
+    doc.append_child(stack, border_row)?;
+    doc.append_child(stack, attrs_label)?;
+    doc.append_child(stack, attrs_row)?;
 
     // --- Modal --------------------------------------------------------
 
