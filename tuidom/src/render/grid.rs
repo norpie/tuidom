@@ -52,6 +52,21 @@ pub(crate) struct GridRect {
     pub height: u16,
 }
 
+/// Terminal text attributes carried by a cell's glyph.
+///
+/// Packed here — unlike on `Style`, where they are three separate properties — because
+/// nothing merges at the cell level: attributes belong to the glyph, so they are replaced
+/// or cleared along with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct CellAttrs {
+    /// Bold / increased intensity.
+    pub bold: bool,
+    /// Italic.
+    pub italic: bool,
+    /// Underline.
+    pub underline: bool,
+}
+
 /// A single terminal character position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cell {
@@ -61,6 +76,8 @@ pub(crate) struct Cell {
     pub fg: Option<Rgb>,
     /// Background color. `None` means terminal default.
     pub bg: Option<Rgb>,
+    /// Terminal attributes for this cell's glyph.
+    pub attrs: CellAttrs,
 }
 
 impl Cell {
@@ -70,6 +87,7 @@ impl Cell {
             content: CellContent::Empty,
             fg: None,
             bg: None,
+            attrs: CellAttrs::default(),
         }
     }
 
@@ -79,6 +97,7 @@ impl Cell {
             content: CellContent::Empty,
             fg: None,
             bg: Some(bg),
+            attrs: CellAttrs::default(),
         }
     }
 
@@ -109,6 +128,13 @@ fn blend_cell(dst: &Cell, src: &Cell, opacity: f64, replace_content: bool) -> Ce
         },
         fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg)),
         bg,
+        // Attributes travel with the glyph: a translucent fill that preserves the destination
+        // text preserves its attributes, and one that replaces the text takes the source's.
+        attrs: if replace_content {
+            src.attrs
+        } else {
+            dst.attrs
+        },
     }
 }
 
@@ -240,6 +266,7 @@ impl Grid {
                 cell.content = CellContent::Empty;
                 cell.fg = None;
                 cell.bg = None;
+                cell.attrs = CellAttrs::default();
             }
         }
     }
@@ -252,6 +279,7 @@ impl Grid {
                 cell.content = CellContent::Empty;
                 cell.fg = None;
                 cell.bg = Some(bg);
+                cell.attrs = CellAttrs::default();
             }
         }
     }
@@ -342,6 +370,7 @@ impl Grid {
                 cell.content = CellContent::Empty;
                 cell.fg = None;
                 cell.bg = Some(bg);
+                cell.attrs = CellAttrs::default();
             }
         }
 
@@ -351,13 +380,21 @@ impl Grid {
     /// Write one line of text at a position, clipped to the screen width.
     /// Bg is left as-is (assumes the background was already filled by `fill_rect`).
     #[cfg(test)]
-    pub fn write_text(&mut self, x: i32, y: i32, text: &str, fg: Option<Rgb>, alpha: f64) -> usize {
+    pub fn write_text(
+        &mut self,
+        x: i32,
+        y: i32,
+        text: &str,
+        fg: Option<Rgb>,
+        alpha: f64,
+        attrs: CellAttrs,
+    ) -> usize {
         if y < 0 || y >= self.height as i32 {
             return 0;
         }
 
         let line = text.lines().next().unwrap_or("");
-        self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha)
+        self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha, attrs)
     }
 
     /// Write multiline text clipped to a rectangular region.
@@ -368,6 +405,7 @@ impl Grid {
         text: &str,
         fg: Option<Rgb>,
         alpha: f64,
+        attrs: CellAttrs,
     ) -> usize {
         if rect.width == 0 || rect.height == 0 {
             return 0;
@@ -393,11 +431,13 @@ impl Grid {
             if y >= self.height as i32 {
                 break;
             }
-            glyphs += self.write_text_line_clipped(rect.x, y as usize, clip_right, line, fg, alpha);
+            glyphs += self
+                .write_text_line_clipped(rect.x, y as usize, clip_right, line, fg, alpha, attrs);
         }
         glyphs
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_text_line_clipped(
         &mut self,
         x: i32,
@@ -406,6 +446,7 @@ impl Grid {
         text: &str,
         fg: Option<Rgb>,
         alpha: f64,
+        attrs: CellAttrs,
     ) -> usize {
         let alpha = clamp_alpha(alpha);
         if alpha <= 0.0 || clip_right <= 0 {
@@ -435,7 +476,7 @@ impl Grid {
                 break;
             }
 
-            self.write_glyph(row, col as usize, grapheme, width as u8, fg, alpha);
+            self.write_glyph(row, col as usize, grapheme, width as u8, fg, alpha, attrs);
             self.touch_span(row, col as usize, next_col as usize);
             glyphs += 1;
             col = next_col;
@@ -453,6 +494,7 @@ impl Grid {
         border: Border,
         fg: Option<Rgb>,
         alpha: f64,
+        attrs: CellAttrs,
     ) -> usize {
         let alpha = clamp_alpha(alpha);
         if rect.width == 0 || rect.height == 0 || !border.sides.any() || alpha <= 0.0 {
@@ -468,15 +510,18 @@ impl Grid {
         for row in top..=bottom {
             if row == top || row == bottom {
                 for col in left..=right {
-                    glyphs += self
-                        .write_border_cell(border, row, col, left, right, top, bottom, fg, alpha);
+                    glyphs += self.write_border_cell(
+                        border, row, col, left, right, top, bottom, fg, alpha, attrs,
+                    );
                 }
             } else {
-                glyphs +=
-                    self.write_border_cell(border, row, left, left, right, top, bottom, fg, alpha);
+                glyphs += self.write_border_cell(
+                    border, row, left, left, right, top, bottom, fg, alpha, attrs,
+                );
                 if right != left {
-                    glyphs += self
-                        .write_border_cell(border, row, right, left, right, top, bottom, fg, alpha);
+                    glyphs += self.write_border_cell(
+                        border, row, right, left, right, top, bottom, fg, alpha, attrs,
+                    );
                 }
             }
         }
@@ -495,6 +540,7 @@ impl Grid {
         bottom: i64,
         fg: Option<Rgb>,
         alpha: f64,
+        attrs: CellAttrs,
     ) -> usize {
         let sides = border.sides;
         let on_top = row == top && sides.top;
@@ -524,7 +570,7 @@ impl Grid {
 
         let (row, col) = (row as usize, col as usize);
         let mut text = [0u8; 4];
-        self.write_glyph(row, col, glyph.encode_utf8(&mut text), 1, fg, alpha);
+        self.write_glyph(row, col, glyph.encode_utf8(&mut text), 1, fg, alpha, attrs);
         self.touch_span(row, col, col + 1);
         1
     }
@@ -564,6 +610,7 @@ impl Grid {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_glyph(
         &mut self,
         row: usize,
@@ -572,6 +619,7 @@ impl Grid {
         width: u8,
         fg: Option<Rgb>,
         alpha: f64,
+        attrs: CellAttrs,
     ) {
         self.clear_text_span_at(row, col);
         if width == 2 {
@@ -586,12 +634,14 @@ impl Grid {
             },
             fg: blend_fg(dst.fg, fg, alpha, dst.bg),
             bg: dst.bg,
+            attrs,
         };
         self.cells[row][col] = glyph_cell;
 
         if width == 2 {
             self.cells[row][col + 1].content = CellContent::WideContinuation;
             self.cells[row][col + 1].fg = None;
+            self.cells[row][col + 1].attrs = attrs;
         }
     }
 
@@ -620,6 +670,7 @@ impl Grid {
     fn clear_one_cell_text(&mut self, row: usize, col: usize) {
         self.cells[row][col].content = CellContent::Empty;
         self.cells[row][col].fg = None;
+        self.cells[row][col].attrs = CellAttrs::default();
     }
 }
 
@@ -686,7 +737,7 @@ mod tests {
         let mut grid = Grid::new(2, 1);
 
         grid.fill_rect(0, 0, 2, 1, Cell::empty_with_bg(blue), 1.0);
-        grid.write_text(0, 0, "hi", Some(white), 1.0);
+        grid.write_text(0, 0, "hi", Some(white), 1.0, CellAttrs::default());
         grid.fill_rect(0, 0, 2, 1, Cell::empty_with_bg(red), 0.5);
 
         assert_eq!(row_text(&grid, 0), "hi");
@@ -714,10 +765,24 @@ mod tests {
         let mut grid = Grid::new(3, 1);
         let before = grid.clone();
 
-        grid.write_text(0, 1, "abc", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            1,
+            "abc",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
         assert_eq!(grid.cells, before.cells);
 
-        grid.write_text(0, -1, "abc", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            -1,
+            "abc",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
         assert_eq!(grid.cells, before.cells);
     }
 
@@ -725,7 +790,14 @@ mod tests {
     fn write_text_clips_negative_x() {
         let mut grid = Grid::new(3, 1);
 
-        grid.write_text(-2, 0, "abcd", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            -2,
+            0,
+            "abcd",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         assert_eq!(row_text(&grid, 0), "cd ");
     }
@@ -734,7 +806,14 @@ mod tests {
     fn write_text_skips_partial_wide_glyph_at_left_edge() {
         let mut grid = Grid::new(3, 1);
 
-        grid.write_text(-1, 0, "界ab", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            -1,
+            0,
+            "界ab",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         assert_eq!(row_text(&grid, 0), " ab");
     }
@@ -743,7 +822,14 @@ mod tests {
     fn write_text_stops_at_newline() {
         let mut grid = Grid::new(5, 1);
 
-        grid.write_text(0, 0, "ab\ncd", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "ab\ncd",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
         assert_eq!(row_text(&grid, 0), "ab   ");
     }
 
@@ -761,6 +847,7 @@ mod tests {
             "abcd",
             Some(rgb(255, 255, 255)),
             1.0,
+            CellAttrs::default(),
         );
         assert_eq!(row_text(&grid, 0), " ab  ");
     }
@@ -779,6 +866,7 @@ mod tests {
             "ab\ncd\nef",
             Some(rgb(255, 255, 255)),
             1.0,
+            CellAttrs::default(),
         );
         assert_eq!(row_text(&grid, 0), "ab  ");
         assert_eq!(row_text(&grid, 1), "cd  ");
@@ -799,6 +887,7 @@ mod tests {
             "ab\ncd\nef",
             Some(rgb(255, 255, 255)),
             1.0,
+            CellAttrs::default(),
         );
 
         assert_eq!(row_text(&grid, 0), "d   ");
@@ -809,7 +898,14 @@ mod tests {
     fn ascii_glyphs_are_width_one() {
         let mut grid = Grid::new(3, 1);
 
-        grid.write_text(0, 0, "abc", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "abc",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         assert!(matches!(
             grid.cells[0][0].content,
@@ -829,7 +925,14 @@ mod tests {
     fn wide_glyph_occupies_two_cells() {
         let mut grid = Grid::new(4, 1);
 
-        grid.write_text(0, 0, "a界b", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "a界b",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         assert_eq!(row_text(&grid, 0), "a界b");
         assert!(matches!(
@@ -864,6 +967,7 @@ mod tests {
             "a界",
             Some(rgb(255, 255, 255)),
             1.0,
+            CellAttrs::default(),
         );
         assert_eq!(row_text(&grid, 0), "a ");
     }
@@ -872,7 +976,14 @@ mod tests {
     fn combining_grapheme_occupies_one_cell() {
         let mut grid = Grid::new(2, 1);
 
-        grid.write_text(0, 0, "e\u{301}x", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "e\u{301}x",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
         assert_eq!(row_text(&grid, 0), "e\u{301}x");
         assert!(matches!(
             grid.cells[0][0].content,
@@ -888,8 +999,22 @@ mod tests {
     fn overwriting_wide_head_clears_continuation() {
         let mut grid = Grid::new(3, 1);
 
-        grid.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
-        grid.write_text(0, 0, "a", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "界",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
+        grid.write_text(
+            0,
+            0,
+            "a",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         assert_eq!(row_text(&grid, 0), "a  ");
         assert!(matches!(grid.cells[0][1].content, CellContent::Empty));
@@ -899,8 +1024,22 @@ mod tests {
     fn overwriting_wide_continuation_clears_head() {
         let mut grid = Grid::new(3, 1);
 
-        grid.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
-        grid.write_text(1, 0, "a", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "界",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
+        grid.write_text(
+            1,
+            0,
+            "a",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         assert_eq!(row_text(&grid, 0), " a ");
         assert!(matches!(grid.cells[0][0].content, CellContent::Empty));
@@ -911,7 +1050,14 @@ mod tests {
         let blue = rgb(0, 0, 255);
         let mut grid = Grid::new(3, 1);
 
-        grid.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        grid.write_text(
+            0,
+            0,
+            "界",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
         grid.fill_rect(1, 0, 1, 1, Cell::empty_with_bg(blue), 1.0);
 
         assert_eq!(row_text(&grid, 0), "   ");

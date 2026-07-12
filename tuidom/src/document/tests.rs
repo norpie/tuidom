@@ -874,6 +874,85 @@ fn a_translucent_overlay_blends_over_a_border() {
 }
 
 #[test]
+fn text_attributes_reach_the_cell() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hi").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+    doc.update_style(text, |style| {
+        style.bold(true);
+        style.underline(true);
+    })
+    .unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 1);
+    runtime.render().unwrap();
+
+    let cell = runtime.get_cell(0, 0).unwrap();
+    assert_eq!(cell.text, "h");
+    assert!(cell.bold);
+    assert!(cell.underline);
+    assert!(!cell.italic);
+
+    // An empty cell beside the text carries no attributes of its own.
+    assert!(!runtime.get_cell(3, 0).unwrap().bold);
+}
+
+#[test]
+fn a_focus_style_merges_text_attributes() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("hi").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+
+    let mut focus = Style::new();
+    focus.bold(true);
+    doc.set_focus_style(input, &focus).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 1);
+    runtime.render().unwrap();
+    assert!(!runtime.get_cell(0, 0).unwrap().bold);
+
+    runtime.document().focus(input).unwrap();
+    runtime.render().unwrap();
+    assert!(runtime.get_cell(0, 0).unwrap().bold);
+}
+
+#[test]
+fn attributes_survive_a_translucent_fill_and_are_cleared_by_an_opaque_one() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hi").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+    doc.update_style(text, |style| style.italic(true)).unwrap();
+
+    let overlay = doc.create_box().unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+    let mut overlay_style = Style::new();
+    overlay_style.position(Position::Absolute { x: 0, y: 0 });
+    overlay_style.width(Length::Percent(100.0));
+    overlay_style.height(Length::Percent(100.0));
+    overlay_style.background(Color::oklcha(0.0, 0.0, 0.0, 0.5));
+    doc.set_style(overlay, &overlay_style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 1);
+    runtime.render().unwrap();
+
+    // The translucent fill keeps the glyph, so it keeps the glyph's attributes.
+    let cell = runtime.get_cell(0, 0).unwrap();
+    assert_eq!(cell.text, "h");
+    assert!(cell.italic);
+
+    // An opaque fill replaces the glyph, and the italics go with it.
+    runtime
+        .document()
+        .update_style(overlay, |style| style.background(Color::blue()))
+        .unwrap();
+    runtime.render().unwrap();
+
+    let cell = runtime.get_cell(0, 0).unwrap();
+    assert_eq!(cell.text, " ");
+    assert!(!cell.italic);
+}
+
+#[test]
 fn input_layout_measures_displayed_single_line_multiline_and_masked_content() {
     let doc = Document::new().unwrap();
     doc.update_style(doc.root(), |style| {

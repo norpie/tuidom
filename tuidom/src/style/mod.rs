@@ -334,6 +334,12 @@ pub struct Style {
     pub(crate) z_index: StyleValue<i32>,
     /// Whether this node creates an isolated stacking context for descendants.
     pub(crate) stacking_context: StyleValue<bool>,
+    /// Bold text.
+    pub(crate) bold: StyleValue<bool>,
+    /// Italic text.
+    pub(crate) italic: StyleValue<bool>,
+    /// Underlined text.
+    pub(crate) underline: StyleValue<bool>,
     /// Input cursor shape.
     pub(crate) cursor_shape: StyleValue<CursorShape>,
     /// Raw custom style properties.
@@ -375,6 +381,9 @@ impl Style {
             position: StyleValue::Unset,
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
+            bold: StyleValue::Unset,
+            italic: StyleValue::Unset,
+            underline: StyleValue::Unset,
             cursor_shape: StyleValue::Unset,
             custom: HashMap::new(),
         }
@@ -487,6 +496,53 @@ impl Style {
     /// Reset the border color to the document/default style.
     pub fn unset_border_color(&mut self) {
         self.border_color = StyleValue::Unset;
+    }
+
+    // -- Text attributes ------------------------------------------------
+
+    /// Draw this node's text in bold.
+    pub fn bold(&mut self, value: bool) {
+        self.bold = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit boldness from the parent node.
+    pub fn inherit_bold(&mut self) {
+        self.bold = StyleValue::Inherit;
+    }
+
+    /// Reset boldness to the document/default style.
+    pub fn unset_bold(&mut self) {
+        self.bold = StyleValue::Unset;
+    }
+
+    /// Draw this node's text in italic.
+    pub fn italic(&mut self, value: bool) {
+        self.italic = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit italics from the parent node.
+    pub fn inherit_italic(&mut self) {
+        self.italic = StyleValue::Inherit;
+    }
+
+    /// Reset italics to the document/default style.
+    pub fn unset_italic(&mut self) {
+        self.italic = StyleValue::Unset;
+    }
+
+    /// Underline this node's text.
+    pub fn underline(&mut self, value: bool) {
+        self.underline = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit underlining from the parent node.
+    pub fn inherit_underline(&mut self) {
+        self.underline = StyleValue::Inherit;
+    }
+
+    /// Reset underlining to the document/default style.
+    pub fn unset_underline(&mut self) {
+        self.underline = StyleValue::Unset;
     }
 
     // -- Display --------------------------------------------------------

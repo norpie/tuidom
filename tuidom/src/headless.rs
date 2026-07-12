@@ -259,6 +259,12 @@ pub struct ScreenCell {
     pub width: u8,
     /// Whether this cell is the continuation cell of a wide glyph.
     pub is_wide_continuation: bool,
+    /// Whether this cell's glyph is bold.
+    pub bold: bool,
+    /// Whether this cell's glyph is italic.
+    pub italic: bool,
+    /// Whether this cell's glyph is underlined.
+    pub underline: bool,
 }
 
 impl ScreenCell {
@@ -273,6 +279,9 @@ impl ScreenCell {
             bg: cell.bg.map(ScreenColor::from),
             width: cell.content_width(),
             is_wide_continuation: cell.is_wide_continuation(),
+            bold: cell.attrs.bold,
+            italic: cell.attrs.italic,
+            underline: cell.attrs.underline,
         }
     }
 }

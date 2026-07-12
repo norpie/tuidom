@@ -13,7 +13,7 @@ use crate::node::{
 use crate::paint_order::{PaintEntry, paint_order};
 use crate::performance::{LargestFillProfile, PaintProfile};
 use crate::render::RenderCursor;
-use crate::render::grid::{Cell, Grid, GridRect};
+use crate::render::grid::{Cell, CellAttrs, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
 use crate::style::{Color, CursorShape};
 
@@ -181,6 +181,15 @@ fn paint_entry(
     cursor
 }
 
+/// A node's glyphs — text and border alike — carry its resolved terminal attributes.
+fn cell_attrs(node: &PaintEntry) -> CellAttrs {
+    CellAttrs {
+        bold: node.resolved.bold,
+        italic: node.resolved.italic,
+        underline: node.resolved.underline,
+    }
+}
+
 fn paint_border(
     grid: &mut Grid,
     node: &PaintEntry,
@@ -211,6 +220,7 @@ fn paint_border(
         border,
         Some(color),
         alpha,
+        cell_attrs(node),
     );
     if let Some(start) = border_start {
         profile.text_write_time += start.elapsed();
@@ -244,6 +254,7 @@ fn paint_text(
         content,
         Some(fg_rgb),
         alpha,
+        cell_attrs(node),
     );
     if let Some(start) = text_start {
         profile.text_write_time += start.elapsed();

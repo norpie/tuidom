@@ -14,8 +14,7 @@ use crossterm::terminal::{
 
 use crate::render::RenderCursor;
 use crate::render::diff::CellChange;
-use crate::render::grid::Cell;
-use crate::render::grid::Grid;
+use crate::render::grid::{Cell, CellAttrs, Grid};
 use crate::style::CursorShape;
 use crate::style::color::Rgb;
 
@@ -44,9 +43,19 @@ impl Terminal {
         changes: &[CellChange],
         cursor: Option<RenderCursor>,
     ) -> io::Result<()> {
-        queue!(self.stdout, Hide)?;
+        // Attributes are sticky, so each flush starts from a known state and then emits only
+        // transitions. `Attribute::Reset` also resets colors, which is harmless here because
+        // every cell write re-specifies its own fg and bg.
+        queue!(self.stdout, Hide, SetAttribute(Attribute::Reset))?;
+        let mut attrs = CellAttrs::default();
         for change in changes {
-            queue_cell(&mut self.stdout, change.x, change.y, &change.cell)?;
+            queue_cell(
+                &mut self.stdout,
+                change.x,
+                change.y,
+                &change.cell,
+                &mut attrs,
+            )?;
         }
         queue_cursor(&mut self.stdout, cursor)?;
         self.stdout.flush()
@@ -57,7 +66,13 @@ impl Terminal {
     /// Batches all commands with `queue!` then flushes once.
     pub fn flush_full(&mut self, grid: &Grid, cursor: Option<RenderCursor>) -> io::Result<()> {
         use crossterm::terminal::{Clear, ClearType};
-        queue!(self.stdout, Hide, Clear(ClearType::All))?;
+        queue!(
+            self.stdout,
+            Hide,
+            Clear(ClearType::All),
+            SetAttribute(Attribute::Reset)
+        )?;
+        let mut current_attrs = CellAttrs::default();
 
         for (y, row) in grid.cells.iter().enumerate() {
             let y = y as u16;
@@ -78,6 +93,9 @@ impl Terminal {
 
                 let fg = cell.fg;
                 let bg = cell.bg;
+                let attrs = cell.attrs;
+                queue_attr_transitions(&mut self.stdout, &mut current_attrs, attrs)?;
+
                 let mut run_text = String::new();
                 while x < grid.width {
                     let cell = &row[x as usize];
@@ -85,7 +103,9 @@ impl Terminal {
                         x += 1;
                         continue;
                     }
-                    if cell.fg != fg || cell.bg != bg {
+                    // A run is one span of identical colors *and* attributes — attributes stay
+                    // on until turned off, so a change has to break the run.
+                    if cell.fg != fg || cell.bg != bg || cell.attrs != attrs {
                         break;
                     }
 
@@ -256,7 +276,16 @@ fn cursor_style(cursor: RenderCursor) -> SetCursorStyle {
 }
 
 /// Queue a single cell to stdout (no flush).
-fn queue_cell(stdout: &mut Stdout, x: u16, y: u16, cell: &Cell) -> io::Result<()> {
+///
+/// `current` is the attribute state the terminal is already in, and is updated as
+/// transitions are emitted.
+fn queue_cell(
+    stdout: &mut Stdout,
+    x: u16,
+    y: u16,
+    cell: &Cell,
+    current: &mut CellAttrs,
+) -> io::Result<()> {
     if cell.is_wide_continuation() {
         return Ok(());
     }
@@ -266,8 +295,47 @@ fn queue_cell(stdout: &mut Stdout, x: u16, y: u16, cell: &Cell) -> io::Result<()
         MoveTo(x, y),
         SetForegroundColor(to_crossterm_color(cell.fg)),
         SetBackgroundColor(to_crossterm_color(cell.bg)),
-        Print(cell.terminal_text()),
-    )
+    )?;
+    queue_attr_transitions(stdout, current, cell.attrs)?;
+    queue!(stdout, Print(cell.terminal_text()))
+}
+
+/// Emit only the SGR changes between the terminal's current attribute state and `target`.
+///
+/// A blanket `Attribute::Reset` per cell is not an option: SGR 0 also resets colors, so it
+/// would fight the color writes.
+fn queue_attr_transitions(
+    stdout: &mut Stdout,
+    current: &mut CellAttrs,
+    target: CellAttrs,
+) -> io::Result<()> {
+    if target.bold != current.bold {
+        let attr = if target.bold {
+            Attribute::Bold
+        } else {
+            Attribute::NormalIntensity
+        };
+        queue!(stdout, SetAttribute(attr))?;
+    }
+    if target.italic != current.italic {
+        let attr = if target.italic {
+            Attribute::Italic
+        } else {
+            Attribute::NoItalic
+        };
+        queue!(stdout, SetAttribute(attr))?;
+    }
+    if target.underline != current.underline {
+        let attr = if target.underline {
+            Attribute::Underlined
+        } else {
+            Attribute::NoUnderline
+        };
+        queue!(stdout, SetAttribute(attr))?;
+    }
+
+    *current = target;
+    Ok(())
 }
 
 /// Convert optional [`Rgb`] to a crossterm color.

@@ -185,6 +185,7 @@ fn mark(dirty: &mut [bool], x: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::grid::CellAttrs;
     use crate::style::color::Rgb;
 
     fn rgb(r: u8, g: u8, b: u8) -> Rgb {
@@ -195,7 +196,14 @@ mod tests {
     fn diff_marks_both_cells_when_wide_glyph_is_added() {
         let old = Grid::new(3, 1);
         let mut new = Grid::new(3, 1);
-        new.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        new.write_text(
+            0,
+            0,
+            "界",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
 
         let changes = diff_profiled_with_hints(
             &old,
@@ -212,7 +220,14 @@ mod tests {
     #[test]
     fn diff_marks_both_cells_when_wide_glyph_is_removed() {
         let mut old = Grid::new(3, 1);
-        old.write_text(0, 0, "界", Some(rgb(255, 255, 255)), 1.0);
+        old.write_text(
+            0,
+            0,
+            "界",
+            Some(rgb(255, 255, 255)),
+            1.0,
+            CellAttrs::default(),
+        );
         let new = Grid::new(3, 1);
 
         let changes = diff_profiled_with_hints(

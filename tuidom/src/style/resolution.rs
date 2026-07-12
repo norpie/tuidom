@@ -58,6 +58,12 @@ pub struct ResolvedStyle {
     pub z_index: i32,
     /// Whether this node creates an isolated stacking context.
     pub stacking_context: bool,
+    /// Whether text is drawn bold.
+    pub bold: bool,
+    /// Whether text is drawn italic.
+    pub italic: bool,
+    /// Whether text is drawn underlined.
+    pub underline: bool,
     /// Resolved input cursor shape.
     pub cursor_shape: CursorShape,
 }
@@ -94,6 +100,9 @@ pub(crate) struct StyleDefaults {
     position: Position,
     z_index: i32,
     stacking_context: bool,
+    bold: bool,
+    italic: bool,
+    underline: bool,
     cursor_shape: CursorShape,
 }
 
@@ -123,6 +132,9 @@ impl Default for StyleDefaults {
             position: Position::Flow,
             z_index: 0,
             stacking_context: false,
+            bold: false,
+            italic: false,
+            underline: false,
             cursor_shape: CursorShape::Block,
         }
     }
@@ -163,6 +175,9 @@ impl StyleDefaults {
             position: self.position,
             z_index: self.z_index,
             stacking_context: self.stacking_context,
+            bold: self.bold,
+            italic: self.italic,
+            underline: self.underline,
             cursor_shape: self.cursor_shape,
         }
     }
@@ -285,6 +300,17 @@ impl ResolvedStyle {
                 &data.style.stacking_context,
                 parent.map(|p| &p.stacking_context),
                 &defaults.stacking_context,
+            ),
+            bold: resolve(&data.style.bold, parent.map(|p| &p.bold), &defaults.bold),
+            italic: resolve(
+                &data.style.italic,
+                parent.map(|p| &p.italic),
+                &defaults.italic,
+            ),
+            underline: resolve(
+                &data.style.underline,
+                parent.map(|p| &p.underline),
+                &defaults.underline,
             ),
             cursor_shape: resolve(
                 &data.style.cursor_shape,
@@ -437,6 +463,24 @@ impl ResolvedStyle {
             &style.stacking_context,
             parent.map(|p| &p.stacking_context),
             &defaults.stacking_context,
+        );
+        apply_override(
+            &mut self.bold,
+            &style.bold,
+            parent.map(|p| &p.bold),
+            &defaults.bold,
+        );
+        apply_override(
+            &mut self.italic,
+            &style.italic,
+            parent.map(|p| &p.italic),
+            &defaults.italic,
+        );
+        apply_override(
+            &mut self.underline,
+            &style.underline,
+            parent.map(|p| &p.underline),
+            &defaults.underline,
         );
         apply_override(
             &mut self.cursor_shape,
