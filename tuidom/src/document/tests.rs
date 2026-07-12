@@ -14,8 +14,8 @@ use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
 use crate::performance::PerformanceDetail;
 use crate::style::{
-    AlignContent, AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, FlexWrap, Length, Position, Style,
+    AlignContent, AlignItems, AlignSelf, Border, BorderCharset, BorderSides, Color, CursorShape,
+    Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Position, Style,
 };
 
 #[test]
@@ -647,6 +647,77 @@ fn cursor_style_fields_resolve_and_focus_style_overrides_them() {
 
     let focused = doc.resolved_style(input).unwrap();
     assert_eq!(focused.cursor_shape, CursorShape::Underline);
+}
+
+#[test]
+fn border_resolves_and_defaults_to_none_with_a_foreground_following_color() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    let unset = doc.resolved_style(node).unwrap();
+    assert_eq!(unset.border, Border::none());
+    assert!(!unset.border.sides.any());
+    // Unset border color means "follow the node's foreground", not "no color".
+    assert_eq!(unset.border_color, None);
+
+    let mut style = Style::new();
+    style.border(Border::new(BorderCharset::double()));
+    doc.set_style(node, &style).unwrap();
+
+    let resolved = doc.resolved_style(node).unwrap();
+    assert_eq!(resolved.border.charset, BorderCharset::double());
+    assert_eq!(resolved.border.sides, BorderSides::ALL);
+    assert_eq!(resolved.border_color, None);
+}
+
+#[test]
+fn focus_style_recolors_a_border_without_respecifying_it() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut base = Style::new();
+    base.border(
+        Border::new(BorderCharset::rounded())
+            .with_sides(BorderSides::new(true, false, true, false)),
+    );
+    doc.set_style(node, &base).unwrap();
+
+    // The whole point of border_color being its own property: a focus style changes the
+    // color alone, and the charset and sides survive the merge untouched.
+    let mut focus = Style::new();
+    focus.border_color(Color::red());
+    doc.set_focus_style(node, &focus).unwrap();
+    doc.focus(node).unwrap();
+
+    let focused = doc.resolved_style(node).unwrap();
+    assert_eq!(focused.border_color, Some(Color::red()));
+    assert_eq!(focused.border.charset, BorderCharset::rounded());
+    assert_eq!(
+        focused.border.sides,
+        BorderSides::new(true, false, true, false)
+    );
+}
+
+#[test]
+fn border_none_in_a_pseudo_style_removes_a_base_border() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    let mut base = Style::new();
+    base.border(Border::new(BorderCharset::single()));
+    doc.set_style(node, &base).unwrap();
+
+    let mut disabled = Style::new();
+    disabled.border(Border::none());
+    doc.set_disabled_style(node, &disabled).unwrap();
+    doc.set_disabled(node, true).unwrap();
+
+    let resolved = doc.resolved_style(node).unwrap();
+    assert!(!resolved.border.sides.any());
 }
 
 #[test]

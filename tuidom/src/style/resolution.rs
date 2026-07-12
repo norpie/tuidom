@@ -5,8 +5,8 @@
 
 use crate::node::NodeData;
 use crate::style::{
-    AlignContent, AlignItems, AlignSelf, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, FlexWrap, JustifyContent, Length, Position, Style, StyleValue,
+    AlignContent, AlignItems, AlignSelf, Border, Color, CursorShape, Display, EdgeInsets,
+    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -20,6 +20,10 @@ pub struct ResolvedStyle {
     pub padding: EdgeInsets,
     /// Resolved outer spacing.
     pub margin: EdgeInsets,
+    /// Resolved border charset and drawn sides.
+    pub border: Border,
+    /// Resolved border color. `None` means the border follows this node's resolved `color`.
+    pub border_color: Option<Color>,
     /// Resolved display mode.
     pub display: Display,
     /// Resolved opacity (0–1).
@@ -71,6 +75,8 @@ pub(crate) struct StyleDefaults {
     height: Length,
     padding: EdgeInsets,
     margin: EdgeInsets,
+    border: Border,
+    border_color: Option<Color>,
     display: Display,
     opacity: f64,
     color: Color,
@@ -98,6 +104,8 @@ impl Default for StyleDefaults {
             height: Length::Auto,
             padding: EdgeInsets::ZERO,
             margin: EdgeInsets::ZERO,
+            border: Border::none(),
+            border_color: None,
             display: Display::Flex,
             opacity: 1.0,
             color: Color::white(),
@@ -136,6 +144,8 @@ impl StyleDefaults {
             height: self.height,
             padding: self.padding,
             margin: self.margin,
+            border: self.border,
+            border_color: self.border_color,
             display: self.display,
             opacity: self.opacity,
             color: self.color,
@@ -188,6 +198,16 @@ impl ResolvedStyle {
                 &data.style.margin,
                 parent.map(|p| &p.margin),
                 &defaults.margin,
+            ),
+            border: resolve(
+                &data.style.border,
+                parent.map(|p| &p.border),
+                &defaults.border,
+            ),
+            border_color: resolve_opt(
+                &data.style.border_color,
+                parent.and_then(|p| p.border_color),
+                defaults.border_color,
             ),
             display: resolve(
                 &data.style.display,
@@ -303,6 +323,18 @@ impl ResolvedStyle {
             &style.margin,
             parent.map(|p| &p.margin),
             &defaults.margin,
+        );
+        apply_override(
+            &mut self.border,
+            &style.border,
+            parent.map(|p| &p.border),
+            &defaults.border,
+        );
+        apply_opt_override(
+            &mut self.border_color,
+            &style.border_color,
+            parent.and_then(|p| p.border_color),
+            defaults.border_color,
         );
         apply_override(
             &mut self.display,

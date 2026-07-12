@@ -1,3 +1,5 @@
+/// Border charsets, sides, and presets.
+pub mod border;
 /// Color types and OKLCH → RGB conversion.
 pub mod color;
 /// Resolved style computation and caching.
@@ -5,6 +7,7 @@ pub(crate) mod resolution;
 
 use std::collections::HashMap;
 
+pub use border::{Border, BorderCharset, BorderSides};
 pub use color::Color;
 
 // ---------------------------------------------------------------------------
@@ -293,6 +296,10 @@ pub struct Style {
     pub(crate) padding: StyleValue<EdgeInsets>,
     /// Outer spacing in terminal cells.
     pub(crate) margin: StyleValue<EdgeInsets>,
+    /// Border charset and drawn sides.
+    pub(crate) border: StyleValue<Border>,
+    /// Border color. Unset follows the node's foreground color.
+    pub(crate) border_color: StyleValue<Color>,
     /// Display mode.
     pub(crate) display: StyleValue<Display>,
     /// Opacity (0–1).
@@ -349,6 +356,8 @@ impl Style {
             height: StyleValue::Unset,
             padding: StyleValue::Unset,
             margin: StyleValue::Unset,
+            border: StyleValue::Unset,
+            border_color: StyleValue::Unset,
             display: StyleValue::Unset,
             opacity: StyleValue::Unset,
             color: StyleValue::Unset,
@@ -437,6 +446,47 @@ impl Style {
     /// Reset outer spacing to the document/default style.
     pub fn unset_margin(&mut self) {
         self.margin = StyleValue::Unset;
+    }
+
+    // -- Border ---------------------------------------------------------
+
+    /// Set the border charset and drawn sides.
+    ///
+    /// A border occupies one cell per drawn side, taken from the node's own box, so a
+    /// bordered node's content and children are inset by it. Use [`Border::none`] to remove
+    /// a border a base style set — leaving this unset overrides nothing.
+    pub fn border(&mut self, value: Border) {
+        self.border = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the border from the parent node.
+    pub fn inherit_border(&mut self) {
+        self.border = StyleValue::Inherit;
+    }
+
+    /// Reset the border to the document/default style.
+    pub fn unset_border(&mut self) {
+        self.border = StyleValue::Unset;
+    }
+
+    // -- Border color ---------------------------------------------------
+
+    /// Set the border color.
+    ///
+    /// When unset, the border is drawn in the node's resolved foreground color, so a focus
+    /// style that changes `color` moves the border with it.
+    pub fn border_color(&mut self, value: Color) {
+        self.border_color = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the border color from the parent node.
+    pub fn inherit_border_color(&mut self) {
+        self.border_color = StyleValue::Inherit;
+    }
+
+    /// Reset the border color to the document/default style.
+    pub fn unset_border_color(&mut self) {
+        self.border_color = StyleValue::Unset;
     }
 
     // -- Display --------------------------------------------------------
