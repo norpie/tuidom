@@ -127,10 +127,12 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 
 ## Borders
 
-- [ ] Traditional box-drawing borders (style property):
-  - [ ] Presets: single, double, rounded, thick, ascii, none
-  - [ ] Custom charset support (user-defined characters)
-  - [ ] Per-side control (top, right, bottom, left independently)
+- [x] Traditional box-drawing borders (style property):
+  - [x] Presets: single, double, rounded, thick, ascii, none
+  - [x] Custom charset support (user-defined characters)
+  - [x] Per-side control (top, right, bottom, left independently) — width is always one cell, so per-side control is presence
+  - [x] Borders occupy real cells: taffy insets a bordered node's content and children
+  - [x] `border_color` is its own property, following the node's foreground when unset
 - [ ] Half-block edges (opt-in, later milestone):
   - [ ] Uses `▀▄▌▐` characters with fg/bg colors to create smooth color transitions
   - [ ] Renderer detects adjacent node colors at boundary cells
@@ -179,7 +181,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 
 - [x] Crossterm as primary backend (possibly backend-agnostic later if easy)
 - [x] Virtual screen buffer — full cell-by-cell diff each frame
-- [ ] Support all terminal capabilities (colors, bold, italic, underline, etc.)
+- [x] Terminal text attributes: bold, italic, underline (sticky SGR state, emitted as transitions)
 - [x] Terminal resize handling:
   - [x] Auto-relayout on resize
   - [x] Resize event fired for user handlers

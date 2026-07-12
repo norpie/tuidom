@@ -48,6 +48,12 @@ Terms and concepts used throughout the tuidom codebase.
 
 **EdgeInsets** — Terminal-cell spacing for the top, right, bottom, and left edges of a node. Used by padding and margin style fields.
 
+**Border** — A node's frame: one `BorderCharset` plus the sides it is drawn on. A border occupies real cells — layout insets the node's content and children by one cell per drawn side — so it frames content instead of painting over it. Its color is the separate `border_color` property, which follows the node's resolved foreground when unset.
+
+**BorderCharset** — The eight characters that draw a box: four edges and four corners. The charset is the primitive; `single`, `double`, `rounded`, `thick`, and `ascii` are named constructors, not special cases. One charset per node, because a corner is drawn from the charset and a double-top/single-left corner has no coherent character.
+
+**BorderSides** — Which sides of a border are drawn. A terminal border is always exactly one cell thick, so per-side control is presence, not width. A corner cell gets its corner character only when both adjacent sides are drawn; otherwise the one side present runs straight through it, so a top-only border is a clean rule.
+
 **FlexDirection** — Main-axis direction for flex containers: row, column, and their reverse variants, which lay children out from the end of the main axis.
 
 **FlexGap** — Terminal-cell spacing between flex children and flex lines. `column` is horizontal spacing and `row` is vertical spacing.
@@ -114,7 +120,9 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Rendering
 
-**Cell** — Single terminal cell position. Contains display content plus fg/bg colors.
+**Cell** — Single terminal cell position. Contains display content, fg/bg colors, and terminal attributes.
+
+**CellAttrs** — The bold/italic/underline state carried by a cell's glyph. Packed on the cell — unlike on `Style`, where the three are separate properties — because nothing merges at the cell level: attributes belong to the glyph and are replaced or cleared with it.
 
 **CellContent** — The display content stored in a cell: empty space, a grapheme glyph, or a wide-glyph continuation marker.
 
