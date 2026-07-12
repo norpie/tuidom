@@ -765,6 +765,65 @@ fn multiline_input_scroll_keeps_cursor_visible() {
 }
 
 #[test]
+fn padded_text_node_paints_inside_its_padding_box() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hi").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+
+    let mut style = Style::new();
+    style.padding(EdgeInsets::all(1));
+    style.background(Color::black());
+    doc.set_style(text, &style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 6, 4);
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(1, 1).unwrap().text, "h");
+    assert_eq!(runtime.get_cell(2, 1).unwrap().text, "i");
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, " ");
+
+    // Padding is space inside the node, so the background still fills the whole rect.
+    let background = Some(ScreenColor::from_rgb(0, 0, 0));
+    assert_eq!(runtime.get_cell(0, 0).unwrap().bg, background);
+    assert_eq!(runtime.get_cell(3, 3).unwrap().bg, background);
+    assert_eq!(runtime.get_cell(4, 0).unwrap().bg, None);
+}
+
+#[test]
+fn padded_input_places_cursor_and_scrolls_against_its_content_rect() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abcdef").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+
+    // Border-box width 5 minus one cell of padding per side leaves a 3-cell content rect,
+    // whose origin is (1, 1).
+    let mut style = Style::new();
+    style.width(Length::Pixels(5));
+    style.height(Length::Pixels(3));
+    style.padding(EdgeInsets::all(1));
+    doc.set_style(input, &style).unwrap();
+    doc.focus(input).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 8, 4);
+    runtime.render().unwrap();
+    runtime.document().set_input_cursor(input, 6).unwrap();
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(1, 1).unwrap().text, "e");
+    assert_eq!(runtime.get_cell(2, 1).unwrap().text, "f");
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!((cursor.x, cursor.y), (3, 1));
+    assert!(cursor.visible);
+
+    runtime.document().set_input_cursor(input, 0).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(runtime.get_cell(1, 1).unwrap().text, "a");
+    assert_eq!(runtime.get_cell(3, 1).unwrap().text, "c");
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!((cursor.x, cursor.y), (1, 1));
+}
+
+#[test]
 fn focused_block_cursor_inverts_cell_and_exposes_metadata() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("A").unwrap();

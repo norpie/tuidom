@@ -297,7 +297,10 @@ impl Document {
         let Some(layout) = self.get_node(node).and_then(|view| view.layout) else {
             return Ok(());
         };
-        if layout.width == 0 || layout.height == 0 {
+        // Scroll against the rect the glyphs are actually written into, so a padded input
+        // does not believe it has more room than it paints.
+        let content = layout.content_rect(&self.resolved_style(node)?);
+        if content.width == 0 || content.height == 0 {
             return Ok(());
         }
 
@@ -307,7 +310,7 @@ impl Document {
             .get_mut(&node)
             .ok_or(TuidomError::NodeNotFound { id: node })?;
         let state = input_state_mut(&mut data.kind, node)?;
-        keep_cursor_visible(state, layout.width, layout.height);
+        keep_cursor_visible(state, content.width, content.height);
         Ok(())
     }
 }

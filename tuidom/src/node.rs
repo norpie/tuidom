@@ -9,8 +9,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::animation::TransitionConfig;
 use crate::animation::TransitionProperty;
 use crate::id::NodeId;
-use crate::style::Style;
 use crate::style::resolution::ResolvedStyle;
+use crate::style::{EdgeInsets, Style};
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -27,6 +27,30 @@ pub struct LayoutRect {
     pub width: u16,
     /// Height in terminal cells.
     pub height: u16,
+}
+
+impl LayoutRect {
+    /// The rect a node paints its own content into: the layout rect deflated by padding.
+    ///
+    /// A background still fills the whole layout rect, since padding is space *inside* the
+    /// node. Only content the node paints itself — Text and Input glyphs, and the input
+    /// cursor — is inset, which puts it where taffy already places a container's children.
+    pub(crate) fn content_rect(self, resolved: &ResolvedStyle) -> Self {
+        self.deflate(resolved.padding)
+    }
+
+    fn deflate(self, insets: EdgeInsets) -> Self {
+        Self {
+            x: self.x.saturating_add(i32::from(insets.left)),
+            y: self.y.saturating_add(i32::from(insets.top)),
+            width: self
+                .width
+                .saturating_sub(insets.left.saturating_add(insets.right)),
+            height: self
+                .height
+                .saturating_sub(insets.top.saturating_add(insets.bottom)),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

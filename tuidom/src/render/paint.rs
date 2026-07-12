@@ -189,13 +189,14 @@ fn paint_text(
         fill_background(grid, node, bg_cell, alpha, profile);
     }
 
+    let content_rect = node.layout.content_rect(&node.resolved);
     let text_start = profile.enabled.then(Instant::now);
     let glyphs = grid.write_text_clipped(
         GridRect {
-            x: node.layout.x,
-            y: node.layout.y,
-            width: node.layout.width,
-            height: node.layout.height,
+            x: content_rect.x,
+            y: content_rect.y,
+            width: content_rect.width,
+            height: content_rect.height,
         },
         content,
         Some(fg_rgb),
@@ -356,7 +357,8 @@ fn input_cursor_metadata(
     input: InputCursorPaint<'_>,
     color: Rgb,
 ) -> Option<RenderCursor> {
-    if node.layout.width == 0 || node.layout.height == 0 {
+    let content_rect = node.layout.content_rect(&node.resolved);
+    if content_rect.width == 0 || content_rect.height == 0 {
         return None;
     }
 
@@ -365,10 +367,10 @@ fn input_cursor_metadata(
     let x = position.x - i32::from(input.scroll_x);
     let y = position.y - i32::from(input.scroll_y);
     let input_clipped =
-        x < 0 || y < 0 || y >= i32::from(node.layout.height) || x >= i32::from(node.layout.width);
+        x < 0 || y < 0 || y >= i32::from(content_rect.height) || x >= i32::from(content_rect.width);
 
-    let screen_x = node.layout.x + x;
-    let screen_y = node.layout.y + y;
+    let screen_x = content_rect.x + x;
+    let screen_y = content_rect.y + y;
     let screen_clipped = screen_x < 0
         || screen_y < 0
         || screen_x >= i32::from(grid.width)
