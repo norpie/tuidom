@@ -1,3 +1,5 @@
+use crate::style::EdgeInsets;
+
 /// The eight characters that draw a box.
 ///
 /// The charset is the primitive: the named presets ([`single`](BorderCharset::single),
@@ -138,6 +140,18 @@ impl BorderSides {
     /// Whether any side is drawn.
     pub const fn any(self) -> bool {
         self.top || self.right || self.bottom || self.left
+    }
+
+    /// The space the drawn sides take out of the node: one cell each.
+    ///
+    /// A border is never thicker than a cell, so presence is the only degree of freedom.
+    pub(crate) const fn insets(self) -> EdgeInsets {
+        EdgeInsets::new(
+            self.top as u16,
+            self.right as u16,
+            self.bottom as u16,
+            self.left as u16,
+        )
     }
 }
 

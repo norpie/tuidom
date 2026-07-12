@@ -30,13 +30,15 @@ pub struct LayoutRect {
 }
 
 impl LayoutRect {
-    /// The rect a node paints its own content into: the layout rect deflated by padding.
+    /// The rect a node paints its own content into: the layout rect deflated by the border
+    /// and then by padding.
     ///
-    /// A background still fills the whole layout rect, since padding is space *inside* the
+    /// A background still fills the whole layout rect, since both are space *inside* the
     /// node. Only content the node paints itself — Text and Input glyphs, and the input
     /// cursor — is inset, which puts it where taffy already places a container's children.
     pub(crate) fn content_rect(self, resolved: &ResolvedStyle) -> Self {
-        self.deflate(resolved.padding)
+        self.deflate(resolved.border.sides.insets())
+            .deflate(resolved.padding)
     }
 
     fn deflate(self, insets: EdgeInsets) -> Self {

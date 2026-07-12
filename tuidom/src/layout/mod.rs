@@ -18,7 +18,7 @@ use crate::style::resolution::ResolvedStyle;
 // `Position` shadows `taffy::prelude::Position`; taffy's own positioning types are
 // referenced through `taffy::style::` below.
 use crate::style::{
-    AlignContent, AlignItems, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap,
+    AlignContent, AlignItems, Border, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap,
     JustifyContent, Length, Position,
 };
 
@@ -393,6 +393,7 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         },
         margin: to_taffy_margin(resolved.margin),
         padding: to_taffy_padding(resolved.padding),
+        border: to_taffy_border(resolved.border),
         flex_direction: to_taffy_flex_direction(resolved.flex_direction),
         flex_wrap: to_taffy_flex_wrap(resolved.flex_wrap),
         flex_basis: to_dimension(resolved.flex_basis),
@@ -449,6 +450,18 @@ fn to_taffy_margin(insets: EdgeInsets) -> Rect<LengthPercentageAuto> {
 }
 
 fn to_taffy_padding(insets: EdgeInsets) -> Rect<LengthPercentage> {
+    Rect {
+        left: LengthPercentage::length(insets.left as f32),
+        right: LengthPercentage::length(insets.right as f32),
+        top: LengthPercentage::length(insets.top as f32),
+        bottom: LengthPercentage::length(insets.bottom as f32),
+    }
+}
+
+/// A border occupies real cells, so layout has to know about it: taffy shrinks the content
+/// box by one cell per drawn side, which is what keeps children off the frame.
+fn to_taffy_border(border: Border) -> Rect<LengthPercentage> {
+    let insets = border.sides.insets();
     Rect {
         left: LengthPercentage::length(insets.left as f32),
         right: LengthPercentage::length(insets.right as f32),
@@ -540,7 +553,7 @@ fn rounded_taffy_size_to_u16(value: f32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{AlignSelf, Style as DomStyle};
+    use crate::style::{AlignSelf, BorderCharset, BorderSides, Style as DomStyle};
 
     fn fixed_centered_style(width: u16, height: u16) -> DomStyle {
         let mut style = DomStyle::new();
@@ -843,9 +856,10 @@ mod tests {
     }
 
     /// Absolute insets resolve against the parent's padding box, so the parent's own
-    /// padding does not push an absolute child inward. With no border support yet, the
-    /// padding box origin coincides with the parent's box origin; revisit when borders
-    /// land (roadmap section 8).
+    /// padding does not push an absolute child inward. A border does, because the padding
+    /// box starts inside it — see
+    /// `absolute_child_of_a_bordered_parent_lands_inside_the_frame`. This parent has no
+    /// border, so its padding box origin coincides with its box origin.
     #[test]
     fn absolute_offset_resolves_against_parent_origin_ignoring_parent_padding() {
         let doc = Document::new().unwrap();
@@ -891,6 +905,122 @@ mod tests {
 
         let offset_layout = doc.get_node(offset).unwrap().layout.unwrap();
         assert_eq!((offset_layout.x, offset_layout.y), (7, 5));
+    }
+
+    #[test]
+    fn border_insets_children_by_one_cell_per_drawn_side() {
+        let doc = Document::new().unwrap();
+
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+
+        let mut parent_style = DomStyle::new();
+        parent_style.width(Length::Pixels(10));
+        parent_style.height(Length::Pixels(6));
+        parent_style.border(Border::new(BorderCharset::single()));
+        doc.set_style(parent, &parent_style).unwrap();
+        doc.append_child(doc.root(), parent).unwrap();
+
+        let mut child_style = DomStyle::new();
+        child_style.flex_grow(1.0);
+        child_style.align_self(AlignSelf::Stretch);
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        compute_layout(&doc, 20, 10).unwrap();
+
+        // The parent keeps its full border-box rect; the frame comes out of the child.
+        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap();
+        assert_eq!(
+            (
+                parent_layout.x,
+                parent_layout.y,
+                parent_layout.width,
+                parent_layout.height
+            ),
+            (0, 0, 10, 6)
+        );
+
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!(
+            (
+                child_layout.x,
+                child_layout.y,
+                child_layout.width,
+                child_layout.height
+            ),
+            (1, 1, 8, 4)
+        );
+    }
+
+    #[test]
+    fn a_border_on_one_side_only_insets_that_side() {
+        let doc = Document::new().unwrap();
+
+        let parent = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+
+        let mut parent_style = DomStyle::new();
+        parent_style.width(Length::Pixels(10));
+        parent_style.height(Length::Pixels(6));
+        parent_style.border(
+            Border::new(BorderCharset::single())
+                .with_sides(BorderSides::new(false, false, false, true)),
+        );
+        doc.set_style(parent, &parent_style).unwrap();
+        doc.append_child(doc.root(), parent).unwrap();
+
+        let mut child_style = DomStyle::new();
+        child_style.flex_grow(1.0);
+        child_style.align_self(AlignSelf::Stretch);
+        doc.set_style(child, &child_style).unwrap();
+        doc.append_child(parent, child).unwrap();
+
+        compute_layout(&doc, 20, 10).unwrap();
+
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        assert_eq!(
+            (
+                child_layout.x,
+                child_layout.y,
+                child_layout.width,
+                child_layout.height
+            ),
+            (1, 0, 9, 6)
+        );
+    }
+
+    /// The counterpart to `absolute_offset_resolves_against_parent_origin_ignoring_parent_padding`:
+    /// absolute insets resolve against the padding box, which a border — unlike padding —
+    /// moves. `Absolute { x: 0, y: 0 }` therefore lands just inside the frame instead of on
+    /// top of it, which is what stops an absolute child from painting over its parent's border.
+    #[test]
+    fn absolute_child_of_a_bordered_parent_lands_inside_the_frame() {
+        let doc = Document::new().unwrap();
+
+        let parent = doc.create_box().unwrap();
+        let flush = doc.create_box().unwrap();
+
+        let mut parent_style = DomStyle::new();
+        parent_style.width(Length::Pixels(10));
+        parent_style.height(Length::Pixels(6));
+        parent_style.padding(EdgeInsets::all(2));
+        parent_style.border(Border::new(BorderCharset::single()));
+        doc.set_style(parent, &parent_style).unwrap();
+        doc.append_child(doc.root(), parent).unwrap();
+
+        let mut flush_style = DomStyle::new();
+        flush_style.width(Length::Pixels(1));
+        flush_style.height(Length::Pixels(1));
+        flush_style.position(Position::Absolute { x: 0, y: 0 });
+        doc.set_style(flush, &flush_style).unwrap();
+        doc.append_child(parent, flush).unwrap();
+
+        compute_layout(&doc, 20, 10).unwrap();
+
+        // Inset by the border, but not by the parent's padding.
+        let flush_layout = doc.get_node(flush).unwrap().layout.unwrap();
+        assert_eq!((flush_layout.x, flush_layout.y), (1, 1));
     }
 
     #[test]
