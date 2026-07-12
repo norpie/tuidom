@@ -165,9 +165,9 @@ pub struct PaintProfile {
     pub opaque_filled_cells: usize,
     /// Largest background fill in this frame.
     pub largest_fill: Option<LargestFillProfile>,
-    /// Time spent writing text glyphs into the grid.
+    /// Time spent writing glyphs — text and borders — into the grid.
     pub text_write_time: Duration,
-    /// Number of glyph heads written into the grid.
+    /// Number of glyph heads written into the grid, including border characters.
     pub glyphs_written: usize,
     /// Time spent formatting input display content before text paint.
     pub input_format_time: Duration,

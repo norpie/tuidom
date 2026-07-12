@@ -124,7 +124,7 @@ fn paint_entry(
     };
     let fg_rgb = resolve_rgb(rgb_cache, node.resolved.color, profile);
 
-    match &node.kind {
+    let cursor = match &node.kind {
         NodeKindView::Box => {
             if let Some(bg) = bg_rgb {
                 let bg_cell = Cell::empty_with_bg(bg);
@@ -172,6 +172,49 @@ fn paint_entry(
                 None
             }
         }
+    };
+
+    // Every node kind can carry a border, and it is drawn over the node's own background:
+    // layout already reserved its cells, so no content of this node contends for them.
+    paint_border(grid, node, fg_rgb, alpha, rgb_cache, profile);
+
+    cursor
+}
+
+fn paint_border(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    fg_rgb: Rgb,
+    alpha: f64,
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) {
+    let border = node.resolved.border;
+    if !border.sides.any() {
+        return;
+    }
+
+    // An unset border color follows the node's foreground, like CSS's `currentColor`.
+    let color = match node.resolved.border_color {
+        Some(color) => resolve_rgb(rgb_cache, color, profile),
+        None => fg_rgb,
+    };
+
+    let border_start = profile.enabled.then(Instant::now);
+    let glyphs = grid.write_border(
+        GridRect {
+            x: node.layout.x,
+            y: node.layout.y,
+            width: node.layout.width,
+            height: node.layout.height,
+        },
+        border,
+        Some(color),
+        alpha,
+    );
+    if let Some(start) = border_start {
+        profile.text_write_time += start.elapsed();
+        profile.glyphs_written += glyphs;
     }
 }
 
@@ -252,6 +295,13 @@ fn clear_grid_for_paint(
 }
 
 fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
+    // A bordered node paints cells even with no background and no text, so it cannot be
+    // skipped past when hoisting a later opaque background into the frame clear — the border
+    // would then be painted after the clear, on top of a background that should cover it.
+    if entry.resolved.border.sides.any() {
+        return false;
+    }
+
     match &entry.kind {
         NodeKindView::Box => true,
         NodeKindView::Text { content } => content.is_empty(),
@@ -443,7 +493,7 @@ mod tests {
     use crate::id::NodeId;
     use crate::node::LayoutRect;
     use crate::style::color::Rgb;
-    use crate::style::{Color, Display, Length, Style};
+    use crate::style::{Border, BorderCharset, Color, Display, Length, Style};
 
     fn row_text(grid: &Grid, row: usize) -> String {
         grid.cells[row]
@@ -500,6 +550,14 @@ mod tests {
     fn paint_doc(doc: &Document, grid: &mut Grid) {
         let mut rgb_cache = RgbCache::new();
         paint(doc, grid, &mut rgb_cache, false, false);
+    }
+
+    /// Paints the way the terminal renderer does: reusing a grid, which is the only path
+    /// that runs the frame-clear fast path. `HeadlessRuntime` always paints into a fresh
+    /// grid, so it never exercises this.
+    fn paint_doc_clearing(doc: &Document, grid: &mut Grid) {
+        let mut rgb_cache = RgbCache::new();
+        paint(doc, grid, &mut rgb_cache, false, true);
     }
 
     fn painted_bg(doc: &Document) -> Option<Rgb> {
@@ -820,6 +878,44 @@ mod tests {
         paint_doc(&doc, &mut grid);
 
         assert_eq!(row_text(&grid, 0), "i  ");
+    }
+
+    /// The frame-clear fast path hoists a later opaque full-screen background into the grid
+    /// clear, skipping earlier entries that paint nothing. A bordered box paints something
+    /// even with no background and no text — if it were skipped, its border would be painted
+    /// after the clear, on top of the background that is supposed to cover it.
+    #[test]
+    fn bordered_entry_is_not_skipped_when_hoisting_a_background_into_the_frame_clear() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let bordered = doc.create_box().unwrap();
+        let cover = doc.create_box().unwrap();
+        doc.append_child(root, bordered).unwrap();
+        doc.append_child(root, cover).unwrap();
+
+        let mut border_style = Style::new();
+        border_style.border(Border::new(BorderCharset::single()));
+        doc.set_style(bordered, &border_style).unwrap();
+        set_background(&doc, cover, Color::blue());
+
+        let full = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 3,
+        };
+        for node in [root, bordered, cover] {
+            set_layout(&doc, node, full);
+        }
+
+        let mut grid = Grid::new(4, 3);
+        paint_doc_clearing(&doc, &mut grid);
+
+        // `cover` paints after `bordered`, so nothing of the border may survive.
+        assert_eq!(row_text(&grid, 0), "    ");
+        assert_eq!(row_text(&grid, 1), "    ");
+        assert_eq!(row_text(&grid, 2), "    ");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 255)));
     }
 
     #[test]

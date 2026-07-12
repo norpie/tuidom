@@ -720,6 +720,159 @@ fn border_none_in_a_pseudo_style_removes_a_base_border() {
     assert!(!resolved.border.sides.any());
 }
 
+fn bordered_box(doc: &Document, border: Border, width: u16, height: u16) -> NodeId {
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.width(Length::Pixels(width));
+    style.height(Length::Pixels(height));
+    style.border(border);
+    doc.set_style(node, &style).unwrap();
+    node
+}
+
+fn row_text(runtime: &HeadlessRuntime, y: i32, width: i32) -> String {
+    (0..width)
+        .map(|x| runtime.get_cell(x, y).unwrap().text)
+        .collect()
+}
+
+#[test]
+fn border_presets_render_their_own_characters() {
+    for (charset, expected) in [
+        (BorderCharset::single(), ["┌──┐", "│  │", "└──┘"]),
+        (BorderCharset::double(), ["╔══╗", "║  ║", "╚══╝"]),
+        (BorderCharset::rounded(), ["╭──╮", "│  │", "╰──╯"]),
+        (BorderCharset::thick(), ["┏━━┓", "┃  ┃", "┗━━┛"]),
+        (BorderCharset::ascii(), ["+--+", "|  |", "+--+"]),
+    ] {
+        let doc = Document::new().unwrap();
+        bordered_box(&doc, Border::new(charset), 4, 3);
+
+        let mut runtime = HeadlessRuntime::new(doc, 4, 3);
+        runtime.render().unwrap();
+
+        for (y, line) in expected.iter().enumerate() {
+            assert_eq!(row_text(&runtime, y as i32, 4), *line);
+        }
+    }
+}
+
+#[test]
+fn a_top_only_border_draws_a_clean_rule_without_stray_corners() {
+    let doc = Document::new().unwrap();
+    bordered_box(
+        &doc,
+        Border::new(BorderCharset::single())
+            .with_sides(BorderSides::new(true, false, false, false)),
+        4,
+        3,
+    );
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 3);
+    runtime.render().unwrap();
+
+    // The top side runs through both corner cells, because no vertical side meets it there.
+    assert_eq!(row_text(&runtime, 0, 4), "────");
+    assert_eq!(row_text(&runtime, 1, 4), "    ");
+    assert_eq!(row_text(&runtime, 2, 4), "    ");
+}
+
+#[test]
+fn adjacent_drawn_sides_still_meet_in_a_corner() {
+    let doc = Document::new().unwrap();
+    bordered_box(
+        &doc,
+        Border::new(BorderCharset::single()).with_sides(BorderSides::new(true, false, false, true)),
+        4,
+        3,
+    );
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 3);
+    runtime.render().unwrap();
+
+    assert_eq!(row_text(&runtime, 0, 4), "┌───");
+    assert_eq!(row_text(&runtime, 1, 4), "│   ");
+    assert_eq!(row_text(&runtime, 2, 4), "│   ");
+}
+
+#[test]
+fn border_color_follows_the_foreground_until_it_is_set() {
+    let doc = Document::new().unwrap();
+    let node = bordered_box(&doc, Border::new(BorderCharset::single()), 4, 3);
+    doc.update_style(node, |style| style.color(Color::red()))
+        .unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 3);
+    runtime.render().unwrap();
+    let red = ScreenColor::from_rgb(255, 0, 0);
+    assert_eq!(runtime.get_cell(0, 0).unwrap().fg, Some(red));
+
+    runtime
+        .document()
+        .update_style(node, |style| style.border_color(Color::blue()))
+        .unwrap();
+    runtime.render().unwrap();
+
+    // The border takes its own color; the node's foreground is unchanged.
+    assert_eq!(
+        runtime.get_cell(0, 0).unwrap().fg,
+        Some(ScreenColor::from_rgb(0, 0, 255))
+    );
+    assert_eq!(
+        runtime.document().resolved_style(node).unwrap().color,
+        Color::red()
+    );
+}
+
+#[test]
+fn a_bordered_node_clips_at_the_screen_edge() {
+    let doc = Document::new().unwrap();
+    let node = bordered_box(&doc, Border::new(BorderCharset::single()), 4, 3);
+    doc.update_style(node, |style| {
+        style.position(Position::Absolute { x: -1, y: -1 })
+    })
+    .unwrap();
+
+    // The top and left sides fall offscreen. What remains on the grid is the right side and
+    // the bottom side, meeting in the bottom-right corner.
+    let mut runtime = HeadlessRuntime::new(doc, 3, 2);
+    runtime.render().unwrap();
+
+    assert_eq!(row_text(&runtime, 0, 3), "  │");
+    assert_eq!(row_text(&runtime, 1, 3), "──┘");
+}
+
+#[test]
+fn a_translucent_overlay_blends_over_a_border() {
+    let doc = Document::new().unwrap();
+    let node = bordered_box(&doc, Border::new(BorderCharset::single()), 4, 3);
+    doc.update_style(node, |style| style.color(Color::white()))
+        .unwrap();
+
+    let overlay = doc.create_box().unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+    let mut overlay_style = Style::new();
+    overlay_style.position(Position::Absolute { x: 0, y: 0 });
+    overlay_style.width(Length::Percent(100.0));
+    overlay_style.height(Length::Percent(100.0));
+    overlay_style.background(Color::oklcha(0.0, 0.0, 0.0, 0.5));
+    doc.set_style(overlay, &overlay_style).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 3);
+    runtime.render().unwrap();
+
+    // A border glyph behaves exactly like a text glyph under a translucent fill: the glyph
+    // and its foreground survive, and the overlay blends into the cell's background.
+    let corner = runtime.get_cell(0, 0).unwrap();
+    assert_eq!(corner.text, "┌");
+    assert_eq!(corner.fg, Some(ScreenColor::from_rgb(255, 255, 255)));
+    assert!(
+        corner.bg.is_some(),
+        "the translucent overlay should have blended into the border cell's background"
+    );
+}
+
 #[test]
 fn input_layout_measures_displayed_single_line_multiline_and_masked_content() {
     let doc = Document::new().unwrap();

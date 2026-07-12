@@ -3,6 +3,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::style::Border;
 use crate::style::color::Rgb;
 
 /// Text content stored in a single terminal cell.
@@ -441,6 +442,91 @@ impl Grid {
         }
 
         glyphs
+    }
+
+    /// Draw a border around the edge cells of `rect`, clipped to the grid.
+    ///
+    /// Bg is left as-is: the border sits on whatever background the node already filled.
+    pub fn write_border(
+        &mut self,
+        rect: GridRect,
+        border: Border,
+        fg: Option<Rgb>,
+        alpha: f64,
+    ) -> usize {
+        let alpha = clamp_alpha(alpha);
+        if rect.width == 0 || rect.height == 0 || !border.sides.any() || alpha <= 0.0 {
+            return 0;
+        }
+
+        let left = i64::from(rect.x);
+        let top = i64::from(rect.y);
+        let right = left + i64::from(rect.width) - 1;
+        let bottom = top + i64::from(rect.height) - 1;
+
+        let mut glyphs = 0;
+        for row in top..=bottom {
+            if row == top || row == bottom {
+                for col in left..=right {
+                    glyphs += self
+                        .write_border_cell(border, row, col, left, right, top, bottom, fg, alpha);
+                }
+            } else {
+                glyphs +=
+                    self.write_border_cell(border, row, left, left, right, top, bottom, fg, alpha);
+                if right != left {
+                    glyphs += self
+                        .write_border_cell(border, row, right, left, right, top, bottom, fg, alpha);
+                }
+            }
+        }
+        glyphs
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_border_cell(
+        &mut self,
+        border: Border,
+        row: i64,
+        col: i64,
+        left: i64,
+        right: i64,
+        top: i64,
+        bottom: i64,
+        fg: Option<Rgb>,
+        alpha: f64,
+    ) -> usize {
+        let sides = border.sides;
+        let on_top = row == top && sides.top;
+        let on_bottom = row == bottom && sides.bottom;
+        let on_left = col == left && sides.left;
+        let on_right = col == right && sides.right;
+
+        let charset = border.charset;
+        // A corner cell gets its corner character only when both adjacent sides are drawn.
+        // Otherwise the one side that is present runs straight through it, so a top-only
+        // border draws a clean rule rather than a rule with two stray corners.
+        let glyph = match (on_top, on_bottom, on_left, on_right) {
+            (true, _, true, _) => charset.top_left,
+            (true, _, _, true) => charset.top_right,
+            (_, true, true, _) => charset.bottom_left,
+            (_, true, _, true) => charset.bottom_right,
+            (true, ..) => charset.top,
+            (_, true, ..) => charset.bottom,
+            (_, _, true, _) => charset.left,
+            (_, _, _, true) => charset.right,
+            _ => return 0,
+        };
+
+        if row < 0 || row >= i64::from(self.height) || col < 0 || col >= i64::from(self.width) {
+            return 0;
+        }
+
+        let (row, col) = (row as usize, col as usize);
+        let mut text = [0u8; 4];
+        self.write_glyph(row, col, glyph.encode_utf8(&mut text), 1, fg, alpha);
+        self.touch_span(row, col, col + 1);
+        1
     }
 
     fn clip_rect(
