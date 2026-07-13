@@ -85,21 +85,25 @@ impl ResolvedColor {
     /// - `c`: chroma (0–~0.37)
     /// - `h`: hue in degrees (0–360)
     pub fn oklch(l: f64, c: f64, h: f64) -> Self {
-        Self {
-            l: l as f32,
-            c: c as f32,
-            h: h as f32,
-            a: 1.0,
-        }
+        Self::new(l as f32, c as f32, h as f32, 1.0)
     }
 
     /// Create a color from OKLCH with alpha.
     pub fn oklcha(l: f64, c: f64, h: f64, a: f64) -> Self {
+        Self::new(l as f32, c as f32, h as f32, a as f32)
+    }
+
+    /// Create a color, canonicalizing its hue.
+    ///
+    /// Hue is an angle, so 400°, 40°, and -320° name one color. Storing it canonically is what
+    /// makes two equal colors compare equal and share one [`RgbCache`] entry, however they were
+    /// built — sRGB conversion produces hues in -180..180, while an operation may land anywhere.
+    fn new(l: f32, c: f32, h: f32, a: f32) -> Self {
         Self {
-            l: l as f32,
-            c: c as f32,
-            h: h as f32,
-            a: a as f32,
+            l,
+            c,
+            h: h.rem_euclid(360.0),
+            a,
         }
     }
 
@@ -107,12 +111,114 @@ impl ResolvedColor {
     fn from_srgb(r: u8, g: u8, b: u8) -> Self {
         let srgb: Srgb = Srgb::new(r, g, b).into_format();
         let oklch: Oklch = srgb.into_color();
-        Self {
-            l: oklch.l,
-            c: oklch.chroma,
-            h: oklch.hue.into_degrees(),
-            a: 1.0,
+        Self::new(oklch.l, oklch.chroma, oklch.hue.into_degrees(), 1.0)
+    }
+
+    /// Whether this color has no meaningful hue, so mixing must borrow the other color's.
+    fn is_achromatic(self) -> bool {
+        self.c <= ACHROMATIC_CHROMA
+    }
+
+    /// Blend toward `other`, component-wise in OKLCH.
+    fn mix(self, other: Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+
+        // A gray has no hue to interpolate, so interpolating one would swing the result through
+        // unrelated hues: mixing white into blue would pass through green. Borrow the other
+        // color's hue instead, and let chroma alone carry the transition.
+        let (from, to) = match (self.is_achromatic(), other.is_achromatic()) {
+            (true, false) => (other.h, other.h),
+            (false, true) => (self.h, self.h),
+            _ => (self.h, other.h),
+        };
+
+        // Take the short way around the hue circle.
+        let mut delta = to.rem_euclid(360.0) - from.rem_euclid(360.0);
+        if delta > 180.0 {
+            delta -= 360.0;
+        } else if delta < -180.0 {
+            delta += 360.0;
         }
+
+        Self {
+            l: lerp(self.l, other.l, t),
+            c: lerp(self.c, other.c, t),
+            h: (from + delta * t).rem_euclid(360.0),
+            a: lerp(self.a, other.a, t),
+        }
+    }
+}
+
+/// Chroma at or below which a color is a gray and its hue carries no information.
+const ACHROMATIC_CHROMA: f32 = 1e-4;
+
+fn lerp(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
+}
+
+/// An operation applied to a [`Color`], evaluated during style resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColorOp {
+    /// Raise lightness by an absolute amount.
+    Lighten(f32),
+    /// Lower lightness by an absolute amount.
+    Darken(f32),
+    /// Replace lightness.
+    WithLightness(f32),
+    /// Replace chroma.
+    WithChroma(f32),
+    /// Replace hue, in degrees.
+    WithHue(f32),
+    /// Replace alpha.
+    WithAlpha(f32),
+    /// Blend toward another color, `t` of the way.
+    Mix {
+        /// The color to blend toward. Itself an expression, so you can mix two variables.
+        other: Box<Color>,
+        /// How far to blend, 0–1.
+        t: f32,
+    },
+}
+
+impl ColorOp {
+    /// Apply this operation to a concrete color.
+    ///
+    /// Returns `None` when the operation names something unresolvable — only [`Mix`], whose
+    /// operand is itself an expression, can do that.
+    ///
+    /// [`Mix`]: ColorOp::Mix
+    fn apply(&self, base: ResolvedColor) -> Option<ResolvedColor> {
+        Some(match self {
+            // Lightness steps are absolute rather than proportional: OKLCH's L is perceptually
+            // uniform, which is the whole reason for the color space, so `darken(0.1)` should be
+            // the same visual step wherever it starts from.
+            Self::Lighten(amount) => ResolvedColor {
+                l: (base.l + amount).clamp(0.0, 1.0),
+                ..base
+            },
+            Self::Darken(amount) => ResolvedColor {
+                l: (base.l - amount).clamp(0.0, 1.0),
+                ..base
+            },
+            Self::WithLightness(l) => ResolvedColor {
+                l: l.clamp(0.0, 1.0),
+                ..base
+            },
+            // Chroma has no fixed ceiling — the sRGB conversion gamut-clips it at render time.
+            Self::WithChroma(c) => ResolvedColor {
+                c: c.max(0.0),
+                ..base
+            },
+            Self::WithHue(h) => ResolvedColor {
+                h: h.rem_euclid(360.0),
+                ..base
+            },
+            Self::WithAlpha(a) => ResolvedColor {
+                a: a.clamp(0.0, 1.0),
+                ..base
+            },
+            Self::Mix { other, t } => base.mix(other.eval()?, *t),
+        })
     }
 }
 
@@ -139,6 +245,13 @@ impl Default for ResolvedColor {
 pub enum Color {
     /// A concrete OKLCH color.
     Literal(ResolvedColor),
+    /// Another color with an operation applied to it.
+    Derived {
+        /// The color the operation applies to.
+        base: Box<Color>,
+        /// The operation.
+        op: ColorOp,
+    },
 }
 
 impl Color {
@@ -196,10 +309,59 @@ impl Color {
         Self::Literal(ResolvedColor::oklcha(l, c, h, a))
     }
 
+    /// Apply an operation to this color, producing a derived color.
+    fn derive(self, op: ColorOp) -> Self {
+        Self::Derived {
+            base: Box::new(self),
+            op,
+        }
+    }
+
+    /// Raise lightness by an absolute amount.
+    pub fn lighten(self, amount: f64) -> Self {
+        self.derive(ColorOp::Lighten(amount as f32))
+    }
+
+    /// Lower lightness by an absolute amount.
+    pub fn darken(self, amount: f64) -> Self {
+        self.derive(ColorOp::Darken(amount as f32))
+    }
+
+    /// Replace lightness (0–1).
+    pub fn with_lightness(self, l: f64) -> Self {
+        self.derive(ColorOp::WithLightness(l as f32))
+    }
+
+    /// Replace chroma (0–~0.37).
+    pub fn with_chroma(self, c: f64) -> Self {
+        self.derive(ColorOp::WithChroma(c as f32))
+    }
+
+    /// Replace hue, in degrees.
+    pub fn with_hue(self, h: f64) -> Self {
+        self.derive(ColorOp::WithHue(h as f32))
+    }
+
+    /// Replace alpha (0–1).
+    pub fn with_alpha(self, a: f64) -> Self {
+        self.derive(ColorOp::WithAlpha(a as f32))
+    }
+
+    /// Blend toward another color, `t` of the way (0–1).
+    pub fn mix(self, other: Color, t: f64) -> Self {
+        self.derive(ColorOp::Mix {
+            other: Box::new(other),
+            t: t as f32,
+        })
+    }
+
     /// Evaluate this color to a concrete [`ResolvedColor`].
+    ///
+    /// `None` means the expression names something that does not resolve.
     pub(crate) fn eval(&self) -> Option<ResolvedColor> {
         match self {
             Self::Literal(color) => Some(*color),
+            Self::Derived { base, op } => op.apply(base.eval()?),
         }
     }
 }
@@ -340,5 +502,96 @@ mod tests {
             Color::oklcha(0.5, 0.1, 180.0, 0.5).eval(),
             Some(ResolvedColor::oklcha(0.5, 0.1, 180.0, 0.5))
         );
+    }
+
+    fn eval(color: Color) -> ResolvedColor {
+        color.eval().expect("literal expression should resolve")
+    }
+
+    #[test]
+    fn hue_is_stored_canonically() {
+        // One hue, three spellings. They must be one color — otherwise equal colors compare
+        // unequal and the RGB cache holds a duplicate entry for each spelling.
+        assert_eq!(
+            ResolvedColor::oklch(0.5, 0.1, 400.0),
+            ResolvedColor::oklch(0.5, 0.1, 40.0)
+        );
+        assert_eq!(
+            ResolvedColor::oklch(0.5, 0.1, -320.0),
+            ResolvedColor::oklch(0.5, 0.1, 40.0)
+        );
+    }
+
+    #[test]
+    fn lighten_and_darken_step_lightness() {
+        let base = Color::oklch(0.5, 0.1, 180.0);
+        assert_eq!(eval(base.clone().lighten(0.2)).l, 0.7);
+        assert_eq!(eval(base.darken(0.2)).l, 0.3);
+    }
+
+    #[test]
+    fn lightness_steps_clamp_at_the_ends() {
+        assert_eq!(eval(Color::oklch(0.9, 0.1, 180.0).lighten(0.5)).l, 1.0);
+        assert_eq!(eval(Color::oklch(0.1, 0.1, 180.0).darken(0.5)).l, 0.0);
+    }
+
+    #[test]
+    fn with_operations_replace_single_components() {
+        let base = Color::oklch(0.5, 0.1, 180.0);
+        assert_eq!(eval(base.clone().with_lightness(0.8)).l, 0.8);
+        assert_eq!(eval(base.clone().with_chroma(0.2)).c, 0.2);
+        assert_eq!(eval(base.clone().with_alpha(0.25)).a, 0.25);
+        // Hue wraps rather than clamping — 400° is 40°.
+        assert_eq!(eval(base.with_hue(400.0)).h, 40.0);
+    }
+
+    #[test]
+    fn derivations_chain() {
+        let derived = Color::oklch(0.5, 0.1, 180.0)
+            .darken(0.2)
+            .with_alpha(0.5)
+            .lighten(0.1);
+        let resolved = eval(derived);
+        assert!((resolved.l - 0.4).abs() < 1e-6);
+        assert_eq!(resolved.a, 0.5);
+    }
+
+    #[test]
+    fn mix_interpolates_component_wise() {
+        let a = Color::oklcha(0.2, 0.0, 0.0, 1.0);
+        let b = Color::oklcha(0.8, 0.0, 0.0, 0.0);
+        let mixed = eval(a.mix(b, 0.5));
+        assert!((mixed.l - 0.5).abs() < 1e-6);
+        assert!((mixed.a - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mix_takes_the_short_way_around_the_hue_circle() {
+        // 350° to 10° is 20° forward, not 340° backward.
+        let mixed = eval(Color::oklch(0.5, 0.1, 350.0).mix(Color::oklch(0.5, 0.1, 10.0), 0.5));
+        assert!((mixed.h - 0.0).abs() < 1e-4, "hue was {}", mixed.h);
+    }
+
+    #[test]
+    fn mixing_with_a_gray_keeps_the_chromatic_hue() {
+        // A gray has no hue. Interpolating its nominal 0° would swing the result through unrelated
+        // hues — white mixed into blue would come out green — so chroma alone carries the mix.
+        let blue = ResolvedColor::blue();
+        let mixed = eval(Color::white().mix(Color::blue(), 0.5));
+        assert!(
+            (mixed.h - blue.h).abs() < 1e-4,
+            "expected blue's hue {}, got {}",
+            blue.h,
+            mixed.h
+        );
+        assert!((mixed.c - blue.c / 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mix_clamps_its_ratio() {
+        let a = Color::oklch(0.2, 0.0, 0.0);
+        let b = Color::oklch(0.8, 0.0, 0.0);
+        assert_eq!(eval(a.clone().mix(b.clone(), 2.0)).l, 0.8);
+        assert_eq!(eval(a.mix(b, -1.0)).l, 0.2);
     }
 }
