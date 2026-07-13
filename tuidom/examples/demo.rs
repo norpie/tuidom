@@ -1,8 +1,8 @@
 //! Smoke test exercising the full pipeline:
 //! Box + Text/Input rendering, keyboard events, focus, focus styles,
 //! configurable focus keys, targeted mouse events, bubbling, stop_propagation,
-//! wheel events, borders, half-block edges, terminal text attributes,
-//! transitions, and the performance metrics API.
+//! wheel events, borders, half-block edges, color variables and derivations,
+//! terminal text attributes, transitions, and the performance metrics API.
 //!
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Focus the "focus me" panel — its border recolors, charset and sides untouched
@@ -358,6 +358,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         doc.append_child(half_block_row, chip)?;
     }
 
+    // One variable, four chips. Each derives its fill from `--brand` rather than restating a
+    // color, so recoloring the whole row is a one-line change to the variable. The labels name no
+    // color at all — each lifts its text off whatever fill its own chip resolved to.
+    doc.set_color_var("--brand", Color::oklch(0.55, 0.15, 265.0));
+
+    let derived_label = doc.create_text("Color variables and derivations")?;
+    doc.set_style(derived_label, &section_label_style)?;
+
+    let derived_row = doc.create_box()?;
+    doc.set_style(derived_row, &row_style)?;
+
+    for (name, fill) in [
+        ("--brand", Color::var("--brand")),
+        ("darken", Color::var("--brand").darken(0.2)),
+        ("desaturated", Color::var("--brand").with_chroma(0.02)),
+        (
+            "mixed",
+            Color::var("--brand").mix(Color::oklch(0.7, 0.16, 25.0), 0.5),
+        ),
+    ] {
+        let chip = doc.create_box()?;
+        let mut style = chip_style.clone();
+        style.background(fill);
+        style.half_block_edges(Sides::new(true, false, true, false));
+        doc.set_style(chip, &style)?;
+
+        let chip_label = doc.create_text(name)?;
+        let mut text_style = label_style.clone();
+        // Lifted far enough off whatever fill this chip ended up with to stay legible.
+        text_style.color(Color::CurrentBg.lighten(0.5).with_chroma(0.02));
+        doc.set_style(chip_label, &text_style)?;
+
+        doc.append_child(chip, chip_label)?;
+        doc.append_child(derived_row, chip)?;
+    }
+
     let attrs_label = doc.create_text("Text attributes")?;
     doc.set_style(attrs_label, &section_label_style)?;
 
@@ -390,6 +426,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, border_row)?;
     doc.append_child(stack, half_block_label)?;
     doc.append_child(stack, half_block_row)?;
+    doc.append_child(stack, derived_label)?;
+    doc.append_child(stack, derived_row)?;
     doc.append_child(stack, attrs_label)?;
     doc.append_child(stack, attrs_row)?;
 
