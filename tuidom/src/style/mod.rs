@@ -7,7 +7,7 @@ pub(crate) mod resolution;
 
 use std::collections::HashMap;
 
-pub use border::{Border, BorderCharset, BorderSides};
+pub use border::{Border, BorderCharset, Sides};
 pub use color::Color;
 
 // ---------------------------------------------------------------------------

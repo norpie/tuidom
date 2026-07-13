@@ -94,12 +94,12 @@ impl BorderCharset {
     }
 }
 
-/// Which sides of a border are drawn.
+/// Which sides of a node an edge treatment is drawn on.
 ///
-/// A terminal border is always exactly one cell thick, so per-side control means presence,
-/// not width.
+/// Presence, not width: every edge treatment tuidom draws — a border, a half-block edge — is
+/// either on a side or not, so there is nothing else to say about a side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BorderSides {
+pub struct Sides {
     /// Whether the top edge is drawn.
     pub top: bool,
     /// Whether the right edge is drawn.
@@ -110,8 +110,8 @@ pub struct BorderSides {
     pub left: bool,
 }
 
-impl BorderSides {
-    /// Every side drawn — a closed box.
+impl Sides {
+    /// Every side drawn.
     pub const ALL: Self = Self {
         top: true,
         right: true,
@@ -141,18 +141,6 @@ impl BorderSides {
     pub const fn any(self) -> bool {
         self.top || self.right || self.bottom || self.left
     }
-
-    /// The space the drawn sides take out of the node: one cell each.
-    ///
-    /// A border is never thicker than a cell, so presence is the only degree of freedom.
-    pub(crate) const fn insets(self) -> EdgeInsets {
-        EdgeInsets::new(
-            self.top as u16,
-            self.right as u16,
-            self.bottom as u16,
-            self.left as u16,
-        )
-    }
 }
 
 /// A node's border: one charset, plus which sides it is drawn on.
@@ -164,7 +152,7 @@ pub struct Border {
     /// Characters used to draw the border.
     pub charset: BorderCharset,
     /// Which sides are drawn.
-    pub sides: BorderSides,
+    pub sides: Sides,
 }
 
 impl Default for Border {
@@ -178,7 +166,7 @@ impl Border {
     pub const fn new(charset: BorderCharset) -> Self {
         Self {
             charset,
-            sides: BorderSides::ALL,
+            sides: Sides::ALL,
         }
     }
 
@@ -189,13 +177,27 @@ impl Border {
     pub const fn none() -> Self {
         Self {
             charset: BorderCharset::single(),
-            sides: BorderSides::NONE,
+            sides: Sides::NONE,
         }
     }
 
     /// Draw only the given sides.
-    pub const fn with_sides(mut self, sides: BorderSides) -> Self {
+    pub const fn with_sides(mut self, sides: Sides) -> Self {
         self.sides = sides;
         self
+    }
+
+    /// The space the drawn sides take out of the node: one cell each.
+    ///
+    /// A border is never thicker than a cell, so presence is the only degree of freedom. This
+    /// belongs to the border rather than to [`Sides`], because a half-block edge is drawn on
+    /// sides too and takes no space at all.
+    pub(crate) const fn insets(self) -> EdgeInsets {
+        EdgeInsets::new(
+            self.sides.top as u16,
+            self.sides.right as u16,
+            self.sides.bottom as u16,
+            self.sides.left as u16,
+        )
     }
 }

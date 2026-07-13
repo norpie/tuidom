@@ -461,7 +461,7 @@ fn to_taffy_padding(insets: EdgeInsets) -> Rect<LengthPercentage> {
 /// A border occupies real cells, so layout has to know about it: taffy shrinks the content
 /// box by one cell per drawn side, which is what keeps children off the frame.
 fn to_taffy_border(border: Border) -> Rect<LengthPercentage> {
-    let insets = border.sides.insets();
+    let insets = border.insets();
     Rect {
         left: LengthPercentage::length(insets.left as f32),
         right: LengthPercentage::length(insets.right as f32),
@@ -553,7 +553,7 @@ fn rounded_taffy_size_to_u16(value: f32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{AlignSelf, BorderCharset, BorderSides, Style as DomStyle};
+    use crate::style::{AlignSelf, BorderCharset, Sides, Style as DomStyle};
 
     fn fixed_centered_style(width: u16, height: u16) -> DomStyle {
         let mut style = DomStyle::new();
@@ -964,8 +964,7 @@ mod tests {
         parent_style.width(Length::Pixels(10));
         parent_style.height(Length::Pixels(6));
         parent_style.border(
-            Border::new(BorderCharset::single())
-                .with_sides(BorderSides::new(false, false, false, true)),
+            Border::new(BorderCharset::single()).with_sides(Sides::new(false, false, false, true)),
         );
         doc.set_style(parent, &parent_style).unwrap();
         doc.append_child(doc.root(), parent).unwrap();

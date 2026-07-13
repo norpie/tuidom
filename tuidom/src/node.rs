@@ -37,7 +37,7 @@ impl LayoutRect {
     /// node. Only content the node paints itself — Text and Input glyphs, and the input
     /// cursor — is inset, which puts it where taffy already places a container's children.
     pub(crate) fn content_rect(self, resolved: &ResolvedStyle) -> Self {
-        self.deflate(resolved.border.sides.insets())
+        self.deflate(resolved.border.insets())
             .deflate(resolved.padding)
     }
 

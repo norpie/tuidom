@@ -25,8 +25,8 @@ use std::time::Duration;
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
-    AlignItems, Border, BorderCharset, BorderSides, Color, CursorShape, Display, EdgeInsets,
-    FlexDirection, FlexGap, JustifyContent, Length, Position, Style,
+    AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
+    FlexGap, JustifyContent, Length, Position, Sides, Style,
 };
 
 fn init_logging() {
@@ -322,8 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     separator_style.width(Length::Percent(100.0));
     separator_style.height(Length::Pixels(1));
     separator_style.border(
-        Border::new(BorderCharset::single())
-            .with_sides(BorderSides::new(true, false, false, false)),
+        Border::new(BorderCharset::single()).with_sides(Sides::new(true, false, false, false)),
     );
     separator_style.border_color(Color::oklch(0.5, 0.02, 260.0));
     doc.set_style(separator, &separator_style)?;

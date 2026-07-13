@@ -14,8 +14,8 @@ use crate::headless::{HeadlessRuntime, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView};
 use crate::performance::PerformanceDetail;
 use crate::style::{
-    AlignContent, AlignItems, AlignSelf, Border, BorderCharset, BorderSides, Color, CursorShape,
-    Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Position, Style,
+    AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
+    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Position, Sides, Style,
 };
 
 #[test]
@@ -667,7 +667,7 @@ fn border_resolves_and_defaults_to_none_with_a_foreground_following_color() {
 
     let resolved = doc.resolved_style(node).unwrap();
     assert_eq!(resolved.border.charset, BorderCharset::double());
-    assert_eq!(resolved.border.sides, BorderSides::ALL);
+    assert_eq!(resolved.border.sides, Sides::ALL);
     assert_eq!(resolved.border_color, None);
 }
 
@@ -680,8 +680,7 @@ fn focus_style_recolors_a_border_without_respecifying_it() {
 
     let mut base = Style::new();
     base.border(
-        Border::new(BorderCharset::rounded())
-            .with_sides(BorderSides::new(true, false, true, false)),
+        Border::new(BorderCharset::rounded()).with_sides(Sides::new(true, false, true, false)),
     );
     doc.set_style(node, &base).unwrap();
 
@@ -695,10 +694,7 @@ fn focus_style_recolors_a_border_without_respecifying_it() {
     let focused = doc.resolved_style(node).unwrap();
     assert_eq!(focused.border_color, Some(Color::red()));
     assert_eq!(focused.border.charset, BorderCharset::rounded());
-    assert_eq!(
-        focused.border.sides,
-        BorderSides::new(true, false, true, false)
-    );
+    assert_eq!(focused.border.sides, Sides::new(true, false, true, false));
 }
 
 #[test]
@@ -763,8 +759,7 @@ fn a_top_only_border_draws_a_clean_rule_without_stray_corners() {
     let doc = Document::new().unwrap();
     bordered_box(
         &doc,
-        Border::new(BorderCharset::single())
-            .with_sides(BorderSides::new(true, false, false, false)),
+        Border::new(BorderCharset::single()).with_sides(Sides::new(true, false, false, false)),
         4,
         3,
     );
@@ -783,7 +778,7 @@ fn adjacent_drawn_sides_still_meet_in_a_corner() {
     let doc = Document::new().unwrap();
     bordered_box(
         &doc,
-        Border::new(BorderCharset::single()).with_sides(BorderSides::new(true, false, false, true)),
+        Border::new(BorderCharset::single()).with_sides(Sides::new(true, false, false, true)),
         4,
         3,
     );

@@ -52,7 +52,7 @@ Terms and concepts used throughout the tuidom codebase.
 
 **BorderCharset** — The eight characters that draw a box: four edges and four corners. The charset is the primitive; `single`, `double`, `rounded`, `thick`, and `ascii` are named constructors, not special cases. One charset per node, because a corner is drawn from the charset and a double-top/single-left corner has no coherent character.
 
-**BorderSides** — Which sides of a border are drawn. A terminal border is always exactly one cell thick, so per-side control is presence, not width. A corner cell gets its corner character only when both adjacent sides are drawn; otherwise the one side present runs straight through it, so a top-only border is a clean rule.
+**Sides** — Which sides of a node an edge treatment is drawn on. Presence, not width: every edge treatment tuidom draws — a border, a half-block edge — is either on a side or not. A border's corner cell gets its corner character only when both adjacent sides are drawn; otherwise the one side present runs straight through it, so a top-only border is a clean rule.
 
 **FlexDirection** — Main-axis direction for flex containers: row, column, and their reverse variants, which lay children out from the end of the main axis.
 
