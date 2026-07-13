@@ -90,6 +90,7 @@ impl Document {
                 performance: Mutex::new(PerformanceState::new()),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
+                color_vars: Mutex::new(HashMap::new()),
             }),
         };
         document.register_layout_node(root)?;

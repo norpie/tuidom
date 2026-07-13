@@ -3746,3 +3746,192 @@ fn tab_order_skips_hidden_subtrees() {
     doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
     assert_eq!(doc.focused(), Some(offscreen));
 }
+
+// ---------------------------------------------------------------------------
+// Color variables
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_document_color_variable_resolves_on_any_node() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--primary", Color::red());
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.background(Color::var("--primary"));
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::red())
+    );
+}
+
+#[test]
+fn a_color_variable_is_in_scope_for_descendants() {
+    let doc = Document::new().unwrap();
+
+    let parent = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    let mut parent_style = Style::new();
+    parent_style.color_var("--accent", Color::blue());
+    doc.set_style(parent, &parent_style).unwrap();
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(parent, child).unwrap();
+    let mut child_style = Style::new();
+    child_style.background(Color::var("--accent"));
+    doc.set_style(child, &child_style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(child).unwrap().background,
+        Some(ResolvedColor::blue())
+    );
+}
+
+#[test]
+fn a_node_variable_shadows_the_document_variable() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--accent", Color::red());
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color_var("--accent", Color::blue());
+    style.background(Color::var("--accent"));
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::blue())
+    );
+}
+
+#[test]
+fn a_variable_declaration_can_derive_from_the_name_it_shadows() {
+    // The declaration resolves against the parent's scope, so shadowing a name with a derivation
+    // of itself terminates instead of looping.
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--accent", Color::oklch(0.5, 0.1, 180.0));
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color_var("--accent", Color::var("--accent").darken(0.25));
+    style.background(Color::var("--accent"));
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::oklch(0.25, 0.1, 180.0))
+    );
+}
+
+#[test]
+fn an_undefined_variable_falls_back_to_the_property_default() {
+    let doc = Document::new().unwrap();
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color(Color::var("--nope"));
+    style.background(Color::var("--nope").darken(0.1));
+    doc.set_style(node, &style).unwrap();
+
+    let resolved = doc.resolved_style(node).unwrap();
+    assert_eq!(resolved.color, ResolvedColor::white());
+    assert_eq!(resolved.background, None);
+}
+
+#[test]
+fn a_broken_variable_declaration_leaves_the_name_undefined_rather_than_inherited() {
+    // Falling through to the ancestor's value would paint the ancestor's color and hide the
+    // broken declaration entirely.
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--accent", Color::red());
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color_var("--accent", Color::var("--typo"));
+    style.background(Color::var("--accent"));
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(doc.resolved_style(node).unwrap().background, None);
+}
+
+#[test]
+fn changing_a_document_variable_re_resolves_the_tree() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--primary", Color::red());
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.background(Color::var("--primary"));
+    doc.set_style(node, &style).unwrap();
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::red())
+    );
+
+    doc.set_color_var("--primary", Color::blue());
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::blue())
+    );
+
+    doc.remove_color_var("--primary");
+    assert_eq!(doc.resolved_style(node).unwrap().background, None);
+}
+
+#[test]
+fn changing_a_node_variable_re_resolves_its_subtree() {
+    let doc = Document::new().unwrap();
+
+    let parent = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    let mut parent_style = Style::new();
+    parent_style.color_var("--accent", Color::red());
+    doc.set_style(parent, &parent_style).unwrap();
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(parent, child).unwrap();
+    let mut child_style = Style::new();
+    child_style.background(Color::var("--accent"));
+    doc.set_style(child, &child_style).unwrap();
+    assert_eq!(
+        doc.resolved_style(child).unwrap().background,
+        Some(ResolvedColor::red())
+    );
+
+    doc.update_style(parent, |s| s.color_var("--accent", Color::blue()))
+        .unwrap();
+    assert_eq!(
+        doc.resolved_style(child).unwrap().background,
+        Some(ResolvedColor::blue())
+    );
+}
+
+#[test]
+fn a_pseudo_state_style_can_reference_a_variable() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--accent", Color::blue());
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut focus_style = Style::new();
+    focus_style.background(Color::var("--accent"));
+    doc.set_focus_style(node, &focus_style).unwrap();
+
+    assert_eq!(doc.resolved_style(node).unwrap().background, None);
+
+    doc.focus(node).unwrap();
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::blue())
+    );
+}

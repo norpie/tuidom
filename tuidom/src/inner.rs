@@ -14,7 +14,7 @@ use crate::layout::LayoutEngine;
 use crate::node::{LayoutRect, NodeData};
 use crate::performance::PerformanceState;
 use crate::runtime_event::RuntimeEvent;
-use crate::style::Style;
+use crate::style::{Color, Style};
 
 /// Styles merged into a node's resolved style while it is in a pseudo-state.
 ///
@@ -213,6 +213,9 @@ pub(crate) struct DocumentInner {
 
     /// Document-level resize listeners.
     pub resize_listeners: Mutex<Vec<Listener>>,
+
+    /// Color variables declared on the document — the root of every node's variable scope.
+    pub color_vars: Mutex<HashMap<String, Color>>,
 }
 
 impl DocumentInner {

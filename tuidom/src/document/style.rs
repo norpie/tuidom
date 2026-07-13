@@ -1,12 +1,15 @@
+use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::sync::Arc;
 
 use crate::animation::{TransitionConfig, TransitionProperty};
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::lock;
-use crate::style::Style;
-use crate::style::resolution::{ResolvedStyle, StyleDefaults};
+use crate::style::color::ColorContext;
+use crate::style::resolution::{ColorScope, ResolvedStyle, StyleDefaults};
+use crate::style::{Color, Style};
 
 impl Document {
     /// Set a transition configuration for a node.
@@ -22,6 +25,53 @@ impl Document {
 
         data.transition_configs.insert(config.property, config);
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Color variables
+    // ------------------------------------------------------------------
+
+    /// Declare a document-level color variable.
+    ///
+    /// Document variables sit beneath every node's scope, so any node can reference one with
+    /// [`Color::var`] unless an ancestor shadows the name.
+    ///
+    /// They are the bottom of the chain, and so are evaluated against an empty scope: a document
+    /// variable may be a literal or a derivation of one, but a [`Color::var`] inside it has nothing
+    /// to resolve against and never resolves.
+    pub fn set_color_var(&self, name: impl Into<String>, value: Color) {
+        lock::mutex(&self.inner.color_vars).insert(name.into(), value);
+        self.invalidate_resolved_style(self.root());
+        self.inner.notify.notify_one();
+    }
+
+    /// Get a document-level color variable.
+    pub fn color_var(&self, name: &str) -> Option<Color> {
+        lock::mutex(&self.inner.color_vars).get(name).cloned()
+    }
+
+    /// Remove a document-level color variable.
+    pub fn remove_color_var(&self, name: &str) {
+        lock::mutex(&self.inner.color_vars).remove(name);
+        self.invalidate_resolved_style(self.root());
+        self.inner.notify.notify_one();
+    }
+
+    /// The document's color variables, evaluated against the empty scope.
+    fn color_scope(&self) -> ColorScope {
+        let declared = lock::mutex(&self.inner.color_vars);
+        if declared.is_empty() {
+            return ColorScope::default();
+        }
+
+        let empty = HashMap::new();
+        let ctx = ColorContext { vars: &empty };
+        Arc::new(
+            declared
+                .iter()
+                .filter_map(|(name, expr)| Some((name.clone(), expr.eval(&ctx)?)))
+                .collect(),
+        )
     }
 
     // ------------------------------------------------------------------
@@ -136,7 +186,7 @@ impl Document {
             .transpose()?;
 
         let defaults = if id == self.root() {
-            StyleDefaults::root()
+            StyleDefaults::root(self.color_scope())
         } else {
             StyleDefaults::default()
         };

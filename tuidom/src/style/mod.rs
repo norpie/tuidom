@@ -8,7 +8,7 @@ pub(crate) mod resolution;
 use std::collections::HashMap;
 
 pub use border::{Border, BorderCharset, Sides};
-pub use color::{Color, ResolvedColor};
+pub use color::{Color, ColorOp, ResolvedColor};
 
 // ---------------------------------------------------------------------------
 // StyleValue — explicit inheritance control
@@ -350,6 +350,8 @@ pub struct Style {
     pub(crate) cursor_shape: StyleValue<CursorShape>,
     /// Raw custom style properties.
     pub(crate) custom: HashMap<String, String>,
+    /// Color variables declared on this node, in scope for it and its descendants.
+    pub(crate) color_vars: HashMap<String, Color>,
 }
 
 impl Default for Style {
@@ -395,6 +397,7 @@ impl Style {
             underline: StyleValue::Unset,
             cursor_shape: StyleValue::Unset,
             custom: HashMap::new(),
+            color_vars: HashMap::new(),
         }
     }
 
@@ -921,6 +924,35 @@ impl Style {
     /// Reset input cursor shape to the document/default style.
     pub fn unset_cursor_shape(&mut self) {
         self.cursor_shape = StyleValue::Unset;
+    }
+
+    // -- Color Variables -----------------------------------------------
+
+    /// Declare a color variable, in scope for this node and its descendants.
+    ///
+    /// Variables cascade: a node sees the ones its ancestors declared, and the document's beneath
+    /// those. Redeclaring a name shadows it for this subtree. Reference one from any color
+    /// property with [`Color::var`].
+    ///
+    /// A variable's value resolves against the *parent's* scope, so it can derive from the name it
+    /// shadows — `Color::var("--accent").darken(0.1)` means the inherited `--accent`, darkened.
+    ///
+    /// Declaring variables in a pseudo-state style has no effect: the node's other colors have
+    /// already resolved against its scope by the time a pseudo-state style merges on top.
+    pub fn color_var(&mut self, name: impl Into<String>, value: Color) {
+        self.color_vars.insert(name.into(), value);
+    }
+
+    /// Get a color variable declared on this style.
+    pub fn get_color_var(&self, name: &str) -> Option<&Color> {
+        self.color_vars.get(name)
+    }
+
+    /// Remove a color variable declared on this style.
+    ///
+    /// The node goes back to inheriting the name from its ancestors, if they declare it.
+    pub fn remove_color_var(&mut self, name: &str) {
+        self.color_vars.remove(name);
     }
 
     // -- Custom Properties ---------------------------------------------

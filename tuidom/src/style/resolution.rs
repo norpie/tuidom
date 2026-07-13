@@ -3,12 +3,19 @@
 //! `ResolvedStyle` is the fully concrete style — all unresolved style values have
 //! been resolved from explicit values, explicit parent inheritance, or document defaults.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::node::NodeData;
+use crate::style::color::ColorContext;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, Color, CursorShape, Display, EdgeInsets,
     FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, ResolvedColor, Sides,
     Style, StyleValue,
 };
+
+/// A node's color variables, inherited from its ancestors and the document.
+pub(crate) type ColorScope = Arc<HashMap<String, ResolvedColor>>;
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
 #[derive(Debug, Clone)]
@@ -73,6 +80,11 @@ pub struct ResolvedStyle {
     pub underline: bool,
     /// Resolved input cursor shape.
     pub cursor_shape: CursorShape,
+    /// The color variables in scope on this node.
+    ///
+    /// Shared by pointer with the parent whenever a node declares none of its own, which is what
+    /// keeps a `ResolvedStyle` cheap to clone for every node of every frame.
+    pub(crate) color_vars: ColorScope,
 }
 
 impl Default for ResolvedStyle {
@@ -130,6 +142,9 @@ pub(crate) struct StyleDefaults {
     italic: bool,
     underline: bool,
     cursor_shape: CursorShape,
+    /// The document's color variables. Only the root reads these — every other node inherits its
+    /// scope from its parent.
+    color_vars: ColorScope,
 }
 
 impl Default for StyleDefaults {
@@ -165,16 +180,20 @@ impl Default for StyleDefaults {
             italic: false,
             underline: false,
             cursor_shape: CursorShape::Block,
+            color_vars: ColorScope::default(),
         }
     }
 }
 
 impl StyleDefaults {
     /// Defaults used by the permanent document root when a property is unset.
-    pub(crate) fn root() -> Self {
+    ///
+    /// The document's color variables are the root of the variable scope chain.
+    pub(crate) fn root(color_vars: ColorScope) -> Self {
         Self {
             width: Length::Percent(100.0),
             height: Length::Percent(100.0),
+            color_vars,
             ..Self::default()
         }
     }
@@ -211,6 +230,7 @@ impl StyleDefaults {
             italic: self.italic,
             underline: self.underline,
             cursor_shape: self.cursor_shape,
+            color_vars: self.color_vars.clone(),
         }
     }
 }
@@ -229,7 +249,11 @@ impl ResolvedStyle {
         parent: Option<&ResolvedStyle>,
         defaults: &StyleDefaults,
     ) -> Self {
+        let color_vars = resolve_color_vars(data, parent, defaults);
+        let ctx = ColorContext { vars: &color_vars };
+
         Self {
+            color_vars: color_vars.clone(),
             width: resolve(&data.style.width, parent.map(|p| &p.width), &defaults.width),
             height: resolve(
                 &data.style.height,
@@ -255,6 +279,7 @@ impl ResolvedStyle {
                 &data.style.border_color,
                 parent.and_then(|p| p.border_color),
                 defaults.border_color,
+                &ctx,
             ),
             half_block_edges: resolve(
                 &data.style.half_block_edges,
@@ -265,11 +290,13 @@ impl ResolvedStyle {
                 &data.style.half_block_inner_color,
                 parent.and_then(|p| p.half_block_inner_color),
                 defaults.half_block_inner_color,
+                &ctx,
             ),
             half_block_outer_color: resolve_opt(
                 &data.style.half_block_outer_color,
                 parent.and_then(|p| p.half_block_outer_color),
                 defaults.half_block_outer_color,
+                &ctx,
             ),
             display: resolve(
                 &data.style.display,
@@ -281,11 +308,17 @@ impl ResolvedStyle {
                 parent.map(|p| &p.opacity),
                 &defaults.opacity,
             ),
-            color: resolve_color(&data.style.color, parent.map(|p| p.color), defaults.color),
+            color: resolve_color(
+                &data.style.color,
+                parent.map(|p| p.color),
+                defaults.color,
+                &ctx,
+            ),
             background: resolve_opt(
                 &data.style.background,
                 parent.and_then(|p| p.background),
                 defaults.background,
+                &ctx,
             ),
             flex_direction: resolve(
                 &data.style.flex_direction,
@@ -367,12 +400,20 @@ impl ResolvedStyle {
         }
     }
 
+    /// Merge a pseudo-state style on top of this resolved style.
+    ///
+    /// Colors in the override resolve against the node's own variable scope. A pseudo-state style
+    /// cannot *declare* variables: doing so would change the scope every color on the node already
+    /// resolved against, so it would mean re-resolving the whole node rather than merging onto it.
     pub(crate) fn apply_overrides(
         &mut self,
         style: &Style,
         parent: Option<&ResolvedStyle>,
         defaults: &StyleDefaults,
     ) {
+        let color_vars = self.color_vars.clone();
+        let ctx = ColorContext { vars: &color_vars };
+
         apply_override(
             &mut self.width,
             &style.width,
@@ -408,6 +449,7 @@ impl ResolvedStyle {
             &style.border_color,
             parent.and_then(|p| p.border_color),
             defaults.border_color,
+            &ctx,
         );
         apply_override(
             &mut self.half_block_edges,
@@ -420,12 +462,14 @@ impl ResolvedStyle {
             &style.half_block_inner_color,
             parent.and_then(|p| p.half_block_inner_color),
             defaults.half_block_inner_color,
+            &ctx,
         );
         apply_opt_override(
             &mut self.half_block_outer_color,
             &style.half_block_outer_color,
             parent.and_then(|p| p.half_block_outer_color),
             defaults.half_block_outer_color,
+            &ctx,
         );
         apply_override(
             &mut self.display,
@@ -444,12 +488,14 @@ impl ResolvedStyle {
             &style.color,
             parent.map(|p| p.color),
             defaults.color,
+            &ctx,
         );
         apply_opt_override(
             &mut self.background,
             &style.background,
             parent.and_then(|p| p.background),
             defaults.background,
+            &ctx,
         );
         apply_override(
             &mut self.flex_direction,
@@ -575,11 +621,12 @@ fn resolve_opt(
     value: &StyleValue<Color>,
     parent: Option<ResolvedColor>,
     default: Option<ResolvedColor>,
+    ctx: &ColorContext,
 ) -> Option<ResolvedColor> {
     match value {
         StyleValue::Unset => default,
         StyleValue::Inherit => parent.or(default),
-        StyleValue::Set(v) => v.eval().or(default),
+        StyleValue::Set(v) => v.eval(ctx).or(default),
     }
 }
 
@@ -588,12 +635,50 @@ fn resolve_color(
     value: &StyleValue<Color>,
     parent: Option<ResolvedColor>,
     default: ResolvedColor,
+    ctx: &ColorContext,
 ) -> ResolvedColor {
     match value {
         StyleValue::Unset => default,
         StyleValue::Inherit => parent.unwrap_or(default),
-        StyleValue::Set(v) => v.eval().unwrap_or(default),
+        StyleValue::Set(v) => v.eval(ctx).unwrap_or(default),
     }
+}
+
+/// Build a node's color variable scope.
+///
+/// A node's own declarations resolve against its *parent's* scope, never against each other. A
+/// `HashMap` has no declaration order, so resolving them against themselves would be
+/// nondeterministic — and resolving them against an already-concrete scope makes reference cycles
+/// impossible to write. `--a: Var("--a").darken(0.1)` therefore means "the inherited `--a`,
+/// darkened", which terminates.
+fn resolve_color_vars(
+    data: &NodeData,
+    parent: Option<&ResolvedStyle>,
+    defaults: &StyleDefaults,
+) -> ColorScope {
+    // The document's variables are the root of the chain; every other node inherits its parent's.
+    let inherited = match parent {
+        Some(parent) => &parent.color_vars,
+        None => &defaults.color_vars,
+    };
+
+    if data.style.color_vars.is_empty() {
+        return inherited.clone();
+    }
+
+    let parent_ctx = ColorContext { vars: inherited };
+    let mut scope = (**inherited).clone();
+    for (name, expr) in &data.style.color_vars {
+        match expr.eval(&parent_ctx) {
+            Some(color) => scope.insert(name.clone(), color),
+            // A declaration that does not resolve leaves the name undefined here rather than
+            // falling through to the inherited value, which would hide the broken declaration
+            // behind an ancestor's color.
+            None => scope.remove(name),
+        };
+    }
+
+    Arc::new(scope)
 }
 
 fn resolve_optional<T: Clone>(
@@ -626,11 +711,12 @@ fn apply_opt_override(
     value: &StyleValue<Color>,
     parent: Option<ResolvedColor>,
     default: Option<ResolvedColor>,
+    ctx: &ColorContext,
 ) {
     match value {
         StyleValue::Unset => {}
         StyleValue::Inherit => *target = parent.or(default),
-        StyleValue::Set(v) => *target = v.eval().or(default),
+        StyleValue::Set(v) => *target = v.eval(ctx).or(default),
     }
 }
 
@@ -639,11 +725,12 @@ fn apply_color_override(
     value: &StyleValue<Color>,
     parent: Option<ResolvedColor>,
     default: ResolvedColor,
+    ctx: &ColorContext,
 ) {
     match value {
         StyleValue::Unset => {}
         StyleValue::Inherit => *target = parent.unwrap_or(default),
-        StyleValue::Set(v) => *target = v.eval().unwrap_or(default),
+        StyleValue::Set(v) => *target = v.eval(ctx).unwrap_or(default),
     }
 }
 

@@ -187,7 +187,7 @@ impl ColorOp {
     /// operand is itself an expression, can do that.
     ///
     /// [`Mix`]: ColorOp::Mix
-    fn apply(&self, base: ResolvedColor) -> Option<ResolvedColor> {
+    fn apply(&self, base: ResolvedColor, ctx: &ColorContext) -> Option<ResolvedColor> {
         Some(match self {
             // Lightness steps are absolute rather than proportional: OKLCH's L is perceptually
             // uniform, which is the whole reason for the color space, so `darken(0.1)` should be
@@ -217,7 +217,7 @@ impl ColorOp {
                 a: a.clamp(0.0, 1.0),
                 ..base
             },
-            Self::Mix { other, t } => base.mix(other.eval()?, *t),
+            Self::Mix { other, t } => base.mix(other.eval(ctx)?, *t),
         })
     }
 }
@@ -245,6 +245,8 @@ impl Default for ResolvedColor {
 pub enum Color {
     /// A concrete OKLCH color.
     Literal(ResolvedColor),
+    /// A named color variable, resolved from the node's inherited variable scope.
+    Var(String),
     /// Another color with an operation applied to it.
     Derived {
         /// The color the operation applies to.
@@ -252,6 +254,16 @@ pub enum Color {
         /// The operation.
         op: ColorOp,
     },
+}
+
+/// What a [`Color`] expression is evaluated against.
+///
+/// A color expression means nothing on its own — it names variables that only exist relative to
+/// some node in the tree. This is that node's view.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ColorContext<'a> {
+    /// The variables in scope, inherited from ancestors and the document.
+    pub vars: &'a HashMap<String, ResolvedColor>,
 }
 
 impl Color {
@@ -309,6 +321,16 @@ impl Color {
         Self::Literal(ResolvedColor::oklcha(l, c, h, a))
     }
 
+    /// Reference a named color variable.
+    ///
+    /// The name resolves against the variable scope of whatever node the style is used on:
+    /// variables declared on the node's ancestors, falling back to the document's. A name nothing
+    /// defines makes the whole expression unresolvable, and the property using it falls back to
+    /// its default.
+    pub fn var(name: impl Into<String>) -> Self {
+        Self::Var(name.into())
+    }
+
     /// Apply an operation to this color, producing a derived color.
     fn derive(self, op: ColorOp) -> Self {
         Self::Derived {
@@ -355,13 +377,14 @@ impl Color {
         })
     }
 
-    /// Evaluate this color to a concrete [`ResolvedColor`].
+    /// Evaluate this color to a concrete [`ResolvedColor`] against a node's context.
     ///
     /// `None` means the expression names something that does not resolve.
-    pub(crate) fn eval(&self) -> Option<ResolvedColor> {
+    pub(crate) fn eval(&self, ctx: &ColorContext) -> Option<ResolvedColor> {
         match self {
             Self::Literal(color) => Some(*color),
-            Self::Derived { base, op } => op.apply(base.eval()?),
+            Self::Var(name) => ctx.vars.get(name).copied(),
+            Self::Derived { base, op } => op.apply(base.eval(ctx)?, ctx),
         }
     }
 }
@@ -495,17 +518,53 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
-    #[test]
-    fn literal_colors_evaluate_to_themselves() {
-        assert_eq!(Color::red().eval(), Some(ResolvedColor::red()));
-        assert_eq!(
-            Color::oklcha(0.5, 0.1, 180.0, 0.5).eval(),
-            Some(ResolvedColor::oklcha(0.5, 0.1, 180.0, 0.5))
-        );
+    fn eval_in(color: &Color, vars: &HashMap<String, ResolvedColor>) -> Option<ResolvedColor> {
+        color.eval(&ColorContext { vars })
     }
 
     fn eval(color: Color) -> ResolvedColor {
-        color.eval().expect("literal expression should resolve")
+        eval_in(&color, &HashMap::new()).expect("expression should resolve")
+    }
+
+    #[test]
+    fn literal_colors_evaluate_to_themselves() {
+        assert_eq!(eval(Color::red()), ResolvedColor::red());
+        assert_eq!(
+            eval(Color::oklcha(0.5, 0.1, 180.0, 0.5)),
+            ResolvedColor::oklcha(0.5, 0.1, 180.0, 0.5)
+        );
+    }
+
+    #[test]
+    fn a_variable_resolves_from_the_scope() {
+        let vars = HashMap::from([("--primary".to_string(), ResolvedColor::red())]);
+        assert_eq!(
+            eval_in(&Color::var("--primary"), &vars),
+            Some(ResolvedColor::red())
+        );
+    }
+
+    #[test]
+    fn an_undefined_variable_makes_the_whole_expression_unresolvable() {
+        let vars = HashMap::new();
+        assert_eq!(eval_in(&Color::var("--nope"), &vars), None);
+        // Not "darken of some fallback" — a typo'd name must not half-apply a derivation.
+        assert_eq!(eval_in(&Color::var("--nope").darken(0.1), &vars), None);
+        assert_eq!(
+            eval_in(&Color::white().mix(Color::var("--nope"), 0.5), &vars),
+            None
+        );
+    }
+
+    #[test]
+    fn derivations_apply_to_variables() {
+        let vars = HashMap::from([(
+            "--primary".to_string(),
+            ResolvedColor::oklch(0.5, 0.1, 180.0),
+        )]);
+        let resolved = eval_in(&Color::var("--primary").darken(0.2), &vars)
+            .expect("defined variable should resolve");
+        assert!((resolved.l - 0.3).abs() < 1e-6);
     }
 
     #[test]
