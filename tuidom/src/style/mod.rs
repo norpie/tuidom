@@ -300,6 +300,12 @@ pub struct Style {
     pub(crate) border: StyleValue<Border>,
     /// Border color. Unset follows the node's foreground color.
     pub(crate) border_color: StyleValue<Color>,
+    /// Sides whose outermost cells are drawn as a half-block edge.
+    pub(crate) half_block_edges: StyleValue<Sides>,
+    /// Color of a half-block edge's inner half. Unset follows the node's background color.
+    pub(crate) half_block_inner_color: StyleValue<Color>,
+    /// Color of a half-block edge's outer half. Unset keeps what is already painted there.
+    pub(crate) half_block_outer_color: StyleValue<Color>,
     /// Display mode.
     pub(crate) display: StyleValue<Display>,
     /// Opacity (0–1).
@@ -364,6 +370,9 @@ impl Style {
             margin: StyleValue::Unset,
             border: StyleValue::Unset,
             border_color: StyleValue::Unset,
+            half_block_edges: StyleValue::Unset,
+            half_block_inner_color: StyleValue::Unset,
+            half_block_outer_color: StyleValue::Unset,
             display: StyleValue::Unset,
             opacity: StyleValue::Unset,
             color: StyleValue::Unset,
@@ -496,6 +505,69 @@ impl Style {
     /// Reset the border color to the document/default style.
     pub fn unset_border_color(&mut self) {
         self.border_color = StyleValue::Unset;
+    }
+
+    // -- Half-block edges -----------------------------------------------
+
+    /// Draw the node's outermost cells on these sides as a half-block edge.
+    ///
+    /// The node's fill ends halfway into those cells instead of at the cell boundary, which is
+    /// how a colored area gets vertical padding that reads as balanced against its horizontal
+    /// padding — a terminal cell is about twice as tall as it is wide. Unlike a border, this
+    /// takes no space: it repaints cells the node already owns.
+    pub fn half_block_edges(&mut self, value: Sides) {
+        self.half_block_edges = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the half-block edge sides from the parent node.
+    pub fn inherit_half_block_edges(&mut self) {
+        self.half_block_edges = StyleValue::Inherit;
+    }
+
+    /// Reset the half-block edge sides to the document/default style.
+    pub fn unset_half_block_edges(&mut self) {
+        self.half_block_edges = StyleValue::Unset;
+    }
+
+    // -- Half-block inner color -----------------------------------------
+
+    /// Set the color of a half-block edge's inner half — the node's own side.
+    ///
+    /// When unset, it follows the node's resolved background color, which is what makes the
+    /// edge read as the node's fill ending half a cell early. A node with neither draws no
+    /// edge: there is no fill to take a half of.
+    pub fn half_block_inner_color(&mut self, value: Color) {
+        self.half_block_inner_color = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the half-block inner color from the parent node.
+    pub fn inherit_half_block_inner_color(&mut self) {
+        self.half_block_inner_color = StyleValue::Inherit;
+    }
+
+    /// Reset the half-block inner color to the document/default style.
+    pub fn unset_half_block_inner_color(&mut self) {
+        self.half_block_inner_color = StyleValue::Unset;
+    }
+
+    // -- Half-block outer color -----------------------------------------
+
+    /// Set the color of a half-block edge's outer half — the side away from the node.
+    ///
+    /// When unset, the outer half keeps whatever is already painted underneath, so the edge
+    /// fades into the color it sits on without being told what that is.
+    pub fn half_block_outer_color(&mut self, value: Color) {
+        self.half_block_outer_color = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the half-block outer color from the parent node.
+    pub fn inherit_half_block_outer_color(&mut self) {
+        self.half_block_outer_color = StyleValue::Inherit;
+    }
+
+    /// Reset the half-block outer color to the document/default style.
+    pub fn unset_half_block_outer_color(&mut self) {
+        self.half_block_outer_color = StyleValue::Unset;
     }
 
     // -- Text attributes ------------------------------------------------

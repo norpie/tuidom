@@ -6,7 +6,7 @@
 use crate::node::NodeData;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, Color, CursorShape, Display, EdgeInsets,
-    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, Style, StyleValue,
+    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, Sides, Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -24,6 +24,12 @@ pub struct ResolvedStyle {
     pub border: Border,
     /// Resolved border color. `None` means the border follows this node's resolved `color`.
     pub border_color: Option<Color>,
+    /// Resolved sides drawn as a half-block edge.
+    pub half_block_edges: Sides,
+    /// Resolved half-block inner color. `None` means it follows this node's `background`.
+    pub half_block_inner_color: Option<Color>,
+    /// Resolved half-block outer color. `None` means the outer half keeps what is painted there.
+    pub half_block_outer_color: Option<Color>,
     /// Resolved display mode.
     pub display: Display,
     /// Resolved opacity (0–1).
@@ -83,6 +89,9 @@ pub(crate) struct StyleDefaults {
     margin: EdgeInsets,
     border: Border,
     border_color: Option<Color>,
+    half_block_edges: Sides,
+    half_block_inner_color: Option<Color>,
+    half_block_outer_color: Option<Color>,
     display: Display,
     opacity: f64,
     color: Color,
@@ -115,6 +124,9 @@ impl Default for StyleDefaults {
             margin: EdgeInsets::ZERO,
             border: Border::none(),
             border_color: None,
+            half_block_edges: Sides::NONE,
+            half_block_inner_color: None,
+            half_block_outer_color: None,
             display: Display::Flex,
             opacity: 1.0,
             color: Color::white(),
@@ -158,6 +170,9 @@ impl StyleDefaults {
             margin: self.margin,
             border: self.border,
             border_color: self.border_color,
+            half_block_edges: self.half_block_edges,
+            half_block_inner_color: self.half_block_inner_color,
+            half_block_outer_color: self.half_block_outer_color,
             display: self.display,
             opacity: self.opacity,
             color: self.color,
@@ -223,6 +238,21 @@ impl ResolvedStyle {
                 &data.style.border_color,
                 parent.and_then(|p| p.border_color),
                 defaults.border_color,
+            ),
+            half_block_edges: resolve(
+                &data.style.half_block_edges,
+                parent.map(|p| &p.half_block_edges),
+                &defaults.half_block_edges,
+            ),
+            half_block_inner_color: resolve_opt(
+                &data.style.half_block_inner_color,
+                parent.and_then(|p| p.half_block_inner_color),
+                defaults.half_block_inner_color,
+            ),
+            half_block_outer_color: resolve_opt(
+                &data.style.half_block_outer_color,
+                parent.and_then(|p| p.half_block_outer_color),
+                defaults.half_block_outer_color,
             ),
             display: resolve(
                 &data.style.display,
@@ -361,6 +391,24 @@ impl ResolvedStyle {
             &style.border_color,
             parent.and_then(|p| p.border_color),
             defaults.border_color,
+        );
+        apply_override(
+            &mut self.half_block_edges,
+            &style.half_block_edges,
+            parent.map(|p| &p.half_block_edges),
+            &defaults.half_block_edges,
+        );
+        apply_opt_override(
+            &mut self.half_block_inner_color,
+            &style.half_block_inner_color,
+            parent.and_then(|p| p.half_block_inner_color),
+            defaults.half_block_inner_color,
+        );
+        apply_opt_override(
+            &mut self.half_block_outer_color,
+            &style.half_block_outer_color,
+            parent.and_then(|p| p.half_block_outer_color),
+            defaults.half_block_outer_color,
         );
         apply_override(
             &mut self.display,

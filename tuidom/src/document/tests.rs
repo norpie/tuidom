@@ -716,6 +716,54 @@ fn border_none_in_a_pseudo_style_removes_a_base_border() {
     assert!(!resolved.border.sides.any());
 }
 
+#[test]
+fn half_block_edges_resolve_with_both_colors_defaulting_to_follow_the_node() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    let unset = doc.resolved_style(node).unwrap();
+    assert_eq!(unset.half_block_edges, Sides::NONE);
+
+    let mut style = Style::new();
+    style.half_block_edges(Sides::new(true, false, true, false));
+    doc.set_style(node, &style).unwrap();
+
+    let resolved = doc.resolved_style(node).unwrap();
+    assert_eq!(
+        resolved.half_block_edges,
+        Sides::new(true, false, true, false)
+    );
+    // Unset inner means "follow the node's background"; unset outer means "keep what is
+    // already painted there". Neither means "no color".
+    assert_eq!(resolved.half_block_inner_color, None);
+    assert_eq!(resolved.half_block_outer_color, None);
+}
+
+#[test]
+fn focus_style_recolors_a_half_block_edge_without_respecifying_the_sides() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    let mut base = Style::new();
+    base.half_block_edges(Sides::new(true, false, true, false));
+    doc.set_style(node, &base).unwrap();
+
+    let mut focus = Style::new();
+    focus.half_block_inner_color(Color::red());
+    doc.set_focus_style(node, &focus).unwrap();
+    doc.focus(node).unwrap();
+
+    let focused = doc.resolved_style(node).unwrap();
+    assert_eq!(focused.half_block_inner_color, Some(Color::red()));
+    assert_eq!(
+        focused.half_block_edges,
+        Sides::new(true, false, true, false)
+    );
+}
+
 fn bordered_box(doc: &Document, border: Border, width: u16, height: u16) -> NodeId {
     let node = doc.create_box().unwrap();
     doc.append_child(doc.root(), node).unwrap();
