@@ -127,15 +127,21 @@ impl Cell {
 }
 
 /// Blend `src` over `dst` using node opacity combined with source color alpha.
-fn blend_cell(dst: &Cell, src: &Cell, opacity: f64, replace_content: bool) -> Cell {
-    let bg = blend_color(dst.bg, src.bg, opacity);
+fn blend_cell(
+    dst: &Cell,
+    src: &Cell,
+    opacity: f64,
+    replace_content: bool,
+    default_bg: Rgb,
+) -> Cell {
+    let bg = blend_color(dst.bg, src.bg, opacity, default_bg);
     Cell {
         content: if replace_content {
             src.content.clone()
         } else {
             dst.content.clone()
         },
-        fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg)),
+        fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg), default_bg),
         bg,
         // Attributes travel with the glyph: a translucent fill that preserves the destination
         // text preserves its attributes, and one that replaces the text takes the source's.
@@ -149,20 +155,21 @@ fn blend_cell(dst: &Cell, src: &Cell, opacity: f64, replace_content: bool) -> Ce
 
 /// Blend a source foreground color over a destination foreground color.
 ///
-/// When the destination is transparent (None), fades toward the cell's
-/// background color instead of black.
-fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64, cell_bg: Option<Rgb>) -> Option<Rgb> {
+/// When the destination is transparent (None), fades toward the cell's background color — or, if
+/// the cell has none either, toward the terminal background the document declares.
+fn blend_fg(
+    dst: Option<Rgb>,
+    src: Option<Rgb>,
+    opacity: f64,
+    cell_bg: Option<Rgb>,
+    default_bg: Rgb,
+) -> Option<Rgb> {
     match (dst, src) {
         (None, None) => None,
         (_, Some(s)) if effective_alpha(s, opacity) <= 0.0 => dst,
         (None, Some(s)) => {
             let alpha = effective_alpha(s, opacity);
-            let target = cell_bg.unwrap_or(Rgb {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 255,
-            });
+            let target = cell_bg.unwrap_or(default_bg);
             Some(Rgb {
                 r: lerp_u8(target.r, s.r, alpha),
                 g: lerp_u8(target.g, s.g, alpha),
@@ -184,16 +191,19 @@ fn blend_fg(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64, cell_bg: Option<Rg
 }
 
 /// Blend a source color over a destination color (for backgrounds).
-fn blend_color(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64) -> Option<Rgb> {
+///
+/// An unpainted destination has no color of its own, so a translucent source fades toward the
+/// terminal background the document declares.
+fn blend_color(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64, default_bg: Rgb) -> Option<Rgb> {
     match (dst, src) {
         (None, None) => None,
         (_, Some(s)) if effective_alpha(s, opacity) <= 0.0 => dst,
         (None, Some(s)) => {
             let alpha = effective_alpha(s, opacity);
             Some(Rgb {
-                r: lerp_u8(0, s.r, alpha),
-                g: lerp_u8(0, s.g, alpha),
-                b: lerp_u8(0, s.b, alpha),
+                r: lerp_u8(default_bg.r, s.r, alpha),
+                g: lerp_u8(default_bg.g, s.g, alpha),
+                b: lerp_u8(default_bg.b, s.b, alpha),
                 a: 255,
             })
         }
@@ -242,6 +252,14 @@ impl TouchedSpan {
     }
 }
 
+/// The terminal background a grid assumes until the document declares otherwise.
+const BLACK: Rgb = Rgb {
+    r: 0,
+    g: 0,
+    b: 0,
+    a: 255,
+};
+
 /// A 2D buffer of [`Cell`]s representing a single frame's screen state.
 #[derive(Debug, Clone)]
 pub(crate) struct Grid {
@@ -253,6 +271,8 @@ pub(crate) struct Grid {
     pub height: u16,
     /// Horizontal spans touched by paint operations after the frame base clear.
     touched_spans: Vec<Option<TouchedSpan>>,
+    /// The terminal background color assumed when blending onto an unpainted cell.
+    default_bg: Rgb,
 }
 
 impl Grid {
@@ -264,7 +284,18 @@ impl Grid {
             width,
             height,
             touched_spans: vec![None; height as usize],
+            default_bg: BLACK,
         }
+    }
+
+    /// Set the terminal background color assumed when blending.
+    ///
+    /// A translucent color painted onto a cell with no background has to fade toward *something*,
+    /// and the terminal's real background is unknowable — so the document declares it. This only
+    /// feeds the blending math: an unpainted cell still emits the terminal default, so the user's
+    /// real background keeps showing through whatever is declared here.
+    pub fn set_default_background(&mut self, bg: Rgb) {
+        self.default_bg = bg;
     }
 
     /// Reset all cells to empty terminal-default state while preserving allocation.
@@ -347,7 +378,8 @@ impl Grid {
                     self.clear_text_span_at(row, col);
                 }
                 let dst = &self.cells[row][col];
-                self.cells[row][col] = blend_cell(dst, &cell, alpha, replaces_content);
+                self.cells[row][col] =
+                    blend_cell(dst, &cell, alpha, replaces_content, self.default_bg);
             }
         }
 
@@ -689,9 +721,9 @@ impl Grid {
                 text: glyph.encode_utf8(&mut text).to_string(),
                 width: 1,
             },
-            fg: blend_fg(under, Some(inner), alpha, under),
+            fg: blend_fg(under, Some(inner), alpha, under, self.default_bg),
             bg: match outer {
-                Some(outer) => blend_color(under, Some(outer), alpha),
+                Some(outer) => blend_color(under, Some(outer), alpha, self.default_bg),
                 None => under,
             },
             // No attributes: a half block is fill, not text. Bolding or italicizing it would
@@ -759,7 +791,7 @@ impl Grid {
                 text: text.to_string(),
                 width,
             },
-            fg: blend_fg(dst.fg, fg, alpha, dst.bg),
+            fg: blend_fg(dst.fg, fg, alpha, dst.bg, self.default_bg),
             bg: dst.bg,
             attrs,
         };

@@ -69,6 +69,11 @@ pub(crate) fn paint(
         ..PaintProfile::default()
     };
 
+    // What a translucent color fades toward where nothing is painted underneath. The terminal's
+    // real background is unknowable, so the document states what to assume.
+    let default_bg = resolve_rgb(rgb_cache, doc.resolved_terminal_background(), &mut profile);
+    grid.set_default_background(default_bg);
+
     let grid_start = Instant::now();
     let clear_result = if clear_grid {
         clear_grid_for_paint(grid, &entries, rgb_cache, &mut profile)
@@ -1357,5 +1362,61 @@ mod tests {
         assert_eq!(row_text(&grid, 0), "     ");
         assert_eq!(row_text(&grid, 1), " ab  ");
         assert_eq!(row_text(&grid, 2), "     ");
+    }
+
+    // -----------------------------------------------------------------------
+    // Declared terminal background
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_translucent_color_blends_toward_the_declared_terminal_background() {
+        // Nothing is painted underneath, so a half-transparent white has to fade toward
+        // *something*. Left to itself a grid assumes black; a document that declares otherwise
+        // must get what it declared.
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+
+        let mut style = Style::new();
+        style.background(Color::oklcha(1.0, 0.0, 0.0, 0.5));
+        doc.set_style(node, &style).unwrap();
+
+        set_layout(&doc, doc.root(), one_cell());
+        set_layout(&doc, node, one_cell());
+
+        // Half of white over an assumed black.
+        assert_eq!(painted_bg(&doc), Some(rgb(128, 128, 128)));
+
+        // Half of white over an assumed red: the red channel is already full.
+        doc.set_terminal_background(Color::red());
+        assert_eq!(painted_bg(&doc), Some(rgb(255, 128, 128)));
+    }
+
+    #[test]
+    fn the_declared_terminal_background_is_never_painted() {
+        // It is an assumption for blending math, not a color. A cell nothing paints must still
+        // emit the terminal default, so an unstyled app keeps showing the user's real background.
+        let doc = Document::new().unwrap();
+        doc.set_terminal_background(Color::red());
+        set_layout(&doc, doc.root(), one_cell());
+
+        let mut grid = Grid::new(1, 1);
+        paint_doc_clearing(&doc, &mut grid);
+
+        assert_eq!(grid.cells[0][0].bg, None);
+    }
+
+    #[test]
+    fn an_opaque_color_ignores_the_declared_terminal_background() {
+        let doc = Document::new().unwrap();
+        doc.set_terminal_background(Color::white());
+
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        set_background(&doc, node, Color::red());
+        set_layout(&doc, doc.root(), one_cell());
+        set_layout(&doc, node, one_cell());
+
+        assert_eq!(painted_bg(&doc), Some(rgb(255, 0, 0)));
     }
 }
