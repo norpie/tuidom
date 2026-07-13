@@ -133,10 +133,11 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Per-side control (top, right, bottom, left independently) — width is always one cell, so per-side control is presence
   - [x] Borders occupy real cells: taffy insets a bordered node's content and children
   - [x] `border_color` is its own property, following the node's foreground when unset
-- [ ] Half-block edges (opt-in, later milestone):
-  - [ ] Uses `▀▄▌▐` characters with fg/bg colors to create smooth color transitions
-  - [ ] Renderer detects adjacent node colors at boundary cells
-  - [ ] Modern look without traditional box-drawing characters
+- [x] Half-block edges (opt-in, per side) — not a border: they cost no layout and frame nothing
+  - [x] Uses `▀▄▌▐` (and `▗▖▝▘` where two edges meet) with fg/bg colors to end a node's fill on a half cell
+  - [x] Balances vertical against horizontal padding, since a cell is twice as tall as it is wide
+  - [x] Both colors come from the user: the inner half follows the node's `background` when unset, the outer half keeps whatever is painted underneath
+  - [x] Modern look without traditional box-drawing characters
 
 ## Colors
 

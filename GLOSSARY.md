@@ -54,6 +54,8 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Sides** — Which sides of a node an edge treatment is drawn on. Presence, not width: every edge treatment tuidom draws — a border, a half-block edge — is either on a side or not. A border's corner cell gets its corner character only when both adjacent sides are drawn; otherwise the one side present runs straight through it, so a top-only border is a clean rule.
 
+**Half-Block Edge** — A node's fill ending halfway into its own outermost row or column, drawn with a half block (`▀▄▌▐`) or, where two edges meet, a quadrant block (`▗▖▝▘`). It is not a border: it frames nothing and costs no layout — it repaints cells the node already owns. Its purpose is the boundary between two colors. A terminal cell is about twice as tall as it is wide, so a cell of vertical padding reads as two cells of horizontal padding; ending the fill on a half cell is what balances them.
+
 **FlexDirection** — Main-axis direction for flex containers: row, column, and their reverse variants, which lay children out from the end of the main axis.
 
 **FlexGap** — Terminal-cell spacing between flex children and flex lines. `column` is horizontal spacing and `row` is vertical spacing.
