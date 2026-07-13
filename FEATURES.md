@@ -144,17 +144,26 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] OKLCH as internal representation — all operations work on OKLCH
 - [x] Convert to RGB only at render time
 - [x] Caching layer for conversions (OKLCH → RGB is math-heavy)
-- [ ] Color variable system — cascades down the tree
-  - [ ] Define at document or node level, children inherit
-  - [ ] Reference in styles: `color: Var("--primary")`
-- [ ] Derived color operations (work on OKLCH):
-  - [ ] `lighten(amount)`, `darken(amount)`
-  - [ ] `with_hue(h)`, `with_chroma(c)`, `with_lightness(l)`
-  - [ ] `with_alpha(a)`
+- [x] `Color` is an expression; `ResolvedColor` is the concrete OKLCH value on `ResolvedStyle`
+- [x] Color variable system — cascades down the tree
+  - [x] Define at document or node level, children inherit
+  - [x] Reference in styles: `color: Color::var("--primary")`
+  - [x] Redeclaring shadows for the subtree; a declaration resolves against the parent's scope, so cycles cannot be written
+  - [x] An undefined name falls back to the property's default rather than half-applying a derivation
+- [x] Derived color operations (work on OKLCH):
+  - [x] `lighten(amount)`, `darken(amount)` — absolute steps, since OKLCH lightness is perceptually uniform
+  - [x] `with_hue(h)`, `with_chroma(c)`, `with_lightness(l)`
+  - [x] `with_alpha(a)`
+  - [x] `mix(other, t)` — blends in OKLCH; borrows the chromatic hue when one side is a gray
   - [ ] `contrast()` — compute readable contrast color
   - [ ] Explicit color space: `.as_hsl().lighten(0.1)` if you want HSL math
-- [ ] Derive from current node: `CurrentBg.darken(0.1)`, `CurrentFg.with_alpha(0.5)`
-  - [ ] Resolution order: variables resolved first, then `CurrentBg`/`CurrentFg` reference the node's resolved colors, then derivations applied
+- [x] Derive from current node: `CurrentBg.darken(0.1)`, `CurrentFg.with_alpha(0.5)`
+  - [x] Resolution order: variables, then `background`, then `color`, then every other color property
+  - [x] In `background` and in a variable declaration, `CurrentBg`/`CurrentFg` mean the *parent's* values — self-reference is otherwise circular
+  - [x] `CurrentBg` on a transparent node sees through to the nearest painted ancestor
+- [x] Declared terminal background (`doc.set_terminal_background`) — the real one is unknowable, so it is assumed
+  - [x] The bottom of the `CurrentBg` chain, and the base a translucent color blends toward over an unpainted cell
+  - [x] An assumption for color math, never painted — unpainted cells still emit the terminal default
 - [x] Alpha blending at render time:
   - [x] Render back-to-front (painter's algorithm)
   - [x] Semi-transparent colors blend with buffer content below

@@ -74,11 +74,19 @@ Terms and concepts used throughout the tuidom codebase.
 
 **OKLCH** — Perceptually uniform color space (Lightness, Chroma, Hue, Alpha). Used internally for all color operations.
 
-**Color Variable** — Named color reference (e.g., `Var("--primary")`). Cascades down tree like CSS custom properties.
+**Color** — A color as written in a `Style`: an expression, not a value. It can name a variable or refer to the node it is used on, neither of which means anything until it is resolved against a specific node.
 
-**Color Derivation** — Computed color from another (e.g., `CurrentBg.darken(0.1)`, `Var("--primary").with_alpha(0.5)`).
+**ResolvedColor** — What a `Color` evaluates to during style resolution: a concrete OKLCH color, and what `ResolvedStyle` holds. Hue is stored canonically (0–360), so two spellings of one angle are one color and share one cache entry.
 
-**CurrentBg / CurrentFg** — Special color references that resolve to the current node's background/foreground.
+**Color Variable** — Named color reference (e.g. `Color::var("--primary")`), declared on the document or on a node and in scope for that node's descendants. Redeclaring a name shadows it for the subtree. A node's own declarations resolve against its *parent's* scope, never against each other — a `HashMap` has no declaration order, and resolving against an already-concrete scope makes reference cycles impossible to write. A name nothing defines makes the whole expression unresolvable, and the property falls back to its default rather than half-applying a derivation.
+
+**Color Derivation** — A computed color: `Color::var("--primary").darken(0.1)`, `CurrentBg.with_alpha(0.5)`. Lightness steps are absolute, not proportional, because OKLCH's lightness is perceptually uniform. `mix` blends two colors in OKLCH, taking the short way around the hue circle and borrowing the other color's hue when one is a gray — a gray has no hue, and interpolating its nominal 0° would swing the result through unrelated colors.
+
+**CurrentBg / CurrentFg** — Color references that resolve relative to the node they are used on. They are self-referential in the two properties they are defined from, so resolution is ordered: in `background`, and in a variable declaration, they mean the *parent's* values; from `color` onward they mean the node's own. This is the only reading that is not circular.
+
+**Effective Background** — The background a node visually sits on: its own if it has one, otherwise the nearest ancestor's, falling back to the document's declared terminal background. It is what `CurrentBg` resolves to, and it is never absent — a node deriving a color from what it sits on needs an answer even when nothing in its ancestry paints one.
+
+**Terminal Background** — The terminal background color the document *assumes*. The real one is unknowable without querying the terminal, so it is declared rather than detected. It is the bottom of the effective-background chain and the base a translucent color blends toward over an unpainted cell. It is an assumption for color math, never a color that gets painted: an unpainted cell still emits the terminal default, so an unstyled app keeps showing the user's real background.
 
 **Rgb** — Final color format (Red, Green, Blue) sent to terminal. Converted from OKLCH only at render time.
 
