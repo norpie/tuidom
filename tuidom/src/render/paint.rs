@@ -124,17 +124,20 @@ fn paint_entry(
     };
     let fg_rgb = resolve_rgb(rgb_cache, node.resolved.color, profile);
 
+    // Fill, then edges, then content: a half-block edge is the node's own fill ending half a
+    // cell early, so it composes over what is *under* the node — which means the fill must not
+    // have covered those cells first. Content still paints over both.
+    if let Some(bg) = bg_rgb {
+        let bg_cell = Cell::empty_with_bg(bg);
+        fill_background(grid, node, bg_cell, alpha, profile);
+    }
+    paint_half_block_edges(grid, node, alpha, rgb_cache, profile);
+
     let cursor = match &node.kind {
-        NodeKindView::Box => {
-            if let Some(bg) = bg_rgb {
-                let bg_cell = Cell::empty_with_bg(bg);
-                fill_background(grid, node, bg_cell, alpha, profile);
-            }
-            None
-        }
+        NodeKindView::Box => None,
 
         NodeKindView::Text { content } => {
-            paint_text(grid, node, bg_rgb, fg_rgb, alpha, content, profile);
+            paint_text(grid, node, fg_rgb, alpha, content, profile);
             None
         }
 
@@ -153,7 +156,7 @@ fn paint_entry(
             if let Some(start) = input_format_start {
                 profile.input_format_time += start.elapsed();
             }
-            paint_text(grid, node, bg_rgb, fg_rgb, alpha, &visible_content, profile);
+            paint_text(grid, node, fg_rgb, alpha, &visible_content, profile);
             if focused == Some(node.id) {
                 input_cursor_metadata(
                     grid,
@@ -228,20 +231,54 @@ fn paint_border(
     }
 }
 
+fn paint_half_block_edges(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    alpha: f64,
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) {
+    let sides = node.resolved.half_block_edges;
+    let Some(inner) = node.resolved.half_block_inner() else {
+        return;
+    };
+    if !sides.any() {
+        return;
+    }
+
+    let inner = resolve_rgb(rgb_cache, inner, profile);
+    let outer = node
+        .resolved
+        .half_block_outer_color
+        .map(|color| resolve_rgb(rgb_cache, color, profile));
+
+    let edge_start = profile.enabled.then(Instant::now);
+    let glyphs = grid.write_half_block_edges(
+        GridRect {
+            x: node.layout.x,
+            y: node.layout.y,
+            width: node.layout.width,
+            height: node.layout.height,
+        },
+        sides,
+        inner,
+        outer,
+        alpha,
+    );
+    if let Some(start) = edge_start {
+        profile.text_write_time += start.elapsed();
+        profile.glyphs_written += glyphs;
+    }
+}
+
 fn paint_text(
     grid: &mut Grid,
     node: &PaintEntry,
-    bg_rgb: Option<Rgb>,
     fg_rgb: Rgb,
     alpha: f64,
     content: &str,
     profile: &mut PaintProfile,
 ) {
-    if let Some(bg) = bg_rgb {
-        let bg_cell = Cell::empty_with_bg(bg);
-        fill_background(grid, node, bg_cell, alpha, profile);
-    }
-
     let content_rect = node.layout.content_rect(&node.resolved);
     let text_start = profile.enabled.then(Instant::now);
     let glyphs = grid.write_text_clipped(
@@ -283,7 +320,12 @@ fn clear_grid_for_paint(
             return ClearGridResult::default();
         };
 
-        if entry.resolved.opacity < 1.0 || !covers_grid(entry.layout, grid) {
+        // A half-block edge means the node's background stops half a cell short of its own
+        // rect, so it no longer covers the screen and cannot stand in for the frame clear.
+        if entry.resolved.opacity < 1.0
+            || entry.resolved.draws_half_block_edges()
+            || !covers_grid(entry.layout, grid)
+        {
             grid.clear();
             return ClearGridResult::default();
         }
@@ -313,6 +355,12 @@ fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
         return false;
     }
 
+    // Same for a half-block edge with an explicit inner color: no background, but it still
+    // paints cells.
+    if entry.resolved.draws_half_block_edges() {
+        return false;
+    }
+
     match &entry.kind {
         NodeKindView::Box => true,
         NodeKindView::Text { content } => content.is_empty(),
@@ -336,17 +384,14 @@ fn fill_background(
     alpha: f64,
     profile: &mut PaintProfile,
 ) {
-    let requested_cells = usize::from(node.layout.width) * usize::from(node.layout.height);
+    // Cells that carry a half-block edge are filled by the edge instead, so the node's color
+    // reaches them exactly once — filling them here first would blend it in twice and would
+    // destroy the color the outer half needs to sit on.
+    let rect = node.layout.without_half_block_edges(&node.resolved);
+    let requested_cells = usize::from(rect.width) * usize::from(rect.height);
     let opaque_fill = alpha >= 1.0 && bg_cell.bg.is_some_and(|bg| bg.a == 255);
     let fill_start = profile.enabled.then(Instant::now);
-    let cells = grid.fill_rect(
-        node.layout.x,
-        node.layout.y,
-        node.layout.width,
-        node.layout.height,
-        bg_cell,
-        alpha,
-    );
+    let cells = grid.fill_rect(rect.x, rect.y, rect.width, rect.height, bg_cell, alpha);
     if let Some(start) = fill_start {
         profile.background_fill_time += start.elapsed();
         profile.background_fill_calls += 1;
@@ -356,13 +401,14 @@ fn fill_background(
             profile.opaque_fill_calls += 1;
             profile.opaque_filled_cells += cells;
         }
-        record_largest_fill(profile, node, requested_cells, cells);
+        record_largest_fill(profile, node, rect, requested_cells, cells);
     }
 }
 
 fn record_largest_fill(
     profile: &mut PaintProfile,
     node: &PaintEntry,
+    rect: LayoutRect,
     requested_cells: usize,
     clipped_cells: usize,
 ) {
@@ -376,10 +422,10 @@ fn record_largest_fill(
     profile.largest_fill = Some(LargestFillProfile {
         node_id: node.id,
         node_kind: node_kind_label(&node.kind),
-        x: node.layout.x,
-        y: node.layout.y,
-        width: node.layout.width,
-        height: node.layout.height,
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
         requested_cells,
         clipped_cells,
     });
@@ -504,7 +550,7 @@ mod tests {
     use crate::id::NodeId;
     use crate::node::LayoutRect;
     use crate::style::color::Rgb;
-    use crate::style::{Border, BorderCharset, Color, Display, Length, Style};
+    use crate::style::{Border, BorderCharset, Color, Display, Length, Sides, Style};
 
     fn row_text(grid: &Grid, row: usize) -> String {
         grid.cells[row]
@@ -927,6 +973,354 @@ mod tests {
         assert_eq!(row_text(&grid, 1), "    ");
         assert_eq!(row_text(&grid, 2), "    ");
         assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 255)));
+    }
+
+    /// A page in `under`, with one node painted over all of it. The node's half-block edges
+    /// therefore sit on `under` — the common case: a colored block on a differently colored
+    /// background.
+    fn half_block_scene(
+        doc: &Document,
+        under: Color,
+        fill: Option<Color>,
+        sides: Sides,
+        width: u16,
+        height: u16,
+    ) -> NodeId {
+        let root = doc.root();
+        let node = doc.create_box().unwrap();
+        doc.append_child(root, node).unwrap();
+
+        set_background(doc, root, under);
+
+        let mut style = Style::new();
+        if let Some(fill) = fill {
+            style.background(fill);
+        }
+        style.half_block_edges(sides);
+        doc.set_style(node, &style).unwrap();
+
+        let rect = LayoutRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        set_layout(doc, root, rect);
+        set_layout(doc, node, rect);
+        node
+    }
+
+    #[test]
+    fn half_block_top_edge_ends_the_fill_halfway_into_its_own_first_row() {
+        let doc = Document::new().unwrap();
+        half_block_scene(
+            &doc,
+            Color::red(),
+            Some(Color::blue()),
+            Sides::new(true, false, false, false),
+            3,
+            2,
+        );
+
+        let mut grid = Grid::new(3, 2);
+        paint_doc(&doc, &mut grid);
+
+        // The fill's half of the cell is its foreground; the page shows through the other half.
+        assert_eq!(row_text(&grid, 0), "▄▄▄");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(255, 0, 0)));
+
+        // The row below is ordinary fill — the edge costs no layout, it just takes the row.
+        assert_eq!(row_text(&grid, 1), "   ");
+        assert_eq!(grid.cells[1][0].bg, Some(rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn half_block_bottom_edge_uses_the_upper_half_block() {
+        let doc = Document::new().unwrap();
+        half_block_scene(
+            &doc,
+            Color::red(),
+            Some(Color::blue()),
+            Sides::new(false, false, true, false),
+            3,
+            2,
+        );
+
+        let mut grid = Grid::new(3, 2);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "   ");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 255)));
+        assert_eq!(row_text(&grid, 1), "▀▀▀");
+        assert_eq!(grid.cells[1][0].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[1][0].bg, Some(rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn half_block_left_and_right_edges_use_the_opposite_half_blocks() {
+        let doc = Document::new().unwrap();
+        half_block_scene(
+            &doc,
+            Color::red(),
+            Some(Color::blue()),
+            Sides::new(false, true, false, true),
+            3,
+            1,
+        );
+
+        let mut grid = Grid::new(3, 1);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "▐ ▌");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(255, 0, 0)));
+        assert_eq!(grid.cells[0][1].bg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][2].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][2].bg, Some(rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn half_block_corners_leave_the_fill_a_single_quadrant() {
+        let doc = Document::new().unwrap();
+        half_block_scene(&doc, Color::red(), Some(Color::blue()), Sides::ALL, 3, 3);
+
+        let mut grid = Grid::new(3, 3);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "▗▄▖");
+        assert_eq!(row_text(&grid, 1), "▐ ▌");
+        assert_eq!(row_text(&grid, 2), "▝▀▘");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(255, 0, 0)));
+    }
+
+    /// A node one cell tall cannot show a strip of fill between two outer halves — no glyph
+    /// does that — so the start side wins rather than the edge being dropped.
+    #[test]
+    fn opposing_half_block_edges_on_a_one_cell_extent_fall_back_to_the_start_side() {
+        let doc = Document::new().unwrap();
+        half_block_scene(
+            &doc,
+            Color::red(),
+            Some(Color::blue()),
+            Sides::new(true, false, true, false),
+            2,
+            1,
+        );
+
+        let mut grid = Grid::new(2, 1);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "▄▄");
+    }
+
+    #[test]
+    fn half_block_outer_color_overrides_what_is_painted_underneath() {
+        let doc = Document::new().unwrap();
+        let node = half_block_scene(
+            &doc,
+            Color::red(),
+            Some(Color::blue()),
+            Sides::new(true, false, false, false),
+            2,
+            2,
+        );
+
+        let mut style = Style::new();
+        style.background(Color::blue());
+        style.half_block_edges(Sides::new(true, false, false, false));
+        style.half_block_outer_color(Color::green());
+        doc.set_style(node, &style).unwrap();
+
+        let mut grid = Grid::new(2, 2);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "▄▄");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 255, 0)));
+    }
+
+    /// The edge is the node's fill ending early, so a node with no fill has nothing to end.
+    #[test]
+    fn half_block_edges_draw_nothing_without_a_fill_to_take_a_half_of() {
+        let doc = Document::new().unwrap();
+        half_block_scene(&doc, Color::red(), None, Sides::ALL, 2, 2);
+
+        let mut grid = Grid::new(2, 2);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "  ");
+        assert_eq!(row_text(&grid, 1), "  ");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn half_block_inner_color_draws_an_edge_for_a_node_with_no_background() {
+        let doc = Document::new().unwrap();
+        let node = half_block_scene(
+            &doc,
+            Color::red(),
+            None,
+            Sides::new(true, false, false, false),
+            2,
+            2,
+        );
+
+        let mut style = Style::new();
+        style.half_block_edges(Sides::new(true, false, false, false));
+        style.half_block_inner_color(Color::blue());
+        doc.set_style(node, &style).unwrap();
+
+        let mut grid = Grid::new(2, 2);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "▄▄");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(0, 0, 255)));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(255, 0, 0)));
+        // No background, so the node paints nothing below its edge.
+        assert_eq!(grid.cells[1][0].bg, Some(rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn translucent_half_block_fill_blends_against_the_color_behind_the_node() {
+        let doc = Document::new().unwrap();
+        half_block_scene(
+            &doc,
+            Color::black(),
+            Some(Color::oklcha(1.0, 0.0, 0.0, 0.5)),
+            Sides::new(true, false, false, false),
+            1,
+            2,
+        );
+
+        let mut grid = Grid::new(1, 2);
+        paint_doc(&doc, &mut grid);
+
+        // Both halves land on the page: the fill's half blends into it, the other half is it.
+        assert_eq!(row_text(&grid, 0), "▄");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(128, 128, 128)));
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 0)));
+        // And the fill below blends to the same color, so the edge reads as one surface.
+        assert_eq!(grid.cells[1][0].bg, Some(rgb(128, 128, 128)));
+    }
+
+    #[test]
+    fn node_opacity_dims_a_half_block_edge_like_any_other_paint() {
+        let doc = Document::new().unwrap();
+        let node = half_block_scene(
+            &doc,
+            Color::black(),
+            Some(Color::white()),
+            Sides::new(true, false, false, false),
+            1,
+            2,
+        );
+
+        let mut style = Style::new();
+        style.background(Color::white());
+        style.half_block_edges(Sides::new(true, false, false, false));
+        style.opacity(0.5);
+        doc.set_style(node, &style).unwrap();
+
+        let mut grid = Grid::new(1, 2);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(128, 128, 128)));
+        assert_eq!(grid.cells[1][0].bg, Some(rgb(128, 128, 128)));
+    }
+
+    #[test]
+    fn a_later_sibling_paints_over_a_half_block_edge() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        half_block_scene(
+            &doc,
+            Color::red(),
+            Some(Color::blue()),
+            Sides::new(true, false, false, false),
+            2,
+            2,
+        );
+
+        let cover = doc.create_box().unwrap();
+        doc.append_child(root, cover).unwrap();
+        set_background(&doc, cover, Color::green());
+        set_layout(
+            &doc,
+            cover,
+            LayoutRect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+        );
+
+        let mut grid = Grid::new(2, 2);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "  ");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 255, 0)));
+    }
+
+    #[test]
+    fn half_block_edges_clip_to_the_grid() {
+        let doc = Document::new().unwrap();
+        let node = half_block_scene(&doc, Color::red(), Some(Color::blue()), Sides::ALL, 2, 2);
+        set_layout(
+            &doc,
+            node,
+            LayoutRect {
+                x: -1,
+                y: -1,
+                width: 3,
+                height: 3,
+            },
+        );
+
+        let mut grid = Grid::new(2, 2);
+        paint_doc(&doc, &mut grid);
+
+        // The top and left edges are offscreen; the right and bottom ones still land.
+        assert_eq!(row_text(&grid, 0), " ▌");
+        assert_eq!(row_text(&grid, 1), "▀▘");
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(0, 0, 255)));
+    }
+
+    /// The frame-clear fast path hoists an opaque full-screen background into the grid clear
+    /// and skips painting it. A half-block edge means that background stops half a cell short
+    /// of the node's own rect — hoisting it would fill the edge cells too, and the edge would
+    /// then blend the node's color into itself and vanish.
+    #[test]
+    fn half_block_edged_background_is_not_hoisted_into_the_frame_clear() {
+        let doc = Document::new().unwrap();
+        let root = doc.root();
+        let node = doc.create_box().unwrap();
+        doc.append_child(root, node).unwrap();
+
+        let mut style = Style::new();
+        style.background(Color::blue());
+        style.half_block_edges(Sides::new(true, false, false, false));
+        doc.set_style(node, &style).unwrap();
+
+        let full = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
+        set_layout(&doc, root, full);
+        set_layout(&doc, node, full);
+
+        let mut grid = Grid::new(2, 2);
+        paint_doc_clearing(&doc, &mut grid);
+
+        assert_eq!(row_text(&grid, 0), "▄▄");
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(0, 0, 255)));
+        // Nothing was painted behind the node, so the outer half is the terminal default.
+        assert_eq!(grid.cells[0][0].bg, None);
+        assert_eq!(grid.cells[1][0].bg, Some(rgb(0, 0, 255)));
     }
 
     #[test]

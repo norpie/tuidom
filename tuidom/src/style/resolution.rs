@@ -80,6 +80,22 @@ impl Default for ResolvedStyle {
     }
 }
 
+impl ResolvedStyle {
+    /// The color filling the node's half of a half-block edge cell.
+    ///
+    /// An unset inner color follows the node's background, since the edge exists to make that
+    /// background end half a cell early. `None` means there is no fill to take a half of, and
+    /// the edge draws nothing at all.
+    pub(crate) fn half_block_inner(&self) -> Option<Color> {
+        self.half_block_inner_color.or(self.background)
+    }
+
+    /// Whether this node draws any half-block edge.
+    pub(crate) fn draws_half_block_edges(&self) -> bool {
+        self.half_block_edges.any() && self.half_block_inner().is_some()
+    }
+}
+
 /// Default style values used for unset properties.
 #[derive(Debug, Clone)]
 pub(crate) struct StyleDefaults {

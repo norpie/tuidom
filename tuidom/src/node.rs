@@ -41,6 +41,19 @@ impl LayoutRect {
             .deflate(resolved.padding)
     }
 
+    /// The rect a node's background fills: the layout rect, minus any cell a half-block edge
+    /// takes over.
+    ///
+    /// An edge cell is half fill and half the color behind the node, so the edge composes it
+    /// in one write. A plain fill would blend the node's color in a second time and paint over
+    /// the very color the outer half is there to show.
+    pub(crate) fn without_half_block_edges(self, resolved: &ResolvedStyle) -> Self {
+        if !resolved.draws_half_block_edges() {
+            return self;
+        }
+        self.deflate(resolved.half_block_edges.one_cell_insets())
+    }
+
     fn deflate(self, insets: EdgeInsets) -> Self {
         Self {
             x: self.x.saturating_add(i32::from(insets.left)),

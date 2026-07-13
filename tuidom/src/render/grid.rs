@@ -3,8 +3,17 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::style::Border;
 use crate::style::color::Rgb;
+use crate::style::{Border, Sides};
+
+/// One side of a cell's edge treatment, used to pick a half-block glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
 
 /// Text content stored in a single terminal cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -571,6 +580,124 @@ impl Grid {
         let (row, col) = (row as usize, col as usize);
         let mut text = [0u8; 4];
         self.write_glyph(row, col, glyph.encode_utf8(&mut text), 1, fg, alpha, attrs);
+        self.touch_span(row, col, col + 1);
+        1
+    }
+
+    /// Draw half-block edges on the outermost cells of `rect`, clipped to the grid.
+    ///
+    /// The node's fill (`inner`) covers only the half of each edge cell facing into the node,
+    /// so its boundary lands mid-cell. `outer` is the other half; `None` leaves whatever is
+    /// already painted there, so the edge fades into the color it sits on.
+    pub fn write_half_block_edges(
+        &mut self,
+        rect: GridRect,
+        sides: Sides,
+        inner: Rgb,
+        outer: Option<Rgb>,
+        alpha: f64,
+    ) -> usize {
+        let alpha = clamp_alpha(alpha);
+        if rect.width == 0 || rect.height == 0 || !sides.any() || alpha <= 0.0 {
+            return 0;
+        }
+
+        let left = i64::from(rect.x);
+        let top = i64::from(rect.y);
+        let right = left + i64::from(rect.width) - 1;
+        let bottom = top + i64::from(rect.height) - 1;
+
+        let mut glyphs = 0;
+        for row in top..=bottom {
+            if row == top || row == bottom {
+                for col in left..=right {
+                    glyphs += self.write_half_block_cell(
+                        sides, row, col, left, right, top, bottom, inner, outer, alpha,
+                    );
+                }
+            } else {
+                glyphs += self.write_half_block_cell(
+                    sides, row, left, left, right, top, bottom, inner, outer, alpha,
+                );
+                if right != left {
+                    glyphs += self.write_half_block_cell(
+                        sides, row, right, left, right, top, bottom, inner, outer, alpha,
+                    );
+                }
+            }
+        }
+        glyphs
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_half_block_cell(
+        &mut self,
+        sides: Sides,
+        row: i64,
+        col: i64,
+        left: i64,
+        right: i64,
+        top: i64,
+        bottom: i64,
+        inner: Rgb,
+        outer: Option<Rgb>,
+        alpha: f64,
+    ) -> usize {
+        // Opposing sides can land on the same cell when the node is one cell wide or tall, and
+        // no glyph leaves a strip of fill between two outer halves. The start side wins.
+        let vertical = if row == top && sides.top {
+            Some(Side::Top)
+        } else if row == bottom && sides.bottom {
+            Some(Side::Bottom)
+        } else {
+            None
+        };
+        let horizontal = if col == left && sides.left {
+            Some(Side::Left)
+        } else if col == right && sides.right {
+            Some(Side::Right)
+        } else {
+            None
+        };
+
+        // Where two edges meet, the fill is left with a single quadrant of the cell.
+        let glyph = match (vertical, horizontal) {
+            (Some(Side::Top), Some(Side::Left)) => '▗',
+            (Some(Side::Top), Some(Side::Right)) => '▖',
+            (Some(Side::Bottom), Some(Side::Left)) => '▝',
+            (Some(Side::Bottom), Some(Side::Right)) => '▘',
+            (Some(Side::Top), None) => '▄',
+            (Some(Side::Bottom), None) => '▀',
+            (None, Some(Side::Left)) => '▐',
+            (None, Some(Side::Right)) => '▌',
+            _ => return 0,
+        };
+
+        if row < 0 || row >= i64::from(self.height) || col < 0 || col >= i64::from(self.width) {
+            return 0;
+        }
+
+        let (row, col) = (row as usize, col as usize);
+        self.clear_text_span_at(row, col);
+
+        // The half-block replaces the cell's content, so both of its halves sit directly on the
+        // background that was painted underneath — never on the fg of a glyph that is now gone.
+        let under = self.cells[row][col].bg;
+        let mut text = [0u8; 4];
+        self.cells[row][col] = Cell {
+            content: CellContent::Glyph {
+                text: glyph.encode_utf8(&mut text).to_string(),
+                width: 1,
+            },
+            fg: blend_fg(under, Some(inner), alpha, under),
+            bg: match outer {
+                Some(outer) => blend_color(under, Some(outer), alpha),
+                None => under,
+            },
+            // No attributes: a half block is fill, not text. Bolding or italicizing it would
+            // distort the shape the effect depends on.
+            attrs: CellAttrs::default(),
+        };
         self.touch_span(row, col, col + 1);
         1
     }

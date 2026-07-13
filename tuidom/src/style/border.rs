@@ -141,6 +141,19 @@ impl Sides {
     pub const fn any(self) -> bool {
         self.top || self.right || self.bottom || self.left
     }
+
+    /// One cell on each drawn side.
+    ///
+    /// Plain arithmetic, not a statement about space: what a side costs is the edge treatment's
+    /// business, and a half-block edge costs nothing.
+    pub(crate) const fn one_cell_insets(self) -> EdgeInsets {
+        EdgeInsets::new(
+            self.top as u16,
+            self.right as u16,
+            self.bottom as u16,
+            self.left as u16,
+        )
+    }
 }
 
 /// A node's border: one charset, plus which sides it is drawn on.
@@ -193,11 +206,6 @@ impl Border {
     /// belongs to the border rather than to [`Sides`], because a half-block edge is drawn on
     /// sides too and takes no space at all.
     pub(crate) const fn insets(self) -> EdgeInsets {
-        EdgeInsets::new(
-            self.sides.top as u16,
-            self.sides.right as u16,
-            self.sides.bottom as u16,
-            self.sides.left as u16,
-        )
+        self.sides.one_cell_insets()
     }
 }
