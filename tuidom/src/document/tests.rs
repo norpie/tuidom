@@ -15,7 +15,7 @@ use crate::node::{LayoutRect, NodeKindView};
 use crate::performance::PerformanceDetail;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
-    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Position, Sides, Style,
+    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Position, ResolvedColor, Sides, Style,
 };
 
 #[test]
@@ -389,19 +389,19 @@ fn active_style_merges_over_focus_style_while_pressed() {
     doc.focus(node).unwrap();
     assert_eq!(
         doc.resolved_style(node).unwrap().background,
-        Some(Color::yellow())
+        Some(ResolvedColor::yellow())
     );
 
     // Active merges on top of focus, and only overrides what it sets.
     doc.set_active(node, true).unwrap();
     let pressed = doc.resolved_style(node).unwrap();
-    assert_eq!(pressed.background, Some(Color::red()));
-    assert_eq!(pressed.color, Color::white());
+    assert_eq!(pressed.background, Some(ResolvedColor::red()));
+    assert_eq!(pressed.color, ResolvedColor::white());
 
     doc.set_active(node, false).unwrap();
     assert_eq!(
         doc.resolved_style(node).unwrap().background,
-        Some(Color::yellow())
+        Some(ResolvedColor::yellow())
     );
 }
 
@@ -552,13 +552,16 @@ fn disabled_style_merges_over_focus_and_active_styles() {
     doc.set_disabled_style(node, &disabled_style).unwrap();
 
     doc.focus(node).unwrap();
-    assert_eq!(doc.resolved_style(node).unwrap().color, Color::white());
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::white()
+    );
 
     // Disabling blurs the node, so the focus style drops and the disabled style applies.
     doc.set_disabled(node, true).unwrap();
     let disabled = doc.resolved_style(node).unwrap();
-    assert_eq!(disabled.color, Color::black());
-    assert_eq!(disabled.background, Some(Color::blue()));
+    assert_eq!(disabled.color, ResolvedColor::black());
+    assert_eq!(disabled.background, Some(ResolvedColor::blue()));
 }
 
 #[test]
@@ -577,11 +580,17 @@ fn descendant_disabled_style_applies_through_a_disabled_ancestor() {
     disabled_style.color(Color::black());
     doc.set_disabled_style(child, &disabled_style).unwrap();
 
-    assert_eq!(doc.resolved_style(child).unwrap().color, Color::white());
+    assert_eq!(
+        doc.resolved_style(child).unwrap().color,
+        ResolvedColor::white()
+    );
 
     // The child defines its own disabled style, so disabling the panel restyles it.
     doc.set_disabled(panel, true).unwrap();
-    assert_eq!(doc.resolved_style(child).unwrap().color, Color::black());
+    assert_eq!(
+        doc.resolved_style(child).unwrap().color,
+        ResolvedColor::black()
+    );
 }
 
 #[test]
@@ -692,7 +701,7 @@ fn focus_style_recolors_a_border_without_respecifying_it() {
     doc.focus(node).unwrap();
 
     let focused = doc.resolved_style(node).unwrap();
-    assert_eq!(focused.border_color, Some(Color::red()));
+    assert_eq!(focused.border_color, Some(ResolvedColor::red()));
     assert_eq!(focused.border.charset, BorderCharset::rounded());
     assert_eq!(focused.border.sides, Sides::new(true, false, true, false));
 }
@@ -757,7 +766,7 @@ fn focus_style_recolors_a_half_block_edge_without_respecifying_the_sides() {
     doc.focus(node).unwrap();
 
     let focused = doc.resolved_style(node).unwrap();
-    assert_eq!(focused.half_block_inner_color, Some(Color::red()));
+    assert_eq!(focused.half_block_inner_color, Some(ResolvedColor::red()));
     assert_eq!(
         focused.half_block_edges,
         Sides::new(true, false, true, false)
@@ -864,7 +873,7 @@ fn border_color_follows_the_foreground_until_it_is_set() {
     );
     assert_eq!(
         runtime.document().resolved_style(node).unwrap().color,
-        Color::red()
+        ResolvedColor::red()
     );
 }
 
@@ -1969,19 +1978,22 @@ fn focus_style_merges_into_focused_node_style() {
     focus.background(Color::green());
     doc.set_focus_style(node, &focus).unwrap();
 
-    assert_eq!(doc.resolved_style(node).unwrap().color, Color::blue());
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::blue()
+    );
     assert_eq!(doc.resolved_style(node).unwrap().background, None);
 
     doc.focus(node).unwrap();
     let focused = doc.resolved_style(node).unwrap();
     assert_eq!(focused.width, Length::Pixels(1));
     assert_eq!(focused.height, Length::Pixels(1));
-    assert_eq!(focused.color, Color::red());
-    assert_eq!(focused.background, Some(Color::green()));
+    assert_eq!(focused.color, ResolvedColor::red());
+    assert_eq!(focused.background, Some(ResolvedColor::green()));
 
     doc.clear_focus_style(node).unwrap();
     let cleared = doc.resolved_style(node).unwrap();
-    assert_eq!(cleared.color, Color::blue());
+    assert_eq!(cleared.color, ResolvedColor::blue());
     assert_eq!(cleared.background, None);
 }
 
@@ -2980,7 +2992,7 @@ fn set_style_gets_resolved() {
     assert_eq!(resolved.align_self, Some(AlignSelf::Center));
     assert_eq!(resolved.align_content, AlignContent::Center);
     assert_eq!(resolved.opacity, 1.0); // Inherit → default
-    assert_eq!(resolved.color, Color::white()); // Inherit → default
+    assert_eq!(resolved.color, ResolvedColor::white()); // Inherit → default
 }
 
 #[test]
@@ -3081,7 +3093,7 @@ fn unset_properties_use_defaults_not_parent_values() {
     doc.append_child(parent, child).unwrap();
 
     let child_resolved = doc.resolved_style(child).unwrap();
-    assert_eq!(child_resolved.color, Color::white());
+    assert_eq!(child_resolved.color, ResolvedColor::white());
     assert_eq!(child_resolved.width, Length::Auto);
     assert_eq!(child_resolved.padding, EdgeInsets::ZERO);
     assert_eq!(child_resolved.margin, EdgeInsets::ZERO);
@@ -3131,7 +3143,7 @@ fn explicitly_inherits_from_parent() {
     doc.append_child(parent, child).unwrap();
 
     let child_resolved = doc.resolved_style(child).unwrap();
-    assert_eq!(child_resolved.color, Color::red());
+    assert_eq!(child_resolved.color, ResolvedColor::red());
     assert_eq!(child_resolved.padding, EdgeInsets::all(2));
     assert_eq!(child_resolved.margin, EdgeInsets::new(1, 2, 3, 4));
     assert_eq!(child_resolved.flex_direction, FlexDirection::Column);
@@ -3161,7 +3173,7 @@ fn override_breaks_inheritance() {
     doc.append_child(parent, child).unwrap();
 
     let child_resolved = doc.resolved_style(child).unwrap();
-    assert_eq!(child_resolved.color, Color::blue()); // Override wins
+    assert_eq!(child_resolved.color, ResolvedColor::blue()); // Override wins
 }
 
 #[test]
@@ -3184,11 +3196,17 @@ fn move_child_triggers_re_resolve() {
     doc.set_style(child, &child_style).unwrap();
     doc.append_child(parent_red, child).unwrap();
 
-    assert_eq!(doc.resolved_style(child).unwrap().color, Color::red());
+    assert_eq!(
+        doc.resolved_style(child).unwrap().color,
+        ResolvedColor::red()
+    );
 
     // Move to blue parent
     doc.move_child(parent_blue, child, child).unwrap();
-    assert_eq!(doc.resolved_style(child).unwrap().color, Color::blue());
+    assert_eq!(
+        doc.resolved_style(child).unwrap().color,
+        ResolvedColor::blue()
+    );
 }
 
 fn stacking_context_box(doc: &Document) -> NodeId {
@@ -3639,7 +3657,10 @@ fn inert_nodes_do_not_merge_the_disabled_style() {
     // own appearance rather than looking disabled.
     assert!(doc.is_inert(background).unwrap());
     assert_eq!(doc.resolved_style(background).unwrap().color, before);
-    assert_ne!(doc.resolved_style(background).unwrap().color, Color::red());
+    assert_ne!(
+        doc.resolved_style(background).unwrap().color,
+        ResolvedColor::red()
+    );
 }
 
 #[test]

@@ -15,7 +15,7 @@ use crate::performance::{LargestFillProfile, PaintProfile};
 use crate::render::RenderCursor;
 use crate::render::grid::{Cell, CellAttrs, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
-use crate::style::{Color, CursorShape};
+use crate::style::{CursorShape, ResolvedColor};
 
 /// Base cell state used to clear a frame before painting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -439,7 +439,7 @@ fn node_kind_label(kind: &NodeKindView) -> &'static str {
     }
 }
 
-fn resolve_rgb(rgb_cache: &mut RgbCache, color: Color, profile: &mut PaintProfile) -> Rgb {
+fn resolve_rgb(rgb_cache: &mut RgbCache, color: ResolvedColor, profile: &mut PaintProfile) -> Rgb {
     let resolve_start = profile.enabled.then(Instant::now);
     let rgb = rgb_cache.resolve(color);
     if let Some(start) = resolve_start {

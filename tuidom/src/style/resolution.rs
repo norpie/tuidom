@@ -6,7 +6,8 @@
 use crate::node::NodeData;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, Color, CursorShape, Display, EdgeInsets,
-    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, Sides, Style, StyleValue,
+    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, ResolvedColor, Sides,
+    Style, StyleValue,
 };
 
 /// Fully resolved style — no [`StyleValue`] placeholders remain.
@@ -23,21 +24,21 @@ pub struct ResolvedStyle {
     /// Resolved border charset and drawn sides.
     pub border: Border,
     /// Resolved border color. `None` means the border follows this node's resolved `color`.
-    pub border_color: Option<Color>,
+    pub border_color: Option<ResolvedColor>,
     /// Resolved sides drawn as a half-block edge.
     pub half_block_edges: Sides,
     /// Resolved half-block inner color. `None` means it follows this node's `background`.
-    pub half_block_inner_color: Option<Color>,
+    pub half_block_inner_color: Option<ResolvedColor>,
     /// Resolved half-block outer color. `None` means the outer half keeps what is painted there.
-    pub half_block_outer_color: Option<Color>,
+    pub half_block_outer_color: Option<ResolvedColor>,
     /// Resolved display mode.
     pub display: Display,
     /// Resolved opacity (0–1).
     pub opacity: f64,
     /// Resolved foreground text color.
-    pub color: Color,
+    pub color: ResolvedColor,
     /// Resolved background color. `None` means transparent (terminal default shows through).
-    pub background: Option<Color>,
+    pub background: Option<ResolvedColor>,
     /// Resolved main-axis direction.
     pub flex_direction: FlexDirection,
     /// Resolved initial main-axis size for flex items.
@@ -86,7 +87,7 @@ impl ResolvedStyle {
     /// An unset inner color follows the node's background, since the edge exists to make that
     /// background end half a cell early. `None` means there is no fill to take a half of, and
     /// the edge draws nothing at all.
-    pub(crate) fn half_block_inner(&self) -> Option<Color> {
+    pub(crate) fn half_block_inner(&self) -> Option<ResolvedColor> {
         self.half_block_inner_color.or(self.background)
     }
 
@@ -104,14 +105,14 @@ pub(crate) struct StyleDefaults {
     padding: EdgeInsets,
     margin: EdgeInsets,
     border: Border,
-    border_color: Option<Color>,
+    border_color: Option<ResolvedColor>,
     half_block_edges: Sides,
-    half_block_inner_color: Option<Color>,
-    half_block_outer_color: Option<Color>,
+    half_block_inner_color: Option<ResolvedColor>,
+    half_block_outer_color: Option<ResolvedColor>,
     display: Display,
     opacity: f64,
-    color: Color,
-    background: Option<Color>,
+    color: ResolvedColor,
+    background: Option<ResolvedColor>,
     flex_direction: FlexDirection,
     flex_basis: Length,
     flex_grow: f32,
@@ -145,7 +146,7 @@ impl Default for StyleDefaults {
             half_block_outer_color: None,
             display: Display::Flex,
             opacity: 1.0,
-            color: Color::white(),
+            color: ResolvedColor::white(),
             background: None,
             flex_direction: FlexDirection::Row,
             flex_basis: Length::Auto,
@@ -280,7 +281,7 @@ impl ResolvedStyle {
                 parent.map(|p| &p.opacity),
                 &defaults.opacity,
             ),
-            color: resolve(&data.style.color, parent.map(|p| &p.color), &defaults.color),
+            color: resolve_color(&data.style.color, parent.map(|p| p.color), defaults.color),
             background: resolve_opt(
                 &data.style.background,
                 parent.and_then(|p| p.background),
@@ -438,11 +439,11 @@ impl ResolvedStyle {
             parent.map(|p| &p.opacity),
             &defaults.opacity,
         );
-        apply_override(
+        apply_color_override(
             &mut self.color,
             &style.color,
-            parent.map(|p| &p.color),
-            &defaults.color,
+            parent.map(|p| p.color),
+            defaults.color,
         );
         apply_opt_override(
             &mut self.background,
@@ -564,19 +565,34 @@ fn resolve<T: Clone>(value: &StyleValue<T>, parent: Option<&T>, default: &T) -> 
     }
 }
 
-/// Resolve a [`StyleValue<Color>`] to `Option<Color>`.
+/// Resolve an optional [`StyleValue<Color>`] to a concrete color.
 ///
-/// `Set(Color)` → `Some(Color)`. `Inherit` uses the parent's value or the
-/// default if there is no parent. `Unset` always uses the default value.
+/// `Set(expr)` evaluates the expression; an expression that names a variable nothing defines is
+/// unresolvable and falls back to the default, so a typo'd name fails visibly rather than
+/// half-applying a derivation. `Inherit` uses the parent's value or the default if there is no
+/// parent. `Unset` always uses the default value.
 fn resolve_opt(
     value: &StyleValue<Color>,
-    parent: Option<Color>,
-    default: Option<Color>,
-) -> Option<Color> {
+    parent: Option<ResolvedColor>,
+    default: Option<ResolvedColor>,
+) -> Option<ResolvedColor> {
     match value {
         StyleValue::Unset => default,
         StyleValue::Inherit => parent.or(default),
-        StyleValue::Set(v) => Some(*v),
+        StyleValue::Set(v) => v.eval().or(default),
+    }
+}
+
+/// Resolve a required [`StyleValue<Color>`] to a concrete color.
+fn resolve_color(
+    value: &StyleValue<Color>,
+    parent: Option<ResolvedColor>,
+    default: ResolvedColor,
+) -> ResolvedColor {
+    match value {
+        StyleValue::Unset => default,
+        StyleValue::Inherit => parent.unwrap_or(default),
+        StyleValue::Set(v) => v.eval().unwrap_or(default),
     }
 }
 
@@ -606,15 +622,28 @@ fn apply_override<T: Clone>(
 }
 
 fn apply_opt_override(
-    target: &mut Option<Color>,
+    target: &mut Option<ResolvedColor>,
     value: &StyleValue<Color>,
-    parent: Option<Color>,
-    default: Option<Color>,
+    parent: Option<ResolvedColor>,
+    default: Option<ResolvedColor>,
 ) {
     match value {
         StyleValue::Unset => {}
         StyleValue::Inherit => *target = parent.or(default),
-        StyleValue::Set(v) => *target = Some(*v),
+        StyleValue::Set(v) => *target = v.eval().or(default),
+    }
+}
+
+fn apply_color_override(
+    target: &mut ResolvedColor,
+    value: &StyleValue<Color>,
+    parent: Option<ResolvedColor>,
+    default: ResolvedColor,
+) {
+    match value {
+        StyleValue::Unset => {}
+        StyleValue::Inherit => *target = parent.unwrap_or(default),
+        StyleValue::Set(v) => *target = v.eval().unwrap_or(default),
     }
 }
 

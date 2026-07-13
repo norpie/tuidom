@@ -8,7 +8,7 @@ pub(crate) mod resolution;
 use std::collections::HashMap;
 
 pub use border::{Border, BorderCharset, Sides};
-pub use color::Color;
+pub use color::{Color, ResolvedColor};
 
 // ---------------------------------------------------------------------------
 // StyleValue — explicit inheritance control
