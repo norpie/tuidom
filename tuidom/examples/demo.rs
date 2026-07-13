@@ -1,8 +1,8 @@
 //! Smoke test exercising the full pipeline:
 //! Box + Text/Input rendering, keyboard events, focus, focus styles,
 //! configurable focus keys, targeted mouse events, bubbling, stop_propagation,
-//! wheel events, borders, terminal text attributes, transitions, and the
-//! performance metrics API.
+//! wheel events, borders, half-block edges, terminal text attributes,
+//! transitions, and the performance metrics API.
 //!
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Focus the "focus me" panel — its border recolors, charset and sides untouched
@@ -327,6 +327,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     separator_style.border_color(Color::oklch(0.5, 0.02, 260.0));
     doc.set_style(separator, &separator_style)?;
 
+    // A terminal cell is about twice as tall as it is wide, so one cell of vertical padding
+    // reads as two cells of horizontal padding. Half-block edges end the fill halfway into its
+    // own outermost row, which is what balances the two. Both panels below have the same fill
+    // and the same padding — only the second one ends on a half cell.
+    let half_block_label = doc.create_text("Half-block edges")?;
+    doc.set_style(half_block_label, &section_label_style)?;
+
+    let half_block_row = doc.create_box()?;
+    doc.set_style(half_block_row, &row_style)?;
+
+    let mut chip_style = Style::new();
+    chip_style.width(Length::Auto);
+    chip_style.height(Length::Auto);
+    chip_style.padding(EdgeInsets::symmetric(2, 1));
+    chip_style.background(Color::oklch(0.45, 0.13, 250.0));
+
+    for (name, edges) in [
+        ("squared", Sides::NONE),
+        ("half-block", Sides::new(true, false, true, false)),
+    ] {
+        let chip = doc.create_box()?;
+        let mut style = chip_style.clone();
+        style.half_block_edges(edges);
+        doc.set_style(chip, &style)?;
+
+        let chip_label = doc.create_text(name)?;
+        doc.set_style(chip_label, &label_style)?;
+        doc.append_child(chip, chip_label)?;
+        doc.append_child(half_block_row, chip)?;
+    }
+
     let attrs_label = doc.create_text("Text attributes")?;
     doc.set_style(attrs_label, &section_label_style)?;
 
@@ -357,6 +388,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, separator)?;
     doc.append_child(stack, border_label)?;
     doc.append_child(stack, border_row)?;
+    doc.append_child(stack, half_block_label)?;
+    doc.append_child(stack, half_block_row)?;
     doc.append_child(stack, attrs_label)?;
     doc.append_child(stack, attrs_row)?;
 
