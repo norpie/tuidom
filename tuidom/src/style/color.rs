@@ -247,6 +247,11 @@ pub enum Color {
     Literal(ResolvedColor),
     /// A named color variable, resolved from the node's inherited variable scope.
     Var(String),
+    /// The background the node sits on — its own if it has one, otherwise the nearest ancestor's,
+    /// falling back to the document's declared terminal background.
+    CurrentBg,
+    /// The node's own resolved foreground color.
+    CurrentFg,
     /// Another color with an operation applied to it.
     Derived {
         /// The color the operation applies to.
@@ -264,6 +269,10 @@ pub enum Color {
 pub(crate) struct ColorContext<'a> {
     /// The variables in scope, inherited from ancestors and the document.
     pub vars: &'a HashMap<String, ResolvedColor>,
+    /// What [`Color::CurrentBg`] resolves to here.
+    pub current_bg: ResolvedColor,
+    /// What [`Color::CurrentFg`] resolves to here.
+    pub current_fg: ResolvedColor,
 }
 
 impl Color {
@@ -384,6 +393,8 @@ impl Color {
         match self {
             Self::Literal(color) => Some(*color),
             Self::Var(name) => ctx.vars.get(name).copied(),
+            Self::CurrentBg => Some(ctx.current_bg),
+            Self::CurrentFg => Some(ctx.current_fg),
             Self::Derived { base, op } => op.apply(base.eval(ctx)?, ctx),
         }
     }
@@ -519,7 +530,11 @@ mod tests {
     }
 
     fn eval_in(color: &Color, vars: &HashMap<String, ResolvedColor>) -> Option<ResolvedColor> {
-        color.eval(&ColorContext { vars })
+        color.eval(&ColorContext {
+            vars,
+            current_bg: ResolvedColor::black(),
+            current_fg: ResolvedColor::white(),
+        })
     }
 
     fn eval(color: Color) -> ResolvedColor {

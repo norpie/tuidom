@@ -3935,3 +3935,206 @@ fn a_pseudo_state_style_can_reference_a_variable() {
         Some(ResolvedColor::blue())
     );
 }
+
+// ---------------------------------------------------------------------------
+// CurrentBg / CurrentFg
+// ---------------------------------------------------------------------------
+
+#[test]
+fn current_fg_resolves_to_the_nodes_own_color() {
+    let doc = Document::new().unwrap();
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color(Color::red());
+    style.border_color(Color::CurrentFg);
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().border_color,
+        Some(ResolvedColor::red())
+    );
+}
+
+#[test]
+fn current_bg_in_color_resolves_to_the_nodes_own_background() {
+    // A foreground derived from the background it sits on is the point of the feature, so `color`
+    // sees this node's background rather than the parent's.
+    let doc = Document::new().unwrap();
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.background(Color::oklch(0.5, 0.1, 180.0));
+    style.color(Color::CurrentBg.lighten(0.25));
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::oklch(0.75, 0.1, 180.0)
+    );
+}
+
+#[test]
+fn current_bg_in_background_resolves_to_the_parents_background() {
+    // Self-reference is circular, so in `background` itself the reference means the background the
+    // node would otherwise have sat on.
+    let doc = Document::new().unwrap();
+
+    let parent = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    let mut parent_style = Style::new();
+    parent_style.background(Color::oklch(0.5, 0.1, 180.0));
+    doc.set_style(parent, &parent_style).unwrap();
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(parent, child).unwrap();
+    let mut child_style = Style::new();
+    child_style.background(Color::CurrentBg.lighten(0.25));
+    doc.set_style(child, &child_style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(child).unwrap().background,
+        Some(ResolvedColor::oklch(0.75, 0.1, 180.0))
+    );
+}
+
+#[test]
+fn current_bg_sees_through_transparent_ancestors() {
+    let doc = Document::new().unwrap();
+
+    let painted = doc.create_box().unwrap();
+    doc.append_child(doc.root(), painted).unwrap();
+    let mut painted_style = Style::new();
+    painted_style.background(Color::oklch(0.5, 0.1, 180.0));
+    doc.set_style(painted, &painted_style).unwrap();
+
+    // No background of its own — it shows the painted ancestor.
+    let transparent = doc.create_box().unwrap();
+    doc.append_child(painted, transparent).unwrap();
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(transparent, child).unwrap();
+    let mut child_style = Style::new();
+    child_style.color(Color::CurrentBg.lighten(0.25));
+    doc.set_style(child, &child_style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(child).unwrap().color,
+        ResolvedColor::oklch(0.75, 0.1, 180.0)
+    );
+}
+
+#[test]
+fn current_bg_falls_back_to_the_declared_terminal_background() {
+    let doc = Document::new().unwrap();
+    doc.set_terminal_background(Color::oklch(0.25, 0.05, 250.0));
+
+    // Nothing in this node's ancestry paints a background.
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color(Color::CurrentBg);
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::oklch(0.25, 0.05, 250.0)
+    );
+}
+
+#[test]
+fn changing_the_terminal_background_re_resolves_the_tree() {
+    let doc = Document::new().unwrap();
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color(Color::CurrentBg);
+    doc.set_style(node, &style).unwrap();
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::black()
+    );
+
+    doc.set_terminal_background(Color::red());
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::red()
+    );
+}
+
+#[test]
+fn a_color_variable_can_derive_from_the_terminal_background() {
+    let doc = Document::new().unwrap();
+    doc.set_terminal_background(Color::oklch(0.25, 0.05, 250.0));
+    doc.set_color_var("--surface", Color::CurrentBg.lighten(0.25));
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.background(Color::var("--surface"));
+    doc.set_style(node, &style).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(node).unwrap().background,
+        Some(ResolvedColor::oklch(0.5, 0.05, 250.0))
+    );
+}
+
+#[test]
+fn a_pseudo_style_background_is_what_its_other_colors_derive_from() {
+    // A focus style that changes the background must have its own `CurrentBg` colors resolve
+    // against that new background, not the one it replaced.
+    let doc = Document::new().unwrap();
+
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    let mut base = Style::new();
+    base.background(Color::black());
+    doc.set_style(node, &base).unwrap();
+
+    let mut focus_style = Style::new();
+    focus_style.background(Color::oklch(0.5, 0.1, 180.0));
+    focus_style.color(Color::CurrentBg.lighten(0.25));
+    doc.set_focus_style(node, &focus_style).unwrap();
+
+    doc.focus(node).unwrap();
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::oklch(0.75, 0.1, 180.0)
+    );
+}
+
+#[test]
+fn effective_background_is_reported_on_the_resolved_style() {
+    let doc = Document::new().unwrap();
+    doc.set_terminal_background(Color::blue());
+
+    let painted = doc.create_box().unwrap();
+    doc.append_child(doc.root(), painted).unwrap();
+    let mut painted_style = Style::new();
+    painted_style.background(Color::red());
+    doc.set_style(painted, &painted_style).unwrap();
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(painted, child).unwrap();
+
+    let bare = doc.create_box().unwrap();
+    doc.append_child(doc.root(), bare).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(painted).unwrap().effective_background,
+        ResolvedColor::red()
+    );
+    assert_eq!(
+        doc.resolved_style(child).unwrap().effective_background,
+        ResolvedColor::red()
+    );
+    assert_eq!(
+        doc.resolved_style(bare).unwrap().effective_background,
+        ResolvedColor::blue()
+    );
+}

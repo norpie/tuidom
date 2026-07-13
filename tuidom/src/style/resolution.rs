@@ -46,6 +46,12 @@ pub struct ResolvedStyle {
     pub color: ResolvedColor,
     /// Resolved background color. `None` means transparent (terminal default shows through).
     pub background: Option<ResolvedColor>,
+    /// The background this node visually sits on: its own if it has one, otherwise the nearest
+    /// ancestor's, falling back to the document's declared terminal background.
+    ///
+    /// This is what [`Color::CurrentBg`] resolves to. It is never `None` — a node deriving a color
+    /// from the background it sits on needs an answer even when nothing in its ancestry paints one.
+    pub effective_background: ResolvedColor,
     /// Resolved main-axis direction.
     pub flex_direction: FlexDirection,
     /// Resolved initial main-axis size for flex items.
@@ -145,6 +151,9 @@ pub(crate) struct StyleDefaults {
     /// The document's color variables. Only the root reads these — every other node inherits its
     /// scope from its parent.
     color_vars: ColorScope,
+    /// The document's declared terminal background. Only the root reads it — every other node
+    /// inherits an effective background from its parent.
+    terminal_background: ResolvedColor,
 }
 
 impl Default for StyleDefaults {
@@ -181,6 +190,7 @@ impl Default for StyleDefaults {
             underline: false,
             cursor_shape: CursorShape::Block,
             color_vars: ColorScope::default(),
+            terminal_background: ResolvedColor::black(),
         }
     }
 }
@@ -188,12 +198,14 @@ impl Default for StyleDefaults {
 impl StyleDefaults {
     /// Defaults used by the permanent document root when a property is unset.
     ///
-    /// The document's color variables are the root of the variable scope chain.
-    pub(crate) fn root(color_vars: ColorScope) -> Self {
+    /// The document's color variables are the root of the variable scope chain, and its declared
+    /// terminal background is the root of the effective-background chain.
+    pub(crate) fn root(color_vars: ColorScope, terminal_background: ResolvedColor) -> Self {
         Self {
             width: Length::Percent(100.0),
             height: Length::Percent(100.0),
             color_vars,
+            terminal_background,
             ..Self::default()
         }
     }
@@ -231,6 +243,7 @@ impl StyleDefaults {
             underline: self.underline,
             cursor_shape: self.cursor_shape,
             color_vars: self.color_vars.clone(),
+            effective_background: self.background.unwrap_or(self.terminal_background),
         }
     }
 }
@@ -249,11 +262,52 @@ impl ResolvedStyle {
         parent: Option<&ResolvedStyle>,
         defaults: &StyleDefaults,
     ) -> Self {
-        let color_vars = resolve_color_vars(data, parent, defaults);
-        let ctx = ColorContext { vars: &color_vars };
+        // Colors resolve in a fixed order, because `CurrentBg` and `CurrentFg` are self-referential
+        // in the two properties they are defined from. In `background`, and in a variable
+        // declaration, they mean the *parent's* values — the only reading that is not circular.
+        // From `color` on, they mean this node's own.
+        let inherited_bg = parent.map_or(defaults.terminal_background, |p| p.effective_background);
+        let inherited_fg = parent.map_or(defaults.color, |p| p.color);
+
+        let color_vars = resolve_color_vars(data, parent, defaults, inherited_bg, inherited_fg);
+        let parent_ctx = ColorContext {
+            vars: &color_vars,
+            current_bg: inherited_bg,
+            current_fg: inherited_fg,
+        };
+
+        let background = resolve_opt(
+            &data.style.background,
+            parent.and_then(|p| p.background),
+            defaults.background,
+            &parent_ctx,
+        );
+
+        // What the node visually sits on: its own background, or whatever shows through.
+        let effective_background = background.unwrap_or(inherited_bg);
+
+        let color = resolve_color(
+            &data.style.color,
+            parent.map(|p| p.color),
+            defaults.color,
+            &ColorContext {
+                current_bg: effective_background,
+                ..parent_ctx
+            },
+        );
+
+        // Every remaining color property sees this node's own resolved colors.
+        let ctx = ColorContext {
+            vars: &color_vars,
+            current_bg: effective_background,
+            current_fg: color,
+        };
 
         Self {
             color_vars: color_vars.clone(),
+            background,
+            effective_background,
+            color,
             width: resolve(&data.style.width, parent.map(|p| &p.width), &defaults.width),
             height: resolve(
                 &data.style.height,
@@ -307,18 +361,6 @@ impl ResolvedStyle {
                 &data.style.opacity,
                 parent.map(|p| &p.opacity),
                 &defaults.opacity,
-            ),
-            color: resolve_color(
-                &data.style.color,
-                parent.map(|p| p.color),
-                defaults.color,
-                &ctx,
-            ),
-            background: resolve_opt(
-                &data.style.background,
-                parent.and_then(|p| p.background),
-                defaults.background,
-                &ctx,
             ),
             flex_direction: resolve(
                 &data.style.flex_direction,
@@ -412,7 +454,42 @@ impl ResolvedStyle {
         defaults: &StyleDefaults,
     ) {
         let color_vars = self.color_vars.clone();
-        let ctx = ColorContext { vars: &color_vars };
+        let inherited_bg = parent.map_or(defaults.terminal_background, |p| p.effective_background);
+        let inherited_fg = parent.map_or(defaults.color, |p| p.color);
+
+        // Background, then color, then the rest — the order a fresh resolve uses. An override that
+        // changes the background changes what `CurrentBg` means for every color after it, so
+        // merging in field order would resolve some of them against colors this style replaced.
+        apply_opt_override(
+            &mut self.background,
+            &style.background,
+            parent.and_then(|p| p.background),
+            defaults.background,
+            &ColorContext {
+                vars: &color_vars,
+                current_bg: inherited_bg,
+                current_fg: inherited_fg,
+            },
+        );
+        self.effective_background = self.background.unwrap_or(inherited_bg);
+
+        apply_color_override(
+            &mut self.color,
+            &style.color,
+            parent.map(|p| p.color),
+            defaults.color,
+            &ColorContext {
+                vars: &color_vars,
+                current_bg: self.effective_background,
+                current_fg: inherited_fg,
+            },
+        );
+
+        let ctx = ColorContext {
+            vars: &color_vars,
+            current_bg: self.effective_background,
+            current_fg: self.color,
+        };
 
         apply_override(
             &mut self.width,
@@ -482,20 +559,6 @@ impl ResolvedStyle {
             &style.opacity,
             parent.map(|p| &p.opacity),
             &defaults.opacity,
-        );
-        apply_color_override(
-            &mut self.color,
-            &style.color,
-            parent.map(|p| p.color),
-            defaults.color,
-            &ctx,
-        );
-        apply_opt_override(
-            &mut self.background,
-            &style.background,
-            parent.and_then(|p| p.background),
-            defaults.background,
-            &ctx,
         );
         apply_override(
             &mut self.flex_direction,
@@ -655,6 +718,8 @@ fn resolve_color_vars(
     data: &NodeData,
     parent: Option<&ResolvedStyle>,
     defaults: &StyleDefaults,
+    inherited_bg: ResolvedColor,
+    inherited_fg: ResolvedColor,
 ) -> ColorScope {
     // The document's variables are the root of the chain; every other node inherits its parent's.
     let inherited = match parent {
@@ -666,7 +731,11 @@ fn resolve_color_vars(
         return inherited.clone();
     }
 
-    let parent_ctx = ColorContext { vars: inherited };
+    let parent_ctx = ColorContext {
+        vars: inherited,
+        current_bg: inherited_bg,
+        current_fg: inherited_fg,
+    };
     let mut scope = (**inherited).clone();
     for (name, expr) in &data.style.color_vars {
         match expr.eval(&parent_ctx) {

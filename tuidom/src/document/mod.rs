@@ -17,6 +17,7 @@ use crate::layout::LayoutEngine;
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
 use crate::performance::{PerformanceDetail, PerformanceSnapshot, PerformanceState, RenderMetrics};
+use crate::style::Color;
 
 mod attrs;
 mod events;
@@ -91,6 +92,7 @@ impl Document {
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
                 color_vars: Mutex::new(HashMap::new()),
+                terminal_background: Mutex::new(Color::black()),
             }),
         };
         document.register_layout_node(root)?;

@@ -216,6 +216,13 @@ pub(crate) struct DocumentInner {
 
     /// Color variables declared on the document — the root of every node's variable scope.
     pub color_vars: Mutex<HashMap<String, Color>>,
+
+    /// The terminal background color the document assumes.
+    ///
+    /// The real one is unknowable without querying the terminal, so it is declared rather than
+    /// detected. It is an assumption used for resolving colors and blending translucent ones —
+    /// never a color that gets painted.
+    pub terminal_background: Mutex<Color>,
 }
 
 impl DocumentInner {

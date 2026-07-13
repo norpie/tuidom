@@ -9,7 +9,7 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::style::color::ColorContext;
 use crate::style::resolution::{ColorScope, ResolvedStyle, StyleDefaults};
-use crate::style::{Color, Style};
+use crate::style::{Color, ResolvedColor, Style};
 
 impl Document {
     /// Set a transition configuration for a node.
@@ -57,7 +57,50 @@ impl Document {
         self.inner.notify.notify_one();
     }
 
+    // ------------------------------------------------------------------
+    // Terminal background
+    // ------------------------------------------------------------------
+
+    /// Declare the terminal's background color.
+    ///
+    /// The real one is unknowable without querying the terminal, so tuidom asks you to state it.
+    /// It is what [`Color::CurrentBg`] resolves to on a node with no background anywhere in its
+    /// ancestry, and what a translucent color blends toward over an unpainted cell. It defaults to
+    /// black.
+    ///
+    /// It is an assumption used for color math, not a color that gets painted: cells with no
+    /// background still emit the terminal default, so an unstyled app keeps showing the user's real
+    /// background whatever this is set to.
+    ///
+    /// It is evaluated against the empty scope, so it may be a literal or a derivation of one — a
+    /// [`Color::var`] inside it has nothing to resolve against.
+    pub fn set_terminal_background(&self, color: Color) {
+        *lock::mutex(&self.inner.terminal_background) = color;
+        self.invalidate_resolved_style(self.root());
+        self.inner.notify.notify_one();
+    }
+
+    /// The terminal background color the document assumes.
+    pub fn terminal_background(&self) -> Color {
+        lock::mutex(&self.inner.terminal_background).clone()
+    }
+
+    /// The declared terminal background, evaluated against the empty scope.
+    pub(crate) fn resolved_terminal_background(&self) -> ResolvedColor {
+        let declared = lock::mutex(&self.inner.terminal_background).clone();
+        declared
+            .eval(&ColorContext {
+                vars: &HashMap::new(),
+                current_bg: ResolvedColor::black(),
+                current_fg: ResolvedColor::white(),
+            })
+            .unwrap_or_else(ResolvedColor::black)
+    }
+
     /// The document's color variables, evaluated against the empty scope.
+    ///
+    /// The document sits at the bottom of the chain, so its variables see no other variables —
+    /// only the terminal background, which a variable may usefully derive a surface color from.
     fn color_scope(&self) -> ColorScope {
         let declared = lock::mutex(&self.inner.color_vars);
         if declared.is_empty() {
@@ -65,7 +108,11 @@ impl Document {
         }
 
         let empty = HashMap::new();
-        let ctx = ColorContext { vars: &empty };
+        let ctx = ColorContext {
+            vars: &empty,
+            current_bg: self.resolved_terminal_background(),
+            current_fg: ResolvedColor::white(),
+        };
         Arc::new(
             declared
                 .iter()
@@ -186,7 +233,7 @@ impl Document {
             .transpose()?;
 
         let defaults = if id == self.root() {
-            StyleDefaults::root(self.color_scope())
+            StyleDefaults::root(self.color_scope(), self.resolved_terminal_background())
         } else {
             StyleDefaults::default()
         };
