@@ -4,11 +4,14 @@ pub mod border;
 pub mod color;
 /// Resolved style computation and caching.
 pub(crate) mod resolution;
+/// Scrollbar visibility and drawing characters.
+pub mod scrollbar;
 
 use std::collections::HashMap;
 
 pub use border::{Border, BorderCharset, Sides};
 pub use color::{Color, ColorOp, ResolvedColor};
+pub use scrollbar::{ScrollbarCharset, ScrollbarShow};
 
 // ---------------------------------------------------------------------------
 // StyleValue — explicit inheritance control
@@ -332,6 +335,14 @@ pub struct Style {
     pub(crate) overflow_x: StyleValue<Overflow>,
     /// Vertical overflow behavior.
     pub(crate) overflow_y: StyleValue<Overflow>,
+    /// When this scroll container draws its scrollbars.
+    pub(crate) scrollbar_show: StyleValue<ScrollbarShow>,
+    /// The characters this scroll container's bars are drawn with.
+    pub(crate) scrollbar_charset: StyleValue<ScrollbarCharset>,
+    /// Scrollbar track color. Unset follows the node's foreground color.
+    pub(crate) scrollbar_track_color: StyleValue<Color>,
+    /// Scrollbar thumb color. Unset follows the node's foreground color.
+    pub(crate) scrollbar_thumb_color: StyleValue<Color>,
     /// Opacity (0–1).
     pub(crate) opacity: StyleValue<f64>,
     /// Foreground text color.
@@ -402,6 +413,10 @@ impl Style {
             display: StyleValue::Unset,
             overflow_x: StyleValue::Unset,
             overflow_y: StyleValue::Unset,
+            scrollbar_show: StyleValue::Unset,
+            scrollbar_charset: StyleValue::Unset,
+            scrollbar_track_color: StyleValue::Unset,
+            scrollbar_thumb_color: StyleValue::Unset,
             opacity: StyleValue::Unset,
             color: StyleValue::Unset,
             background: StyleValue::Unset,
@@ -699,6 +714,68 @@ impl Style {
     pub fn overflow(&mut self, value: Overflow) {
         self.overflow_x = StyleValue::Set(value);
         self.overflow_y = StyleValue::Set(value);
+    }
+
+    // -- Scrollbars -----------------------------------------------------
+
+    /// Set when this scroll container draws its scrollbars.
+    pub fn scrollbar_show(&mut self, value: ScrollbarShow) {
+        self.scrollbar_show = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit scrollbar visibility from the parent node.
+    pub fn inherit_scrollbar_show(&mut self) {
+        self.scrollbar_show = StyleValue::Inherit;
+    }
+
+    /// Reset scrollbar visibility to the document/default style.
+    pub fn unset_scrollbar_show(&mut self) {
+        self.scrollbar_show = StyleValue::Unset;
+    }
+
+    /// Set the characters this container's scrollbars are drawn with.
+    pub fn scrollbar_charset(&mut self, value: ScrollbarCharset) {
+        self.scrollbar_charset = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the scrollbar charset from the parent node.
+    pub fn inherit_scrollbar_charset(&mut self) {
+        self.scrollbar_charset = StyleValue::Inherit;
+    }
+
+    /// Reset the scrollbar charset to the document/default style.
+    pub fn unset_scrollbar_charset(&mut self) {
+        self.scrollbar_charset = StyleValue::Unset;
+    }
+
+    /// Set the scrollbar track color.
+    pub fn scrollbar_track_color(&mut self, value: Color) {
+        self.scrollbar_track_color = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the scrollbar track color from the parent node.
+    pub fn inherit_scrollbar_track_color(&mut self) {
+        self.scrollbar_track_color = StyleValue::Inherit;
+    }
+
+    /// Reset the scrollbar track color to the document/default style.
+    pub fn unset_scrollbar_track_color(&mut self) {
+        self.scrollbar_track_color = StyleValue::Unset;
+    }
+
+    /// Set the scrollbar thumb color.
+    pub fn scrollbar_thumb_color(&mut self, value: Color) {
+        self.scrollbar_thumb_color = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the scrollbar thumb color from the parent node.
+    pub fn inherit_scrollbar_thumb_color(&mut self) {
+        self.scrollbar_thumb_color = StyleValue::Inherit;
+    }
+
+    /// Reset the scrollbar thumb color to the document/default style.
+    pub fn unset_scrollbar_thumb_color(&mut self) {
+        self.scrollbar_thumb_color = StyleValue::Unset;
     }
 
     // -- Opacity --------------------------------------------------------

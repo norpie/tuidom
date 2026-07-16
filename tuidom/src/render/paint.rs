@@ -10,7 +10,7 @@ use crate::id::NodeId;
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
 };
-use crate::paint_order::{PaintEntry, paint_order};
+use crate::paint_order::{PaintEntry, ScrollbarPaint, paint_order};
 use crate::performance::{LargestFillProfile, PaintProfile};
 use crate::render::RenderCursor;
 use crate::render::grid::{Cell, CellAttrs, Grid, GridRect};
@@ -87,6 +87,10 @@ pub(crate) fn paint(
     let mut cursor = None;
     for entry in &entries {
         grid.set_clip(entry.clip);
+        if let Some(bar) = &entry.scrollbar {
+            paint_scrollbar(grid, entry, bar, rgb_cache, &mut profile);
+            continue;
+        }
         if let Some(entry_cursor) = paint_entry(
             grid,
             entry,
@@ -365,6 +369,11 @@ fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
         return false;
     }
 
+    // A scrollbar strip is nothing but paint.
+    if entry.scrollbar.is_some() {
+        return false;
+    }
+
     // Same for a half-block edge with an explicit inner color: no background, but it still
     // paints cells.
     if entry.resolved.draws_half_block_edges() {
@@ -385,6 +394,96 @@ fn covers_grid(layout: LayoutRect, grid: &Grid) -> bool {
     let bottom = top + i64::from(layout.height);
 
     left <= 0 && top <= 0 && right >= i64::from(grid.width) && bottom >= i64::from(grid.height)
+}
+
+/// Draw one scrollbar strip: the track along the whole strip, the thumb over it.
+///
+/// Both are glyphs with a foreground color; the cell background is left as-is, so the
+/// bar sits on whatever the container painted underneath it.
+fn paint_scrollbar(
+    grid: &mut Grid,
+    entry: &PaintEntry,
+    bar: &ScrollbarPaint,
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) {
+    let charset = entry.resolved.scrollbar_charset;
+    let (track_char, thumb_char) = if bar.vertical {
+        (charset.vertical_track, charset.vertical_thumb)
+    } else {
+        (charset.horizontal_track, charset.horizontal_thumb)
+    };
+
+    // Unset colors follow the container's foreground, like an unset border color.
+    let fg = entry.resolved.color;
+    let track_color = resolve_rgb(
+        rgb_cache,
+        entry.resolved.scrollbar_track_color.unwrap_or(fg),
+        profile,
+    );
+    let thumb_color = resolve_rgb(
+        rgb_cache,
+        entry.resolved.scrollbar_thumb_color.unwrap_or(fg),
+        profile,
+    );
+    let alpha = entry.resolved.opacity;
+
+    let span = if bar.vertical {
+        entry.layout.height
+    } else {
+        entry.layout.width
+    };
+    let strip = GridRect {
+        x: entry.layout.x,
+        y: entry.layout.y,
+        width: entry.layout.width,
+        height: entry.layout.height,
+    };
+
+    // A bar is fill, not text: attributes would distort the shapes it is drawn from.
+    let attrs = CellAttrs::default();
+    grid.write_text_clipped(
+        strip,
+        &bar_text(track_char, span, bar.vertical),
+        Some(track_color),
+        alpha,
+        attrs,
+    );
+
+    let thumb = if bar.vertical {
+        GridRect {
+            x: strip.x,
+            y: strip.y + i32::from(bar.thumb_start),
+            width: 1,
+            height: bar.thumb_len,
+        }
+    } else {
+        GridRect {
+            x: strip.x + i32::from(bar.thumb_start),
+            y: strip.y,
+            width: bar.thumb_len,
+            height: 1,
+        }
+    };
+    grid.write_text_clipped(
+        thumb,
+        &bar_text(thumb_char, bar.thumb_len, bar.vertical),
+        Some(thumb_color),
+        alpha,
+        attrs,
+    );
+}
+
+/// A strip's text: `len` copies of one character, one per row for a vertical bar.
+fn bar_text(ch: char, len: u16, vertical: bool) -> String {
+    let mut text = String::new();
+    for index in 0..len {
+        if vertical && index > 0 {
+            text.push('\n');
+        }
+        text.push(ch);
+    }
+    text
 }
 
 fn fill_background(
@@ -562,7 +661,8 @@ mod tests {
     use crate::node::{LayoutRect, NodeLayout};
     use crate::style::color::Rgb;
     use crate::style::{
-        Border, BorderCharset, Color, Display, FlexDirection, Length, Overflow, Sides, Style,
+        Border, BorderCharset, Color, Display, FlexDirection, Length, Overflow, ScrollbarCharset,
+        ScrollbarShow, Sides, Style,
     };
 
     fn row_text(grid: &Grid, row: usize) -> String {
@@ -1444,6 +1544,7 @@ mod tests {
         let mut style = Style::new();
         style.flex_direction(FlexDirection::Column);
         style.overflow_y(Overflow::Scroll);
+        style.scrollbar_show(ScrollbarShow::Never);
         doc.set_style(container, &style).unwrap();
         doc.append_child(doc.root(), container).unwrap();
 
@@ -1475,6 +1576,7 @@ mod tests {
         let mut style = Style::new();
         style.width(Length::Pixels(5));
         style.overflow_x(Overflow::Scroll);
+        style.scrollbar_show(ScrollbarShow::Never);
         doc.set_style(container, &style).unwrap();
         doc.append_child(doc.root(), container).unwrap();
 
@@ -1513,6 +1615,7 @@ mod tests {
         let mut outer_style = Style::new();
         outer_style.flex_direction(FlexDirection::Column);
         outer_style.overflow_y(Overflow::Scroll);
+        outer_style.scrollbar_show(ScrollbarShow::Never);
         doc.set_style(outer, &outer_style).unwrap();
         doc.append_child(doc.root(), outer).unwrap();
 
@@ -1527,6 +1630,7 @@ mod tests {
         inner_style.overflow_y(Overflow::Scroll);
         inner_style.height(Length::Pixels(2));
         inner_style.flex_shrink(0.0);
+        inner_style.scrollbar_show(ScrollbarShow::Never);
         doc.set_style(inner, &inner_style).unwrap();
         doc.append_child(outer, inner).unwrap();
         for i in 0..4 {
@@ -1554,6 +1658,141 @@ mod tests {
         assert_eq!(row_text(&grid, 1), "b1        ");
         assert_eq!(row_text(&grid, 2), "b2        ");
         assert_eq!(row_text(&grid, 3), "a2        ");
+    }
+
+    // -- Scrollbars ----------------------------------------------------------
+
+    /// A 10×4 screen with a 5-cell-wide scroll column holding 8 rows of content, so the
+    /// vertical bar sits in column 4 with a 2-cell thumb over a 4-cell strip.
+    fn scrollbar_column(doc: &Document) -> (NodeId, Vec<NodeId>) {
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.flex_direction(FlexDirection::Column);
+        style.overflow_y(Overflow::Scroll);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+
+        let mut lines = Vec::new();
+        for i in 0..8 {
+            let text = doc.create_text(format!("line{i}")).unwrap();
+            doc.append_child(container, text).unwrap();
+            lines.push(text);
+        }
+        doc.compute_layout(10, 4).unwrap();
+        (container, lines)
+    }
+
+    fn bar_column(grid: &Grid, col: usize) -> String {
+        (0..grid.height as usize)
+            .map(|row| grid.cells[row][col].terminal_text().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn vertical_scrollbar_shows_position_and_coverage() {
+        let doc = Document::new().unwrap();
+        let (container, _) = scrollbar_column(&doc);
+
+        // Half the content is visible, so the thumb covers half the strip.
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(bar_column(&grid, 4), "██░░");
+
+        // At the maximum offset the thumb's far end reaches the strip end.
+        doc.scroll_to(container, 0, 4).unwrap();
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(bar_column(&grid, 4), "░░██");
+    }
+
+    #[test]
+    fn horizontal_scrollbar_paints_the_bottom_row() {
+        let doc = Document::new().unwrap();
+
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.width(Length::Pixels(5));
+        style.overflow_x(Overflow::Scroll);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+        for content in ["abcde", "fghij"] {
+            let text = doc.create_text(content).unwrap();
+            doc.append_child(container, text).unwrap();
+        }
+        doc.compute_layout(10, 2).unwrap();
+
+        let mut grid = Grid::new(10, 2);
+        paint_doc(&doc, &mut grid);
+
+        // Half of ten content columns visible: a 3-cell thumb (rounded up from 2.5) on a
+        // 5-cell strip, at the start.
+        assert_eq!(row_text(&grid, 1), "███░░     ");
+    }
+
+    #[test]
+    fn when_focused_scrollbar_follows_focus_into_the_subtree() {
+        let doc = Document::new().unwrap();
+        let (container, lines) = scrollbar_column(&doc);
+        doc.update_style(container, |style| {
+            style.scrollbar_show(ScrollbarShow::WhenFocused);
+        })
+        .unwrap();
+
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(bar_column(&grid, 4), "0123");
+
+        doc.set_focusable(lines[0], true).unwrap();
+        doc.focus(lines[0]).unwrap();
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(bar_column(&grid, 4), "██░░");
+    }
+
+    #[test]
+    fn no_scrollbar_when_content_fits_or_show_is_never() {
+        let doc = Document::new().unwrap();
+        let (container, lines) = scrollbar_column(&doc);
+
+        doc.update_style(container, |style| {
+            style.scrollbar_show(ScrollbarShow::Never);
+        })
+        .unwrap();
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(bar_column(&grid, 4), "0123");
+
+        // With only four rows of content left, nothing scrolls and Always draws no bar.
+        doc.update_style(container, |style| {
+            style.scrollbar_show(ScrollbarShow::Always);
+        })
+        .unwrap();
+        for line in &lines[4..] {
+            doc.remove_child(container, *line).unwrap();
+        }
+        doc.compute_layout(10, 4).unwrap();
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(bar_column(&grid, 4), "0123");
+    }
+
+    #[test]
+    fn scrollbar_charset_and_colors_are_styleable() {
+        let doc = Document::new().unwrap();
+        let (container, _) = scrollbar_column(&doc);
+        doc.update_style(container, |style| {
+            style.scrollbar_charset(ScrollbarCharset::half_block());
+            style.scrollbar_thumb_color(Color::red());
+            style.scrollbar_track_color(Color::blue());
+        })
+        .unwrap();
+
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+
+        assert_eq!(bar_column(&grid, 4), "▐▐││");
+        assert_eq!(grid.cells[0][4].fg, Some(rgb(255, 0, 0)));
+        assert_eq!(grid.cells[3][4].fg, Some(rgb(0, 0, 255)));
     }
 
     #[test]

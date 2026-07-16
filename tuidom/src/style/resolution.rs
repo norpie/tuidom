@@ -11,7 +11,7 @@ use crate::style::color::ColorContext;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, Color, CursorShape, Display, EdgeInsets,
     FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Overflow, Position, ResolvedColor,
-    Sides, Style, StyleValue,
+    ScrollbarCharset, ScrollbarShow, Sides, Style, StyleValue,
 };
 
 /// A node's color variables, inherited from its ancestors and the document.
@@ -44,6 +44,14 @@ pub struct ResolvedStyle {
     pub overflow_x: Overflow,
     /// Resolved vertical overflow behavior.
     pub overflow_y: Overflow,
+    /// Resolved scrollbar visibility.
+    pub scrollbar_show: ScrollbarShow,
+    /// Resolved scrollbar drawing characters.
+    pub scrollbar_charset: ScrollbarCharset,
+    /// Resolved scrollbar track color. `None` follows this node's resolved `color`.
+    pub scrollbar_track_color: Option<ResolvedColor>,
+    /// Resolved scrollbar thumb color. `None` follows this node's resolved `color`.
+    pub scrollbar_thumb_color: Option<ResolvedColor>,
     /// Resolved opacity (0–1).
     pub opacity: f64,
     /// Resolved foreground text color.
@@ -134,6 +142,10 @@ pub(crate) struct StyleDefaults {
     display: Display,
     overflow_x: Overflow,
     overflow_y: Overflow,
+    scrollbar_show: ScrollbarShow,
+    scrollbar_charset: ScrollbarCharset,
+    scrollbar_track_color: Option<ResolvedColor>,
+    scrollbar_thumb_color: Option<ResolvedColor>,
     opacity: f64,
     color: ResolvedColor,
     background: Option<ResolvedColor>,
@@ -177,6 +189,10 @@ impl Default for StyleDefaults {
             display: Display::Flex,
             overflow_x: Overflow::Visible,
             overflow_y: Overflow::Visible,
+            scrollbar_show: ScrollbarShow::Always,
+            scrollbar_charset: ScrollbarCharset::block(),
+            scrollbar_track_color: None,
+            scrollbar_thumb_color: None,
             opacity: 1.0,
             color: ResolvedColor::white(),
             background: None,
@@ -232,6 +248,10 @@ impl StyleDefaults {
             display: self.display,
             overflow_x: self.overflow_x,
             overflow_y: self.overflow_y,
+            scrollbar_show: self.scrollbar_show,
+            scrollbar_charset: self.scrollbar_charset,
+            scrollbar_track_color: self.scrollbar_track_color,
+            scrollbar_thumb_color: self.scrollbar_thumb_color,
             opacity: self.opacity,
             color: self.color,
             background: self.background,
@@ -376,6 +396,28 @@ impl ResolvedStyle {
                 &data.style.overflow_y,
                 parent.map(|p| &p.overflow_y),
                 &defaults.overflow_y,
+            ),
+            scrollbar_show: resolve(
+                &data.style.scrollbar_show,
+                parent.map(|p| &p.scrollbar_show),
+                &defaults.scrollbar_show,
+            ),
+            scrollbar_charset: resolve(
+                &data.style.scrollbar_charset,
+                parent.map(|p| &p.scrollbar_charset),
+                &defaults.scrollbar_charset,
+            ),
+            scrollbar_track_color: resolve_opt(
+                &data.style.scrollbar_track_color,
+                parent.and_then(|p| p.scrollbar_track_color),
+                defaults.scrollbar_track_color,
+                &ctx,
+            ),
+            scrollbar_thumb_color: resolve_opt(
+                &data.style.scrollbar_thumb_color,
+                parent.and_then(|p| p.scrollbar_thumb_color),
+                defaults.scrollbar_thumb_color,
+                &ctx,
             ),
             opacity: resolve(
                 &data.style.opacity,
@@ -585,6 +627,32 @@ impl ResolvedStyle {
             &style.overflow_y,
             parent.map(|p| &p.overflow_y),
             &defaults.overflow_y,
+        );
+        apply_override(
+            &mut self.scrollbar_show,
+            &style.scrollbar_show,
+            parent.map(|p| &p.scrollbar_show),
+            &defaults.scrollbar_show,
+        );
+        apply_override(
+            &mut self.scrollbar_charset,
+            &style.scrollbar_charset,
+            parent.map(|p| &p.scrollbar_charset),
+            &defaults.scrollbar_charset,
+        );
+        apply_opt_override(
+            &mut self.scrollbar_track_color,
+            &style.scrollbar_track_color,
+            parent.and_then(|p| p.scrollbar_track_color),
+            defaults.scrollbar_track_color,
+            &ctx,
+        );
+        apply_opt_override(
+            &mut self.scrollbar_thumb_color,
+            &style.scrollbar_thumb_color,
+            parent.and_then(|p| p.scrollbar_thumb_color),
+            defaults.scrollbar_thumb_color,
+            &ctx,
         );
         apply_override(
             &mut self.opacity,
