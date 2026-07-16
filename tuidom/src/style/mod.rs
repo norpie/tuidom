@@ -107,6 +107,26 @@ pub enum Display {
 }
 
 // ---------------------------------------------------------------------------
+// Overflow
+// ---------------------------------------------------------------------------
+
+/// How content that exceeds a node's box is treated, per axis.
+///
+/// `Scroll` and `Clip` also change sizing: a container that clips its content is
+/// allowed to be smaller than that content, where a `Visible` container is kept
+/// at least large enough to contain it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Overflow {
+    /// Content spills out of the box and stays visible.
+    #[default]
+    Visible,
+    /// Content is clipped to the box and the node is scrollable on this axis.
+    Scroll,
+    /// Content is clipped to the box, with no scrolling and no scrollbar.
+    Clip,
+}
+
+// ---------------------------------------------------------------------------
 // Cursor
 // ---------------------------------------------------------------------------
 
@@ -308,6 +328,10 @@ pub struct Style {
     pub(crate) half_block_outer_color: StyleValue<Color>,
     /// Display mode.
     pub(crate) display: StyleValue<Display>,
+    /// Horizontal overflow behavior.
+    pub(crate) overflow_x: StyleValue<Overflow>,
+    /// Vertical overflow behavior.
+    pub(crate) overflow_y: StyleValue<Overflow>,
     /// Opacity (0–1).
     pub(crate) opacity: StyleValue<f64>,
     /// Foreground text color.
@@ -376,6 +400,8 @@ impl Style {
             half_block_inner_color: StyleValue::Unset,
             half_block_outer_color: StyleValue::Unset,
             display: StyleValue::Unset,
+            overflow_x: StyleValue::Unset,
+            overflow_y: StyleValue::Unset,
             opacity: StyleValue::Unset,
             color: StyleValue::Unset,
             background: StyleValue::Unset,
@@ -635,6 +661,44 @@ impl Style {
     /// Reset display mode to the document/default style.
     pub fn unset_display(&mut self) {
         self.display = StyleValue::Unset;
+    }
+
+    // -- Overflow -------------------------------------------------------
+
+    /// Set the horizontal overflow behavior.
+    pub fn overflow_x(&mut self, value: Overflow) {
+        self.overflow_x = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit horizontal overflow behavior from the parent node.
+    pub fn inherit_overflow_x(&mut self) {
+        self.overflow_x = StyleValue::Inherit;
+    }
+
+    /// Reset horizontal overflow behavior to the document/default style.
+    pub fn unset_overflow_x(&mut self) {
+        self.overflow_x = StyleValue::Unset;
+    }
+
+    /// Set the vertical overflow behavior.
+    pub fn overflow_y(&mut self, value: Overflow) {
+        self.overflow_y = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit vertical overflow behavior from the parent node.
+    pub fn inherit_overflow_y(&mut self) {
+        self.overflow_y = StyleValue::Inherit;
+    }
+
+    /// Reset vertical overflow behavior to the document/default style.
+    pub fn unset_overflow_y(&mut self) {
+        self.overflow_y = StyleValue::Unset;
+    }
+
+    /// Set both overflow axes at once.
+    pub fn overflow(&mut self, value: Overflow) {
+        self.overflow_x = StyleValue::Set(value);
+        self.overflow_y = StyleValue::Set(value);
     }
 
     // -- Opacity --------------------------------------------------------

@@ -10,8 +10,8 @@ use crate::node::NodeData;
 use crate::style::color::ColorContext;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, Color, CursorShape, Display, EdgeInsets,
-    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Position, ResolvedColor, Sides,
-    Style, StyleValue,
+    FlexDirection, FlexGap, FlexWrap, JustifyContent, Length, Overflow, Position, ResolvedColor,
+    Sides, Style, StyleValue,
 };
 
 /// A node's color variables, inherited from its ancestors and the document.
@@ -40,6 +40,10 @@ pub struct ResolvedStyle {
     pub half_block_outer_color: Option<ResolvedColor>,
     /// Resolved display mode.
     pub display: Display,
+    /// Resolved horizontal overflow behavior.
+    pub overflow_x: Overflow,
+    /// Resolved vertical overflow behavior.
+    pub overflow_y: Overflow,
     /// Resolved opacity (0–1).
     pub opacity: f64,
     /// Resolved foreground text color.
@@ -128,6 +132,8 @@ pub(crate) struct StyleDefaults {
     half_block_inner_color: Option<ResolvedColor>,
     half_block_outer_color: Option<ResolvedColor>,
     display: Display,
+    overflow_x: Overflow,
+    overflow_y: Overflow,
     opacity: f64,
     color: ResolvedColor,
     background: Option<ResolvedColor>,
@@ -169,6 +175,8 @@ impl Default for StyleDefaults {
             half_block_inner_color: None,
             half_block_outer_color: None,
             display: Display::Flex,
+            overflow_x: Overflow::Visible,
+            overflow_y: Overflow::Visible,
             opacity: 1.0,
             color: ResolvedColor::white(),
             background: None,
@@ -222,6 +230,8 @@ impl StyleDefaults {
             half_block_inner_color: self.half_block_inner_color,
             half_block_outer_color: self.half_block_outer_color,
             display: self.display,
+            overflow_x: self.overflow_x,
+            overflow_y: self.overflow_y,
             opacity: self.opacity,
             color: self.color,
             background: self.background,
@@ -356,6 +366,16 @@ impl ResolvedStyle {
                 &data.style.display,
                 parent.map(|p| &p.display),
                 &defaults.display,
+            ),
+            overflow_x: resolve(
+                &data.style.overflow_x,
+                parent.map(|p| &p.overflow_x),
+                &defaults.overflow_x,
+            ),
+            overflow_y: resolve(
+                &data.style.overflow_y,
+                parent.map(|p| &p.overflow_y),
+                &defaults.overflow_y,
             ),
             opacity: resolve(
                 &data.style.opacity,
@@ -553,6 +573,18 @@ impl ResolvedStyle {
             &style.display,
             parent.map(|p| &p.display),
             &defaults.display,
+        );
+        apply_override(
+            &mut self.overflow_x,
+            &style.overflow_x,
+            parent.map(|p| &p.overflow_x),
+            &defaults.overflow_x,
+        );
+        apply_override(
+            &mut self.overflow_y,
+            &style.overflow_y,
+            parent.map(|p| &p.overflow_y),
+            &defaults.overflow_y,
         );
         apply_override(
             &mut self.opacity,

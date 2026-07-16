@@ -19,7 +19,7 @@ use crate::style::resolution::ResolvedStyle;
 // referenced through `taffy::style::` below.
 use crate::style::{
     AlignContent, AlignItems, Border, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap,
-    JustifyContent, Length, Position,
+    JustifyContent, Length, Overflow, Position,
 };
 
 // ---------------------------------------------------------------------------
@@ -406,7 +406,23 @@ fn to_taffy_style(resolved: &ResolvedStyle) -> Style {
         justify_content: Some(to_justify_content(resolved.justify_content)),
         position: to_taffy_position(resolved.position),
         inset: to_taffy_inset(resolved.position),
+        overflow: taffy::geometry::Point {
+            x: to_taffy_overflow(resolved.overflow_x),
+            y: to_taffy_overflow(resolved.overflow_y),
+        },
         ..Default::default()
+    }
+}
+
+/// Sizing is the one thing scroll containers need from taffy: `Visible` keeps a node at
+/// least large enough to contain its children, while `Scroll`/`Hidden` drop that floor to
+/// zero so the container takes its styled/flex size and the content overflows it. The
+/// scroll offset itself never reaches taffy — it is applied at paint time.
+fn to_taffy_overflow(overflow: Overflow) -> taffy::style::Overflow {
+    match overflow {
+        Overflow::Visible => taffy::style::Overflow::Visible,
+        Overflow::Scroll => taffy::style::Overflow::Scroll,
+        Overflow::Clip => taffy::style::Overflow::Hidden,
     }
 }
 
@@ -562,6 +578,89 @@ mod tests {
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
         style
+    }
+
+    /// A 10×4 screen holding one container with two 8×4 children, so the container's
+    /// content is 16 cells wide laid out as a row and 8 cells tall laid out as a column.
+    fn overflowing_container(
+        root_direction: FlexDirection,
+        container_style: DomStyle,
+    ) -> (Document, NodeId) {
+        let doc = Document::new().unwrap();
+
+        let root = doc.root();
+        let mut root_style = DomStyle::new();
+        root_style.flex_direction(root_direction);
+        doc.set_style(root, &root_style).unwrap();
+
+        let container = doc.create_box().unwrap();
+        doc.set_style(container, &container_style).unwrap();
+        doc.append_child(root, container).unwrap();
+
+        for _ in 0..2 {
+            let child = doc.create_box().unwrap();
+            let mut child_style = DomStyle::new();
+            child_style.width(Length::Pixels(8));
+            child_style.height(Length::Pixels(4));
+            doc.set_style(child, &child_style).unwrap();
+            doc.append_child(container, child).unwrap();
+        }
+
+        compute_layout(&doc, 10, 4).unwrap();
+        (doc, container)
+    }
+
+    #[test]
+    fn visible_overflow_keeps_a_container_at_least_content_size() {
+        let mut style = DomStyle::new();
+        style.flex_direction(FlexDirection::Column);
+        let (doc, container) = overflowing_container(FlexDirection::Column, style);
+
+        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        assert_eq!(layout.height, 8);
+    }
+
+    #[test]
+    fn scroll_overflow_lets_a_container_shrink_below_its_content() {
+        let mut style = DomStyle::new();
+        style.flex_direction(FlexDirection::Column);
+        style.overflow_y(Overflow::Scroll);
+        let (doc, container) = overflowing_container(FlexDirection::Column, style);
+
+        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        assert_eq!(layout.height, 4);
+    }
+
+    #[test]
+    fn clip_overflow_lets_a_container_shrink_below_its_content() {
+        let mut style = DomStyle::new();
+        style.flex_direction(FlexDirection::Column);
+        style.overflow_y(Overflow::Clip);
+        let (doc, container) = overflowing_container(FlexDirection::Column, style);
+
+        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        assert_eq!(layout.height, 4);
+    }
+
+    #[test]
+    fn horizontal_scroll_overflow_shrinks_width() {
+        let mut style = DomStyle::new();
+        style.overflow_x(Overflow::Scroll);
+        let (doc, container) = overflowing_container(FlexDirection::Row, style);
+
+        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        assert_eq!(layout.width, 10);
+    }
+
+    #[test]
+    fn overflow_axes_are_independent() {
+        // Scrollable vertically only: the horizontal axis keeps its content-size floor.
+        let mut style = DomStyle::new();
+        style.overflow_y(Overflow::Scroll);
+        let (doc, container) = overflowing_container(FlexDirection::Row, style);
+
+        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        assert_eq!(layout.width, 16);
     }
 
     #[test]
