@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crossterm::event::KeyEventKind;
 use crossterm::event::{
-    Event as CrosstermEvent, EventStream, MouseButton as CrosstermMouseButton,
+    Event as CrosstermEvent, EventStream, KeyModifiers, MouseButton as CrosstermMouseButton,
     MouseEvent as CrosstermMouseEvent, MouseEventKind,
 };
 use tokio::task::JoinSet;
@@ -330,6 +330,23 @@ fn convert_mouse_event(mouse: CrosstermMouseEvent) -> Option<RuntimeEvent> {
                 button,
             ))
         }),
+        // Shift+wheel is the conventional horizontal scroll: terminals that forward it
+        // send a vertical scroll with the shift modifier set, not ScrollLeft/ScrollRight.
+        // Shift+up scrolls toward the start (left), matching the unshifted sign.
+        MouseEventKind::ScrollUp if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+            Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
+                i32::from(mouse.column),
+                i32::from(mouse.row),
+                1,
+            )))
+        }
+        MouseEventKind::ScrollDown if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+            Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
+                i32::from(mouse.column),
+                i32::from(mouse.row),
+                -1,
+            )))
+        }
         MouseEventKind::ScrollUp => Some(RuntimeEvent::Wheel(WheelEvent::new(
             i32::from(mouse.column),
             i32::from(mouse.row),
@@ -362,5 +379,45 @@ fn convert_mouse_button(button: CrosstermMouseButton) -> Option<MouseButton> {
         CrosstermMouseButton::Left => Some(MouseButton::Left),
         CrosstermMouseButton::Right => Some(MouseButton::Right),
         CrosstermMouseButton::Middle => Some(MouseButton::Middle),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::WheelAxis;
+
+    fn scroll_event(kind: MouseEventKind, modifiers: KeyModifiers) -> CrosstermMouseEvent {
+        CrosstermMouseEvent {
+            kind,
+            column: 3,
+            row: 2,
+            modifiers,
+        }
+    }
+
+    fn converted_wheel(kind: MouseEventKind, modifiers: KeyModifiers) -> WheelEvent {
+        match convert_mouse_event(scroll_event(kind, modifiers)) {
+            Some(RuntimeEvent::Wheel(wheel)) => wheel,
+            other => panic!("expected a wheel event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shift_wheel_converts_to_horizontal() {
+        let wheel = converted_wheel(MouseEventKind::ScrollUp, KeyModifiers::SHIFT);
+        assert_eq!(wheel.axis, WheelAxis::Horizontal);
+        assert_eq!(wheel.delta, 1);
+
+        let wheel = converted_wheel(MouseEventKind::ScrollDown, KeyModifiers::SHIFT);
+        assert_eq!(wheel.axis, WheelAxis::Horizontal);
+        assert_eq!(wheel.delta, -1);
+    }
+
+    #[test]
+    fn unshifted_wheel_stays_vertical() {
+        let wheel = converted_wheel(MouseEventKind::ScrollUp, KeyModifiers::NONE);
+        assert_eq!(wheel.axis, WheelAxis::Vertical);
+        assert_eq!(wheel.delta, 1);
     }
 }
