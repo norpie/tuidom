@@ -11,11 +11,12 @@ use crate::event::{
     ResizeEvent, WheelEvent,
 };
 use crate::headless::{HeadlessRuntime, ScreenColor};
-use crate::node::{LayoutRect, NodeKindView};
+use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::performance::PerformanceDetail;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
-    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Position, ResolvedColor, Sides, Style,
+    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, ResolvedColor, Sides,
+    Style,
 };
 
 #[test]
@@ -1569,7 +1570,13 @@ fn key_event() -> KeyEvent {
 }
 
 fn set_layout(doc: &Document, node: NodeId, layout: LayoutRect) {
-    lock::rw_write(&doc.inner.layout_rects).insert(node, layout);
+    lock::rw_write(&doc.inner.layout_snapshot).insert(
+        node,
+        NodeLayout {
+            rect: layout,
+            ..NodeLayout::default()
+        },
+    );
 }
 
 fn one_cell() -> LayoutRect {
@@ -1684,6 +1691,104 @@ fn node_at_keeps_descendant_z_index_inside_parent_subtree() {
     set_one_cell_layouts(&doc, &[root, parent, child, sibling]);
 
     assert_eq!(doc.node_at(0, 0), Some(sibling));
+}
+
+// ---------------------------------------------------------------------------
+// Scrolling
+// ---------------------------------------------------------------------------
+
+/// A 10×4 screen with one `overflow_y: Scroll` column of eight one-row texts,
+/// so the container's scrollable range is 4.
+fn scrolling_column() -> (Document, NodeId, Vec<NodeId>) {
+    let doc = Document::new().unwrap();
+
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let mut lines = Vec::new();
+    for i in 0..8 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(container, text).unwrap();
+        lines.push(text);
+    }
+
+    doc.compute_layout(10, 4).unwrap();
+    (doc, container, lines)
+}
+
+#[test]
+fn scroll_to_clamps_to_the_scrollable_range() {
+    let (doc, container, _) = scrolling_column();
+
+    doc.scroll_to(container, 5, 99).unwrap();
+    // The horizontal axis is not scrollable, so it clamps to zero; the vertical
+    // axis clamps to content minus viewport.
+    let offset = doc.scroll_offset(container);
+    assert_eq!((offset.x, offset.y), (0, 4));
+
+    doc.scroll_by(container, 0, -1).unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 3);
+
+    doc.scroll_by(container, 0, -100).unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
+fn only_scroll_overflow_is_scrollable() {
+    let (doc, container, _) = scrolling_column();
+
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Clip);
+    doc.set_style(container, &style).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
+fn scrolling_a_removed_node_errors() {
+    let (doc, container, _) = scrolling_column();
+
+    doc.remove_child(doc.root(), container).unwrap();
+    assert!(doc.scroll_to(container, 0, 1).is_err());
+}
+
+#[test]
+fn node_at_sees_scrolled_content_at_its_translated_position() {
+    let (doc, container, lines) = scrolling_column();
+
+    assert_eq!(doc.node_at(0, 0), Some(lines[0]));
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    assert_eq!(doc.node_at(0, 0), Some(lines[2]));
+    assert_eq!(doc.node_at(0, 3), Some(lines[5]));
+
+    // The scrolled-away line is culled: no coordinate hits it.
+    for y in 0..4 {
+        assert_ne!(doc.node_at(0, y), Some(lines[0]));
+    }
+}
+
+#[test]
+fn relayout_reclamps_scroll_offsets_when_content_shrinks() {
+    let (doc, container, lines) = scrolling_column();
+
+    doc.scroll_to(container, 0, 4).unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 4);
+
+    for line in &lines[2..] {
+        doc.remove_child(container, *line).unwrap();
+    }
+    doc.compute_layout(10, 4).unwrap();
+
+    // Two rows of content in a four-row viewport leaves nothing to scroll.
+    assert_eq!(doc.scroll_offset(container).y, 0);
 }
 
 #[test]

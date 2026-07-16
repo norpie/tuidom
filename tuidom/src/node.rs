@@ -29,6 +29,31 @@ pub struct LayoutRect {
     pub height: u16,
 }
 
+/// A node's entry in the published layout snapshot: its screen rectangle plus how far
+/// its content can scroll.
+///
+/// The maximum scroll is published with the rect because it comes from the same layout
+/// pass — taffy measures how far content extends beyond the box — and clamping a scroll
+/// offset needs both under one read.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct NodeLayout {
+    /// The node's screen rectangle.
+    pub rect: LayoutRect,
+    /// Maximum horizontal scroll offset in terminal cells.
+    pub max_scroll_x: u16,
+    /// Maximum vertical scroll offset in terminal cells.
+    pub max_scroll_y: u16,
+}
+
+/// A scroll container's current offset in terminal cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScrollOffset {
+    /// Horizontal offset: how many cells of content are scrolled off the left edge.
+    pub x: u16,
+    /// Vertical offset: how many cells of content are scrolled off the top edge.
+    pub y: u16,
+}
+
 impl LayoutRect {
     /// The rect a node paints its own content into: the layout rect deflated by the border
     /// and then by padding.
@@ -39,6 +64,13 @@ impl LayoutRect {
     pub(crate) fn content_rect(self, resolved: &ResolvedStyle) -> Self {
         self.deflate(resolved.border.insets())
             .deflate(resolved.padding)
+    }
+
+    /// The rect a scrolling or clipping node bounds its descendants' painting to: the
+    /// layout rect deflated by the border. Padding stays inside the viewport — scrolled
+    /// content slides through the padding, but never over the frame.
+    pub(crate) fn padding_box(self, resolved: &ResolvedStyle) -> Self {
+        self.deflate(resolved.border.insets())
     }
 
     /// The rect a node's background fills: the layout rect, minus any cell a half-block edge

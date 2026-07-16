@@ -41,12 +41,17 @@ impl Document {
         paint_order(self)
             .into_iter()
             .rev()
-            .find(|entry| layout_contains(entry.layout, x, y))
+            .find(|entry| {
+                layout_contains(entry.layout, x, y)
+                    && entry.clip.contains(i64::from(x), i64::from(y))
+            })
             .map(|entry| entry.id)
     }
 
     fn get_node_unlocked(&self, id: NodeId) -> Option<NodeView> {
-        let layout = lock::rw_read(&self.inner.layout_rects).get(&id).copied();
+        let layout = lock::rw_read(&self.inner.layout_snapshot)
+            .get(&id)
+            .map(|layout| layout.rect);
         self.inner.nodes.get(&id).map(|r| NodeView {
             id,
             kind: r.kind.to_view(),
@@ -71,7 +76,7 @@ impl Document {
 
     fn remove_layout_node(&self, id: NodeId) -> Result<()> {
         lock::mutex(&self.inner.layout).remove_node(id)?;
-        lock::rw_write(&self.inner.layout_rects).remove(&id);
+        lock::rw_write(&self.inner.layout_snapshot).remove(&id);
         Ok(())
     }
 
@@ -80,6 +85,7 @@ impl Document {
         self.remove_focus_side_state(id);
         lock::mutex(&self.inner.targeted_listeners).retain(|(node, _), _| *node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
+        lock::mutex(&self.inner.scroll_offsets).remove(&id);
         Ok(())
     }
 

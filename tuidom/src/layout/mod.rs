@@ -13,7 +13,7 @@ use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::lock;
-use crate::node::{LayoutRect, NodeKind};
+use crate::node::{LayoutRect, NodeKind, NodeLayout};
 use crate::style::resolution::ResolvedStyle;
 // `Position` shadows `taffy::prelude::Position`; taffy's own positioning types are
 // referenced through `taffy::style::` below.
@@ -165,7 +165,7 @@ impl LayoutEngine {
         visible_children: &HashMap<NodeId, Vec<NodeId>>,
         screen_width: u16,
         screen_height: u16,
-    ) -> Result<Vec<(NodeId, LayoutRect)>> {
+    ) -> Result<Vec<(NodeId, NodeLayout)>> {
         let Some(&taffy_root) = self.mapping.get(&root) else {
             return Err(TuidomError::LayoutMappingMissing { id: root });
         };
@@ -189,7 +189,7 @@ impl LayoutEngine {
         visible_children: &HashMap<NodeId, Vec<NodeId>>,
         parent_x: f32,
         parent_y: f32,
-        out: &mut Vec<(NodeId, LayoutRect)>,
+        out: &mut Vec<(NodeId, NodeLayout)>,
     ) -> Result<()> {
         let Some(&taffy_id) = self.mapping.get(&node_id) else {
             return Err(TuidomError::LayoutMappingMissing { id: node_id });
@@ -200,11 +200,18 @@ impl LayoutEngine {
         let absolute_y = parent_y + layout.location.y;
         out.push((
             node_id,
-            LayoutRect {
-                x: rounded_taffy_position_to_i32(absolute_x),
-                y: rounded_taffy_position_to_i32(absolute_y),
-                width: rounded_taffy_size_to_u16(layout.size.width),
-                height: rounded_taffy_size_to_u16(layout.size.height),
+            NodeLayout {
+                rect: LayoutRect {
+                    x: rounded_taffy_position_to_i32(absolute_x),
+                    y: rounded_taffy_position_to_i32(absolute_y),
+                    width: rounded_taffy_size_to_u16(layout.size.width),
+                    height: rounded_taffy_size_to_u16(layout.size.height),
+                },
+                // How far content extends beyond the box, from the same taffy pass as the
+                // rect. Published unconditionally — whether an axis is *scrollable* is the
+                // overflow style's call, made where offsets are clamped.
+                max_scroll_x: rounded_taffy_size_to_u16(layout.scroll_width()),
+                max_scroll_y: rounded_taffy_size_to_u16(layout.scroll_height()),
             },
         ));
 
@@ -285,9 +292,19 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
         Vec::new()
     };
 
-    let mut layout_rects = lock::rw_write(&doc.inner.layout_rects);
-    layout_rects.clear();
-    layout_rects.extend(layouts);
+    let mut layout_snapshot = lock::rw_write(&doc.inner.layout_snapshot);
+    layout_snapshot.clear();
+    layout_snapshot.extend(layouts);
+
+    // A relayout can shrink content, so stored offsets are re-clamped here — otherwise a
+    // stale offset would keep a container scrolled past content that no longer exists.
+    let mut scroll_offsets = lock::mutex(&doc.inner.scroll_offsets);
+    for (id, offset) in scroll_offsets.iter_mut() {
+        if let Some(layout) = layout_snapshot.get(id) {
+            offset.x = offset.x.min(layout.max_scroll_x);
+            offset.y = offset.y.min(layout.max_scroll_y);
+        }
+    }
     Ok(())
 }
 

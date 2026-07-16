@@ -61,6 +61,78 @@ pub(crate) struct GridRect {
     pub height: u16,
 }
 
+/// A paint clip region with independently bounded axes.
+///
+/// Scroll and clip containers bound their descendants' painting per axis — a node with
+/// `overflow_y: Scroll` and `overflow_x: Visible` clips rows but lets columns spill — so
+/// the identity element is "unbounded on both axes", not a grid-sized rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ClipRect {
+    /// Leftmost paintable column (inclusive).
+    pub left: i64,
+    /// Topmost paintable row (inclusive).
+    pub top: i64,
+    /// Rightmost paintable column (exclusive).
+    pub right: i64,
+    /// Bottommost paintable row (exclusive).
+    pub bottom: i64,
+}
+
+impl ClipRect {
+    /// The identity clip: nothing is clipped.
+    pub const UNBOUNDED: Self = Self {
+        left: i64::MIN,
+        top: i64::MIN,
+        right: i64::MAX,
+        bottom: i64::MAX,
+    };
+
+    /// Whether nothing can paint inside this clip.
+    pub fn is_empty(&self) -> bool {
+        self.left >= self.right || self.top >= self.bottom
+    }
+
+    /// Bound the horizontal axis to `[left, right)`, keeping the tighter of the two.
+    pub fn bound_x(self, left: i64, right: i64) -> Self {
+        Self {
+            left: self.left.max(left),
+            right: self.right.min(right),
+            ..self
+        }
+    }
+
+    /// Bound the vertical axis to `[top, bottom)`, keeping the tighter of the two.
+    pub fn bound_y(self, top: i64, bottom: i64) -> Self {
+        Self {
+            top: self.top.max(top),
+            bottom: self.bottom.min(bottom),
+            ..self
+        }
+    }
+
+    /// Whether a point lies inside the clip.
+    pub fn contains(&self, x: i64, y: i64) -> bool {
+        x >= self.left && x < self.right && y >= self.top && y < self.bottom
+    }
+
+    /// Whether a rectangle lies entirely outside the clip, so nothing of it can paint.
+    pub fn excludes(&self, x: i32, y: i32, width: u16, height: u16) -> bool {
+        let left = i64::from(x);
+        let top = i64::from(y);
+        let right = left + i64::from(width);
+        let bottom = top + i64::from(height);
+        right <= self.left || left >= self.right || bottom <= self.top || top >= self.bottom
+    }
+
+    /// Whether the clip covers an entire `width` × `height` grid.
+    pub fn covers_grid(&self, width: u16, height: u16) -> bool {
+        self.left <= 0
+            && self.top <= 0
+            && self.right >= i64::from(width)
+            && self.bottom >= i64::from(height)
+    }
+}
+
 /// Terminal text attributes carried by a cell's glyph.
 ///
 /// Packed here — unlike on `Style`, where they are three separate properties — because
@@ -273,6 +345,10 @@ pub(crate) struct Grid {
     touched_spans: Vec<Option<TouchedSpan>>,
     /// The terminal background color assumed when blending onto an unpainted cell.
     default_bg: Rgb,
+    /// The active clip: writes outside it are dropped. Scroll and clip containers set it
+    /// per painted node so clipping happens once, at the cell-write level, for every kind
+    /// of paint — fills, text, borders, and half-block edges alike.
+    clip: ClipRect,
 }
 
 impl Grid {
@@ -285,7 +361,29 @@ impl Grid {
             height,
             touched_spans: vec![None; height as usize],
             default_bg: BLACK,
+            clip: ClipRect::UNBOUNDED,
         }
+    }
+
+    /// Set the clip for subsequent writes. Painting outside it is dropped.
+    pub fn set_clip(&mut self, clip: ClipRect) {
+        self.clip = clip;
+    }
+
+    /// Reset the clip so writes are bounded only by the grid.
+    pub fn clear_clip(&mut self) {
+        self.clip = ClipRect::UNBOUNDED;
+    }
+
+    /// The writable cell bounds: the grid intersected with the active clip, as
+    /// `(left, top, right, bottom)` with exclusive right/bottom.
+    fn writable_bounds(&self) -> (i64, i64, i64, i64) {
+        (
+            self.clip.left.max(0),
+            self.clip.top.max(0),
+            self.clip.right.min(i64::from(self.width)),
+            self.clip.bottom.min(i64::from(self.height)),
+        )
     }
 
     /// Set the terminal background color assumed when blending.
@@ -435,7 +533,17 @@ impl Grid {
         }
 
         let line = text.lines().next().unwrap_or("");
-        self.write_text_line_clipped(x, y as usize, self.width as i64, line, fg, alpha, attrs)
+        let (bound_left, _, bound_right, _) = self.writable_bounds();
+        self.write_text_line_clipped(
+            x,
+            y as usize,
+            bound_left,
+            bound_right,
+            line,
+            fg,
+            alpha,
+            attrs,
+        )
     }
 
     /// Write multiline text clipped to a rectangular region.
@@ -452,28 +560,32 @@ impl Grid {
             return 0;
         }
 
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
+
         let rect_top = rect.y as i64;
         let rect_bottom = rect_top + i64::from(rect.height);
-        if rect_bottom <= 0 || rect_top >= i64::from(self.height) {
+        if rect_bottom <= bound_top || rect_top >= bound_bottom {
             return 0;
         }
 
-        let clip_right = (rect.x as i64 + i64::from(rect.width)).min(i64::from(self.width));
-        if clip_right <= 0 || rect.x as i64 >= i64::from(self.width) {
+        let clip_left = (rect.x as i64).max(bound_left);
+        let clip_right = (rect.x as i64 + i64::from(rect.width)).min(bound_right);
+        if clip_right <= clip_left {
             return 0;
         }
 
         let mut glyphs = 0;
         for (line_index, line) in text.lines().take(rect.height as usize).enumerate() {
-            let y = rect.y + line_index as i32;
-            if y < 0 {
+            let y = i64::from(rect.y) + line_index as i64;
+            if y < bound_top {
                 continue;
             }
-            if y >= self.height as i32 {
+            if y >= bound_bottom {
                 break;
             }
-            glyphs += self
-                .write_text_line_clipped(rect.x, y as usize, clip_right, line, fg, alpha, attrs);
+            glyphs += self.write_text_line_clipped(
+                rect.x, y as usize, clip_left, clip_right, line, fg, alpha, attrs,
+            );
         }
         glyphs
     }
@@ -483,6 +595,7 @@ impl Grid {
         &mut self,
         x: i32,
         row: usize,
+        clip_left: i64,
         clip_right: i64,
         text: &str,
         fg: Option<Rgb>,
@@ -490,11 +603,10 @@ impl Grid {
         attrs: CellAttrs,
     ) -> usize {
         let alpha = clamp_alpha(alpha);
-        if alpha <= 0.0 || clip_right <= 0 {
+        if alpha <= 0.0 || clip_right <= clip_left {
             return 0;
         }
 
-        let clip_left = 0_i64;
         let mut col = i64::from(x);
         let mut glyphs = 0;
 
@@ -605,7 +717,8 @@ impl Grid {
             _ => return 0,
         };
 
-        if row < 0 || row >= i64::from(self.height) || col < 0 || col >= i64::from(self.width) {
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
+        if row < bound_top || row >= bound_bottom || col < bound_left || col >= bound_right {
             return 0;
         }
 
@@ -705,7 +818,8 @@ impl Grid {
             _ => return 0,
         };
 
-        if row < 0 || row >= i64::from(self.height) || col < 0 || col >= i64::from(self.width) {
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
+        if row < bound_top || row >= bound_bottom || col < bound_left || col >= bound_right {
             return 0;
         }
 
@@ -749,13 +863,12 @@ impl Grid {
         let top = i64::from(y);
         let right = left + i64::from(width);
         let bottom = top + i64::from(height);
-        let grid_right = i64::from(self.width);
-        let grid_bottom = i64::from(self.height);
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
 
-        let clipped_left = left.max(0);
-        let clipped_top = top.max(0);
-        let clipped_right = right.min(grid_right);
-        let clipped_bottom = bottom.min(grid_bottom);
+        let clipped_left = left.max(bound_left);
+        let clipped_top = top.max(bound_top);
+        let clipped_right = right.min(bound_right);
+        let clipped_bottom = bottom.min(bound_bottom);
 
         if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
             return None;

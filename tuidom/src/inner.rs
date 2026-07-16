@@ -11,7 +11,7 @@ use crate::animation::driver::AnimationDriver;
 use crate::event::{FocusKeys, Listener, TargetedEventKind};
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
-use crate::node::{LayoutRect, NodeData};
+use crate::node::{NodeData, NodeLayout, ScrollOffset};
 use crate::performance::PerformanceState;
 use crate::runtime_event::RuntimeEvent;
 use crate::style::{Color, Style};
@@ -202,8 +202,11 @@ pub(crate) struct DocumentInner {
     /// Persistent taffy layout engine and DOM-to-layout-node mapping.
     pub layout: Mutex<LayoutEngine>,
 
-    /// Latest published layout rectangles, updated atomically after layout computation.
-    pub layout_rects: RwLock<HashMap<NodeId, LayoutRect>>,
+    /// Latest published layout snapshot, updated atomically after layout computation.
+    pub layout_snapshot: RwLock<HashMap<NodeId, NodeLayout>>,
+
+    /// Current scroll offset per scroll container. Absent means `(0, 0)`.
+    pub scroll_offsets: Mutex<HashMap<NodeId, ScrollOffset>>,
 
     /// Collected runtime performance metrics.
     pub performance: Mutex<PerformanceState>,

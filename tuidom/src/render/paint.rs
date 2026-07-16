@@ -75,6 +75,7 @@ pub(crate) fn paint(
     grid.set_default_background(default_bg);
 
     let grid_start = Instant::now();
+    grid.clear_clip();
     let clear_result = if clear_grid {
         clear_grid_for_paint(grid, &entries, rgb_cache, &mut profile)
     } else {
@@ -85,6 +86,7 @@ pub(crate) fn paint(
     let paint_start = Instant::now();
     let mut cursor = None;
     for entry in &entries {
+        grid.set_clip(entry.clip);
         if let Some(entry_cursor) = paint_entry(
             grid,
             entry,
@@ -96,6 +98,7 @@ pub(crate) fn paint(
             cursor = Some(entry_cursor);
         }
     }
+    grid.clear_clip();
     let paint_time = paint_start.elapsed();
 
     DomPaintOutput {
@@ -327,9 +330,11 @@ fn clear_grid_for_paint(
 
         // A half-block edge means the node's background stops half a cell short of its own
         // rect, so it no longer covers the screen and cannot stand in for the frame clear.
+        // A clipped entry likewise cannot: its fill stops at the clip, not the screen edge.
         if entry.resolved.opacity < 1.0
             || entry.resolved.draws_half_block_edges()
             || !covers_grid(entry.layout, grid)
+            || !entry.clip.covers_grid(grid.width, grid.height)
         {
             grid.clear();
             return ClearGridResult::default();
@@ -486,7 +491,8 @@ fn input_cursor_metadata(
     let screen_clipped = screen_x < 0
         || screen_y < 0
         || screen_x >= i32::from(grid.width)
-        || screen_y >= i32::from(grid.height);
+        || screen_y >= i32::from(grid.height)
+        || !node.clip.contains(i64::from(screen_x), i64::from(screen_y));
     let visible = !input_clipped && !screen_clipped;
     if visible && node.resolved.cursor_shape == CursorShape::Block {
         invert_cursor_cell(grid, screen_x, screen_y, color);
@@ -553,9 +559,11 @@ fn clamp_to_grapheme_boundary(content: &str, offset: usize) -> usize {
 mod tests {
     use super::*;
     use crate::id::NodeId;
-    use crate::node::LayoutRect;
+    use crate::node::{LayoutRect, NodeLayout};
     use crate::style::color::Rgb;
-    use crate::style::{Border, BorderCharset, Color, Display, Length, Sides, Style};
+    use crate::style::{
+        Border, BorderCharset, Color, Display, FlexDirection, Length, Overflow, Sides, Style,
+    };
 
     fn row_text(grid: &Grid, row: usize) -> String {
         grid.cells[row]
@@ -570,7 +578,13 @@ mod tests {
     }
 
     fn set_layout(doc: &Document, node: NodeId, layout: LayoutRect) {
-        crate::lock::rw_write(&doc.inner.layout_rects).insert(node, layout);
+        crate::lock::rw_write(&doc.inner.layout_snapshot).insert(
+            node,
+            NodeLayout {
+                rect: layout,
+                ..NodeLayout::default()
+            },
+        );
     }
 
     fn one_cell() -> LayoutRect {
@@ -1418,5 +1432,165 @@ mod tests {
         set_layout(&doc, node, one_cell());
 
         assert_eq!(painted_bg(&doc), Some(rgb(255, 0, 0)));
+    }
+
+    // -- Scroll translation, clipping, and culling ---------------------------
+
+    #[test]
+    fn scrolled_content_paints_translated_and_culled() {
+        let doc = Document::new().unwrap();
+
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.flex_direction(FlexDirection::Column);
+        style.overflow_y(Overflow::Scroll);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+
+        for i in 0..8 {
+            let text = doc.create_text(format!("line{i}")).unwrap();
+            doc.append_child(container, text).unwrap();
+        }
+        doc.compute_layout(10, 4).unwrap();
+
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(row_text(&grid, 0), "line0     ");
+        assert_eq!(row_text(&grid, 3), "line3     ");
+
+        doc.scroll_to(container, 0, 2).unwrap();
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(row_text(&grid, 0), "line2     ");
+        assert_eq!(row_text(&grid, 3), "line5     ");
+    }
+
+    #[test]
+    fn horizontal_clip_stops_content_at_the_viewport_edge() {
+        let doc = Document::new().unwrap();
+
+        // A 5-cell scroll container with 10 cells of content, next to a filled sibling.
+        // The scrolled-out content must never bleed into the sibling's cells.
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.width(Length::Pixels(5));
+        style.overflow_x(Overflow::Scroll);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+
+        for content in ["abcde", "fghij"] {
+            let text = doc.create_text(content).unwrap();
+            doc.append_child(container, text).unwrap();
+        }
+
+        let sibling = doc.create_box().unwrap();
+        let mut sibling_style = Style::new();
+        sibling_style.width(Length::Pixels(5));
+        sibling_style.background(Color::red());
+        doc.set_style(sibling, &sibling_style).unwrap();
+        doc.append_child(doc.root(), sibling).unwrap();
+
+        doc.compute_layout(10, 1).unwrap();
+
+        let mut grid = Grid::new(10, 1);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(row_text(&grid, 0), "abcde     ");
+        assert_eq!(grid.cells[0][5].bg, Some(rgb(255, 0, 0)));
+
+        doc.scroll_to(container, 3, 0).unwrap();
+        let mut grid = Grid::new(10, 1);
+        paint_doc(&doc, &mut grid);
+        // The first text loses its left three cells to the clip; the second slides in.
+        assert_eq!(row_text(&grid, 0), "defgh     ");
+        assert_eq!(grid.cells[0][5].bg, Some(rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn nested_scroll_offsets_compose() {
+        let doc = Document::new().unwrap();
+
+        let outer = doc.create_box().unwrap();
+        let mut outer_style = Style::new();
+        outer_style.flex_direction(FlexDirection::Column);
+        outer_style.overflow_y(Overflow::Scroll);
+        doc.set_style(outer, &outer_style).unwrap();
+        doc.append_child(doc.root(), outer).unwrap();
+
+        let a0 = doc.create_text("a0").unwrap();
+        let a1 = doc.create_text("a1").unwrap();
+        doc.append_child(outer, a0).unwrap();
+        doc.append_child(outer, a1).unwrap();
+
+        let inner = doc.create_box().unwrap();
+        let mut inner_style = Style::new();
+        inner_style.flex_direction(FlexDirection::Column);
+        inner_style.overflow_y(Overflow::Scroll);
+        inner_style.height(Length::Pixels(2));
+        inner_style.flex_shrink(0.0);
+        doc.set_style(inner, &inner_style).unwrap();
+        doc.append_child(outer, inner).unwrap();
+        for i in 0..4 {
+            let text = doc.create_text(format!("b{i}")).unwrap();
+            doc.append_child(inner, text).unwrap();
+        }
+
+        let a2 = doc.create_text("a2").unwrap();
+        doc.append_child(outer, a2).unwrap();
+
+        doc.compute_layout(10, 4).unwrap();
+
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(row_text(&grid, 0), "a0        ");
+        assert_eq!(row_text(&grid, 1), "a1        ");
+        assert_eq!(row_text(&grid, 2), "b0        ");
+        assert_eq!(row_text(&grid, 3), "b1        ");
+
+        doc.scroll_to(outer, 0, 1).unwrap();
+        doc.scroll_to(inner, 0, 1).unwrap();
+        let mut grid = Grid::new(10, 4);
+        paint_doc(&doc, &mut grid);
+        assert_eq!(row_text(&grid, 0), "a1        ");
+        assert_eq!(row_text(&grid, 1), "b1        ");
+        assert_eq!(row_text(&grid, 2), "b2        ");
+        assert_eq!(row_text(&grid, 3), "a2        ");
+    }
+
+    #[test]
+    fn a_clipped_background_does_not_stand_in_for_the_frame_clear() {
+        // A full-screen opaque background inside a clipping container covers the grid by
+        // rect but not by paint, so hoisting it into the frame clear would flood cells the
+        // clip protects.
+        let doc = Document::new().unwrap();
+
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.overflow(Overflow::Clip);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+
+        let inside = doc.create_box().unwrap();
+        set_background(&doc, inside, Color::red());
+        doc.append_child(container, inside).unwrap();
+
+        set_layout(&doc, doc.root(), one_cell());
+        set_layout(&doc, container, one_cell());
+        set_layout(
+            &doc,
+            inside,
+            LayoutRect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+        );
+
+        let mut grid = Grid::new(2, 1);
+        paint_doc_clearing(&doc, &mut grid);
+
+        // The fill reaches its own cell but stops at the container's clip.
+        assert_eq!(grid.cells[0][0].bg, Some(rgb(255, 0, 0)));
+        assert_eq!(grid.cells[0][1].bg, None);
     }
 }

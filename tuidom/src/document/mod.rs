@@ -26,6 +26,7 @@ mod focus_context;
 mod input;
 mod layout;
 mod pseudo;
+mod scroll;
 mod style;
 mod tree;
 
@@ -87,7 +88,8 @@ impl Document {
                 anim_config_changed: Arc::new(Notify::new()),
                 max_frame_interval: RwLock::new(None),
                 layout: Mutex::new(LayoutEngine::new()),
-                layout_rects: RwLock::new(HashMap::new()),
+                layout_snapshot: RwLock::new(HashMap::new()),
+                scroll_offsets: Mutex::new(HashMap::new()),
                 performance: Mutex::new(PerformanceState::new()),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
