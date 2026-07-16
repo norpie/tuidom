@@ -84,6 +84,9 @@ pub(crate) fn process_runtime_event(
         RuntimeEvent::Wheel(mut wheel) => {
             let target = mouse_target(doc, wheel.x, wheel.y);
             doc.dispatch_wheel_to(target, &mut wheel);
+            if !wheel.default_prevented() {
+                doc.apply_wheel_default_action(target, &wheel);
+            }
             state.pending_click = None;
         }
         RuntimeEvent::Resize(resize) => {

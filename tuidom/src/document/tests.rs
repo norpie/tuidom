@@ -1792,6 +1792,130 @@ fn relayout_reclamps_scroll_offsets_when_content_shrinks() {
 }
 
 #[test]
+fn wheel_scrolls_the_nearest_scrollable_ancestor() {
+    let (doc, container, _) = scrolling_column();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    // Wheel down over a text deep inside the container.
+    runtime.simulate_scroll(0, 0, -1);
+    assert_eq!(doc.scroll_offset(container).y, 1);
+
+    // Wheel up moves back toward the start.
+    runtime.simulate_scroll(0, 0, 1);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+
+    // At the start, a wheel up has nowhere to go and nothing else to scroll.
+    runtime.simulate_scroll(0, 0, 1);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
+fn wheel_chains_to_the_outer_scroller_at_the_end() {
+    let doc = Document::new().unwrap();
+
+    let outer = doc.create_box().unwrap();
+    let mut outer_style = Style::new();
+    outer_style.flex_direction(FlexDirection::Column);
+    outer_style.overflow_y(Overflow::Scroll);
+    doc.set_style(outer, &outer_style).unwrap();
+    doc.append_child(doc.root(), outer).unwrap();
+
+    let inner = doc.create_box().unwrap();
+    let mut inner_style = Style::new();
+    inner_style.flex_direction(FlexDirection::Column);
+    inner_style.overflow_y(Overflow::Scroll);
+    inner_style.height(Length::Pixels(2));
+    inner_style.flex_shrink(0.0);
+    doc.set_style(inner, &inner_style).unwrap();
+    doc.append_child(outer, inner).unwrap();
+    for i in 0..3 {
+        let text = doc.create_text(format!("b{i}")).unwrap();
+        doc.append_child(inner, text).unwrap();
+    }
+
+    for i in 0..4 {
+        let text = doc.create_text(format!("a{i}")).unwrap();
+        doc.append_child(outer, text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    // The inner scroller has one row to give; the wheel moves it first.
+    runtime.simulate_scroll(0, 0, -1);
+    assert_eq!(doc.scroll_offset(inner).y, 1);
+    assert_eq!(doc.scroll_offset(outer).y, 0);
+
+    // At its end, the next wheel chains to the outer scroller.
+    runtime.simulate_scroll(0, 0, -1);
+    assert_eq!(doc.scroll_offset(inner).y, 1);
+    assert_eq!(doc.scroll_offset(outer).y, 1);
+}
+
+#[test]
+fn horizontal_wheel_scrolls_the_horizontal_axis() {
+    let doc = Document::new().unwrap();
+
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.width(Length::Pixels(5));
+    style.overflow_x(Overflow::Scroll);
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+    for content in ["abcde", "fghij"] {
+        let text = doc.create_text(content).unwrap();
+        doc.append_child(container, text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 1);
+    runtime.render().unwrap();
+
+    runtime.simulate_horizontal_scroll(0, 0, -2);
+    let offset = doc.scroll_offset(container);
+    assert_eq!((offset.x, offset.y), (2, 0));
+}
+
+#[test]
+fn on_scroll_fires_only_when_the_offset_changes() {
+    let (doc, container, _) = scrolling_column();
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_for_handler = events.clone();
+    doc.on_scroll(container, move |event| {
+        events_for_handler
+            .lock()
+            .unwrap()
+            .push((event.target(), event.x, event.y));
+    })
+    .unwrap();
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    doc.scroll_to(container, 0, 2).unwrap();
+    doc.scroll_to(container, 0, 99).unwrap();
+    doc.scroll_to(container, 0, 4).unwrap();
+
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![(container, 0, 2), (container, 0, 4)]
+    );
+}
+
+#[test]
+fn prevent_default_suppresses_the_wheel_scroll() {
+    let (doc, container, lines) = scrolling_column();
+
+    doc.on_wheel(lines[0], |event| event.prevent_default())
+        .unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+    runtime.simulate_scroll(0, 0, -1);
+
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
 fn max_fps_defaults_to_uncapped_and_can_be_configured() {
     let doc = Document::new().unwrap();
 

@@ -264,6 +264,16 @@ impl MouseEvent {
     }
 }
 
+/// The axis a wheel event scrolls along.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum WheelAxis {
+    /// Vertical scrolling — the common mouse wheel.
+    #[default]
+    Vertical,
+    /// Horizontal scrolling — tilt wheels and trackpads, where the terminal reports them.
+    Horizontal,
+}
+
 /// A mouse wheel event.
 #[derive(Debug, Clone)]
 pub struct WheelEvent {
@@ -271,20 +281,47 @@ pub struct WheelEvent {
     pub x: i32,
     /// Y coordinate in terminal cells.
     pub y: i32,
-    /// Signed wheel delta. Positive values move upward; negative values move downward.
+    /// Signed wheel delta. Positive values move toward the start of the axis — up or
+    /// left; negative values move toward the end — down or right.
     pub delta: i16,
+    /// The axis this event scrolls along.
+    pub axis: WheelAxis,
     metadata: TargetedMetadata,
+    default_prevented: bool,
 }
 
 impl WheelEvent {
-    /// Create a wheel event.
+    /// Create a vertical wheel event.
     pub fn new(x: i32, y: i32, delta: i16) -> Self {
         Self {
             x,
             y,
             delta,
+            axis: WheelAxis::Vertical,
             metadata: TargetedMetadata::pending(),
+            default_prevented: false,
         }
+    }
+
+    /// Create a horizontal wheel event.
+    pub fn horizontal(x: i32, y: i32, delta: i16) -> Self {
+        Self {
+            axis: WheelAxis::Horizontal,
+            ..Self::new(x, y, delta)
+        }
+    }
+
+    /// Prevent the default scroll this wheel would apply to a scrollable ancestor.
+    ///
+    /// This does not stop propagation. Use [`stop_propagation`](Self::stop_propagation)
+    /// when ancestor listeners should not receive the event.
+    pub fn prevent_default(&mut self) {
+        self.default_prevented = true;
+    }
+
+    /// Whether the default scroll has been prevented.
+    pub fn default_prevented(&self) -> bool {
+        self.default_prevented
     }
 
     /// The node this event originally targeted.
@@ -310,6 +347,36 @@ impl WheelEvent {
     /// Whether propagation to ancestor nodes has been stopped.
     pub fn propagation_stopped(&self) -> bool {
         self.metadata.propagation_stopped
+    }
+}
+
+/// A scroll offset change on an overflow container.
+///
+/// Fires on the container whose offset changed — from wheel input and imperative
+/// scrolling alike. It does not bubble: scrolling is high-frequency, and like the DOM's
+/// `scroll` event it reports a state change the engine has already applied, so it is
+/// also delivered when the container is inert or disabled.
+#[derive(Debug, Clone)]
+pub struct ScrollEvent {
+    /// The container's new horizontal scroll offset in terminal cells.
+    pub x: u16,
+    /// The container's new vertical scroll offset in terminal cells.
+    pub y: u16,
+    metadata: TargetedMetadata,
+}
+
+impl ScrollEvent {
+    pub(crate) fn new(x: u16, y: u16) -> Self {
+        Self {
+            x,
+            y,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The container whose scroll offset changed.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
     }
 }
 
@@ -376,10 +443,23 @@ impl TargetedEvent for WheelEvent {
     }
 }
 
+impl TargetedEvent for ScrollEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    // Scroll events do not bubble, so propagation can never be observed mid-flight.
+    fn propagation_stopped(&self) -> bool {
+        false
+    }
+}
+
 pub(crate) type KeyEventHandler = Arc<dyn Fn(&mut KeyEvent) + Send + Sync + 'static>;
 pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 'static>;
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
+pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -391,6 +471,7 @@ pub(crate) enum TargetedEventKind {
     MouseUp,
     Click,
     Wheel,
+    Scroll,
 }
 
 /// Registered event listener callback.
@@ -410,6 +491,8 @@ pub(crate) enum ListenerKind {
     Click(MouseEventHandler),
     /// Mouse wheel listener.
     Wheel(WheelEventHandler),
+    /// Scroll offset change listener.
+    Scroll(ScrollEventHandler),
     /// Terminal resize listener.
     Resize(ResizeEventHandler),
 }

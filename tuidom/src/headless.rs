@@ -170,6 +170,15 @@ impl HeadlessRuntime {
         );
     }
 
+    /// Dispatch a simulated horizontal mouse wheel event at a screen coordinate.
+    pub fn simulate_horizontal_scroll(&mut self, x: i32, y: i32, delta: i16) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::Wheel(WheelEvent::horizontal(x, y, delta)),
+            &mut self.event_state,
+        );
+    }
+
     /// Dispatch each character in `text` as a simulated key press.
     pub fn simulate_text(&mut self, text: &str) {
         for ch in text.chars() {

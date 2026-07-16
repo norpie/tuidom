@@ -6,7 +6,7 @@ use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
     EventPhase, FocusEvent, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent,
-    ResizeEvent, TargetedEvent, TargetedEventKind, WheelEvent,
+    ResizeEvent, ScrollEvent, TargetedEvent, TargetedEventKind, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -118,6 +118,22 @@ impl Document {
             node,
             TargetedEventKind::Wheel,
             ListenerKind::Wheel(Arc::new(handler)),
+        )
+    }
+
+    /// Register a scroll listener on an overflow container.
+    ///
+    /// Fires when the node's scroll offset changes — from wheel input and imperative
+    /// scrolling alike. Scroll events do not bubble.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_scroll<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut ScrollEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Scroll,
+            ListenerKind::Scroll(Arc::new(handler)),
         )
     }
 
@@ -286,6 +302,34 @@ impl Document {
         });
     }
 
+    /// Dispatch a scroll event on the container whose offset changed, target phase only.
+    ///
+    /// Scroll does not bubble — it is high-frequency and ancestors rarely care — and it
+    /// is not swallowed by inert or disabled state: like focus and blur, it reports a
+    /// change the engine has already made.
+    pub(crate) fn dispatch_scroll_to(&self, target: NodeId, event: &mut ScrollEvent) {
+        let listeners = lock::mutex(&self.inner.targeted_listeners)
+            .get(&(target, TargetedEventKind::Scroll))
+            .cloned()
+            .unwrap_or_default();
+        if listeners.is_empty() {
+            return;
+        }
+
+        event.set_dispatch_state(target, target, EventPhase::Target);
+        for listener in listeners {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                if let ListenerKind::Scroll(handler) = &listener.kind {
+                    handler(event);
+                }
+            }));
+
+            if result.is_err() {
+                log::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
     pub(crate) fn dispatch_resize(&self, mut event: ResizeEvent) {
         let listeners = lock::mutex(&self.inner.resize_listeners).clone();
         for listener in listeners {
@@ -369,7 +413,7 @@ impl Document {
         }
     }
 
-    fn event_path(&self, target: NodeId) -> Vec<NodeId> {
+    pub(super) fn event_path(&self, target: NodeId) -> Vec<NodeId> {
         if !self.inner.nodes.contains_key(&target) {
             return Vec::new();
         }
