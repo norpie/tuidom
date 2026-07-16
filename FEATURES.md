@@ -81,16 +81,27 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 
 ## Scrolling & Virtualization
 
-- [ ] Auto-cull at render time for any overflow-scrollable container:
-  - [ ] Skip painting nodes outside the visible scroll area
-  - [ ] Nodes still exist in DOM, just not rendered when off-screen
-  - [ ] Best-effort for variable-height items (may need measurement)
+- [x] Per-axis `overflow` style: `Visible` (default), `Scroll`, `Clip`
+  - [x] A `Scroll`/`Clip` axis drops the content-size floor, so the container can be smaller than its content
+  - [x] Layout is scroll-invariant: the offset is applied at paint time, a wheel tick never re-runs layout
+- [x] Scroll offset as document runtime state:
+  - [x] `scroll_offset` / `scroll_to` / `scroll_by`, clamped to content minus viewport from the layout snapshot
+  - [x] Relayout re-clamps stored offsets when content shrinks
+- [x] Wheel routing: nearest scrollable ancestor on the wheel's axis that can still move (scroll chaining)
+  - [x] `prevent_default()` on the wheel event suppresses the default scroll
+  - [x] Horizontal wheel events (`ScrollLeft`/`ScrollRight`) route to `overflow_x` containers
+- [x] Auto-cull at render time for any overflow-scrollable container:
+  - [x] Skip painting nodes outside the visible scroll area
+  - [x] Nodes still exist in DOM, just not rendered when off-screen
+  - [x] Exact for variable-height items — layout still positions everything; culling is paint-only
 - [ ] Explicit opt-in virtualization widget (name TBD) for large uniform-sized collections
   - [ ] Works for both vertical and horizontal scrolling
-- [ ] Built-in scrollbars for overflow containers:
-  - [ ] Configurable characters/styling (track, thumb colors)
-  - [ ] Full block default (█), half-block style option (▐▌) for thinner look
-  - [ ] Show behavior: always, when_scrolling, when_hovering, never
+- [x] Built-in scrollbars for overflow containers:
+  - [x] Overlay bars: no layout cost, drawn over the viewport's last column/row above the content they scroll
+  - [x] Configurable characters/styling (track, thumb colors)
+  - [x] Full block default (█), half-block style option (▐▌) for thinner look
+  - [x] Show behavior: always, when_focused (hover focuses, so also hover), never
+  - [ ] Show behavior: when_scrolling (deferred — needs a timed fade and an active-render tick)
 
 ## Reactivity & Change Propagation
 
@@ -216,10 +227,10 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [ ] Mouse: click, mouse down, mouse up, wheel (raw input)
   - [ ] Focus: focus, blur
     - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
-  - [ ] Scroll: `on_scroll` fires on overflow containers when scroll position changes
+  - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
   - [ ] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
 - [x] Listener registration returns handle for removal
-- [ ] No `prevent_default()` — users react to undo default behaviors if needed (simpler API)
+- [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults) and wheel (default scroll)
 
 ## Transitions & Animations
 

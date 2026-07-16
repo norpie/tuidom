@@ -2,7 +2,8 @@
 //! Box + Text/Input rendering, keyboard events, focus, focus styles,
 //! configurable focus keys, targeted mouse events, bubbling, stop_propagation,
 //! wheel events, borders, half-block edges, color variables and derivations,
-//! terminal text attributes, transitions, and the performance metrics API.
+//! scrolling with overlay scrollbars, terminal text attributes, transitions,
+//! and the performance metrics API.
 //!
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Focus the "focus me" panel — its border recolors, charset and sides untouched
@@ -14,6 +15,8 @@
 //! Click first button   — toggle button background, stop propagation
 //! Click background     — toggle container background
 //! Wheel anywhere       — adjust text opacity via container wheel handler
+//! Wheel over the list  — scroll it; its bar tracks the offset
+//! [ / ] outside input  — scroll the horizontal pane
 //! m outside input      — open the modal: focus is trapped inside it and the
 //!                        content behind it goes inert (no tab, hover, or clicks)
 //! q outside input      — quit
@@ -26,7 +29,7 @@ use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
     AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, JustifyContent, Length, Position, Sides, Style,
+    FlexGap, JustifyContent, Length, Overflow, Position, ScrollbarCharset, Sides, Style,
 };
 
 fn init_logging() {
@@ -394,6 +397,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         doc.append_child(derived_row, chip)?;
     }
 
+    // --- Scrolling ------------------------------------------------------
+
+    // Two overlay-scrollbar panes: layout is scroll-invariant, so wheeling them repaints
+    // without reflowing anything. The bars cost no cells — they overlay the last column
+    // and row of each viewport.
+    let scroll_label = doc.create_text("Scrolling (wheel over the list)")?;
+    doc.set_style(scroll_label, &section_label_style)?;
+
+    let scroll_row = doc.create_box()?;
+    doc.set_style(scroll_row, &row_style)?;
+
+    let list = doc.create_box()?;
+    let mut list_style = Style::new();
+    list_style.flex_direction(FlexDirection::Column);
+    list_style.height(Length::Pixels(5));
+    list_style.overflow_y(Overflow::Scroll);
+    list_style.border(Border::new(BorderCharset::single()));
+    list_style.border_color(Color::oklch(0.55, 0.02, 260.0));
+    list_style.padding(EdgeInsets::new(0, 1, 0, 1));
+    doc.set_style(list, &list_style)?;
+
+    for index in 1..=12 {
+        let item = doc.create_text(format!("scrollable item {index:02}"))?;
+        doc.set_style(item, &label_style)?;
+        doc.append_child(list, item)?;
+    }
+
+    let scroll_status = doc.create_text("offset 0")?;
+    doc.set_style(scroll_status, &label_style)?;
+    {
+        let doc_for_scroll = doc.clone();
+        let status = scroll_status;
+        doc.on_scroll(list, move |event| {
+            let _ = doc_for_scroll.set_text_content(status, format!("offset {}", event.y));
+        })?;
+    }
+    // The default scroll still runs; stopping propagation just keeps the wheel from
+    // also reaching the container's opacity handler below.
+    doc.on_wheel(list, |event| event.stop_propagation())?;
+
+    let wide = doc.create_box()?;
+    let mut wide_style = Style::new();
+    wide_style.width(Length::Pixels(24));
+    wide_style.overflow_x(Overflow::Scroll);
+    wide_style.scrollbar_charset(ScrollbarCharset::half_block());
+    // The bar overlays the viewport's bottom row, and without this the pane is one row
+    // tall — the bar would sit on the text itself. A row of bottom padding gives the bar
+    // a row the content never uses, the same way the list's side padding hosts its bar.
+    wide_style.padding(EdgeInsets::new(0, 0, 1, 0));
+    doc.set_style(wide, &wide_style)?;
+
+    let wide_text =
+        doc.create_text("a single long line that scrolls horizontally under a half-block bar")?;
+    doc.set_style(wide_text, &label_style)?;
+    doc.append_child(wide, wide_text)?;
+    doc.on_wheel(wide, |event| event.stop_propagation())?;
+
+    doc.append_child(scroll_row, list)?;
+    doc.append_child(scroll_row, scroll_status)?;
+    doc.append_child(scroll_row, wide)?;
+
     let attrs_label = doc.create_text("Text attributes")?;
     doc.set_style(attrs_label, &section_label_style)?;
 
@@ -428,6 +492,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, half_block_row)?;
     doc.append_child(stack, derived_label)?;
     doc.append_child(stack, derived_row)?;
+    doc.append_child(stack, scroll_label)?;
+    doc.append_child(stack, scroll_row)?;
     doc.append_child(stack, attrs_label)?;
     doc.append_child(stack, attrs_row)?;
 
@@ -520,6 +586,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KeyCode::Char('m') => {
                 let _ = d.update_style(modal_layer, |s| s.display(Display::Flex));
                 let _ = d.push_focus_context(modal_layer);
+            }
+            KeyCode::Char('[') => {
+                let _ = d.scroll_by(wide, -4, 0);
+            }
+            KeyCode::Char(']') => {
+                let _ = d.scroll_by(wide, 4, 0);
             }
             KeyCode::Char('q') => d.quit(),
             _ => {}

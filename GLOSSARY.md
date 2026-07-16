@@ -20,7 +20,15 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Layout & Positioning
 
-**Layout Snapshot** — The document-level map of latest computed layout rectangles by `NodeId`. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state. Layout positions may be negative/offscreen; rendering clips them to the grid.
+**Layout Snapshot** — The document-level map of latest computed layout by `NodeId`: each node's rectangle plus its maximum scroll per axis, both from the same taffy pass. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state. Layout positions may be negative/offscreen; rendering clips them to the grid.
+
+**Overflow** — Per-axis style property for content exceeding a node's box: `Visible` (default) spills, `Scroll` clips and scrolls, `Clip` clips without scrolling. A `Scroll` or `Clip` axis also drops the automatic content-size floor in layout, so the container may be smaller than its content — which is what makes overflow possible in the first place.
+
+**Scroll Offset** — How far a scroll container's content is shifted, in terminal cells. Runtime state like focus, not style: keyed by `NodeId` on the document, driven by wheel routing and `scroll_to`/`scroll_by`, and clamped to content minus viewport as measured by the same layout pass that produced the rects — a relayout that shrinks content re-clamps stored offsets. The offset is applied at paint time as a translation of the container's descendants; layout is scroll-invariant, so a wheel tick never re-runs taffy.
+
+**Scrollport** — The padding box of a scrolling or clipping node: the region its descendants' painting and hit-testing are bounded to, per clipped axis. Content slides through the padding but never over the border, and an axis left `Visible` stays unbounded — the clip bounds axes independently.
+
+**Scroll Chaining** — Wheel routing walks from the hit node rootward to the nearest container scrollable on the wheel's axis that can still move in the wheel's direction. A container at the end of its range passes the wheel to the ancestor beyond it, and inert or disabled containers are skipped the same way they swallow the wheel event itself.
 
 **Stacking Context** — Explicit isolation marker created with `stacking_context: true`. Paint order already treats every node's subtree as an isolated unit, so the marker's behavior is to make a node eligible to become a focus context: only a stacking context can trap focus, because trapping focus in a subtree a sibling could paint over would leave the user interacting with something they cannot see. Being a stacking context never traps focus on its own.
 
@@ -138,7 +146,11 @@ Terms and concepts used throughout the tuidom codebase.
 
 **WideContinuation** — Marker for the second terminal cell occupied by a width-2 glyph. It is not printed directly; the glyph head prints the visible character.
 
-**Grid** — 2D buffer of Cells representing screen state (width × height).
+**Grid** — 2D buffer of Cells representing screen state (width × height). Carries an active clip while painting, honored at the cell-write level so fills, text, borders, and half-block edges all clip identically.
+
+**Culling** — Render-time drop of a node whose translated rectangle lies wholly outside its clip: it is left out of the paint entries, so it paints nothing and cannot be hit, while remaining in the DOM and in layout. Where a subtree's clip is empty the walk stops entirely.
+
+**Scrollbar** — Overlay strips on a scroll container's last viewport column and row, drawn after the container's subtree so they cover the content they scroll but not what later covers the container. They occupy no layout — showing or hiding a bar never reflows content. `ScrollbarCharset` is the primitive (block and half-block are named constructors); show modes are `Always`, `WhenFocused` (hover focuses, so also "while hovered"), and `Never`, all gated on the axis actually being scrollable. Hit-testing a bar resolves to its container.
 
 **Render Cursor** — Cursor metadata produced with a rendered frame. It carries cursor position, shape, foreground-derived color, and clipped visibility without mutating grid cell content.
 
