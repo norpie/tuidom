@@ -45,6 +45,26 @@ pub(crate) struct NodeLayout {
     pub max_scroll_y: u16,
 }
 
+/// A node's computed layout as seen through [`NodeView`].
+///
+/// Exposes what downstream scroll and virtualization code needs from one layout pass:
+/// the border-box rect, the scrollport it bounds descendants to, and how far its content
+/// can actually scroll. Max scroll is zero on any axis whose overflow is not
+/// [`Overflow::Scroll`](crate::style::Overflow::Scroll), matching what
+/// [`Document::scroll_to`](crate::Document::scroll_to) clamps to.
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutView {
+    /// The node's screen rectangle (border box). May be negative when offscreen.
+    pub rect: LayoutRect,
+    /// The scrollport: the padding box a scrolling or clipping node bounds its
+    /// descendants to. Equal to `rect` deflated by the border on any node.
+    pub scrollport: LayoutRect,
+    /// Maximum horizontal scroll offset in terminal cells.
+    pub max_scroll_x: u16,
+    /// Maximum vertical scroll offset in terminal cells.
+    pub max_scroll_y: u16,
+}
+
 /// A scroll container's current offset in terminal cells.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScrollOffset {
@@ -302,7 +322,7 @@ pub struct NodeView {
     /// Ordered list of child node IDs.
     pub children: Vec<NodeId>,
     /// Computed layout, if layout has been run.
-    pub layout: Option<LayoutRect>,
+    pub layout: Option<LayoutView>,
     /// Arbitrary string attributes.
     pub attrs: HashMap<String, String>,
 }

@@ -135,7 +135,9 @@ impl Document {
     }
 }
 
-fn scrollable_max(overflow: Overflow, max_scroll: u16) -> u16 {
+/// The scroll range an axis actually offers: taffy's measured overhang, gated on the
+/// axis opting into scrolling.
+pub(super) fn scrollable_max(overflow: Overflow, max_scroll: u16) -> u16 {
     match overflow {
         Overflow::Scroll => max_scroll,
         Overflow::Visible | Overflow::Clip => 0,

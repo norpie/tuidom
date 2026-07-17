@@ -1,9 +1,10 @@
 use crate::document::Document;
+use crate::document::scroll::scrollable_max;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::layout::compute_layout as compute_document_layout;
 use crate::lock;
-use crate::node::{LayoutRect, NodeView};
+use crate::node::{LayoutRect, LayoutView, NodeLayout, NodeView};
 use crate::paint_order::paint_order;
 use crate::style::resolution::ResolvedStyle;
 
@@ -51,7 +52,8 @@ impl Document {
     fn get_node_unlocked(&self, id: NodeId) -> Option<NodeView> {
         let layout = lock::rw_read(&self.inner.layout_snapshot)
             .get(&id)
-            .map(|layout| layout.rect);
+            .copied()
+            .and_then(|layout| self.layout_view(id, layout));
         self.inner.nodes.get(&id).map(|r| NodeView {
             id,
             kind: r.kind.to_view(),
@@ -59,6 +61,20 @@ impl Document {
             children: r.children.clone(),
             layout,
             attrs: r.attrs.clone(),
+        })
+    }
+
+    /// Build the public view of one snapshot entry.
+    ///
+    /// The scrollport needs the node's border and max scroll its overflow, both from
+    /// the resolved style; a node whose style cannot resolve reports no layout.
+    fn layout_view(&self, id: NodeId, layout: NodeLayout) -> Option<LayoutView> {
+        let resolved = self.resolved_style_unlocked(id).ok()?;
+        Some(LayoutView {
+            rect: layout.rect,
+            scrollport: layout.rect.padding_box(&resolved),
+            max_scroll_x: scrollable_max(resolved.overflow_x, layout.max_scroll_x),
+            max_scroll_y: scrollable_max(resolved.overflow_y, layout.max_scroll_y),
         })
     }
 

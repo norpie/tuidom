@@ -299,7 +299,7 @@ impl Document {
         };
         // Scroll against the rect the glyphs are actually written into, so a padded input
         // does not believe it has more room than it paints.
-        let content = layout.content_rect(&self.resolved_style(node)?);
+        let content = layout.rect.content_rect(&self.resolved_style(node)?);
         if content.width == 0 || content.height == 0 {
             return Ok(());
         }

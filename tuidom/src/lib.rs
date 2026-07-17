@@ -43,6 +43,7 @@ pub mod style;
 pub use document::Document;
 pub use error::{Result, TuidomError};
 pub use id::NodeId;
+pub use node::{LayoutRect, LayoutView, NodeKindView, NodeView, ScrollOffset};
 
 // Re-export the macro
 pub use tuidom_derive::node;

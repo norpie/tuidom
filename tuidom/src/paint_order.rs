@@ -274,7 +274,7 @@ fn collect_entry(doc: &Document, node_id: NodeId) -> Option<PaintEntry> {
     if resolved.display == Display::None || resolved.opacity <= 0.0 {
         return None;
     }
-    let layout = view.layout?;
+    let layout = view.layout?.rect;
 
     Some(PaintEntry {
         id: node_id,

@@ -293,7 +293,7 @@ fn absolute_node_paints_and_hit_tests_outside_its_parent() {
 
     assert_eq!(runtime.get_cell(3, 2).unwrap().text, "X");
     assert_eq!(doc.node_at(3, 2), Some(badge));
-    assert_eq!(doc.get_node(badge).unwrap().layout.unwrap().x, 3);
+    assert_eq!(doc.get_node(badge).unwrap().layout.unwrap().rect.x, 3);
 }
 
 /// Absolute positioning must not let a descendant's `z_index` escape its parent
@@ -1016,20 +1016,20 @@ fn input_layout_measures_displayed_single_line_multiline_and_masked_content() {
     doc.append_child(doc.root(), input).unwrap();
 
     doc.compute_layout(20, 5).unwrap();
-    let single_line = doc.get_node(input).unwrap().layout.unwrap();
+    let single_line = doc.get_node(input).unwrap().layout.unwrap().rect;
     assert_eq!(single_line.width, 7);
     assert_eq!(single_line.height, 1);
 
     doc.set_input_multiline(input, true).unwrap();
     doc.compute_layout(20, 5).unwrap();
-    let multiline = doc.get_node(input).unwrap().layout.unwrap();
+    let multiline = doc.get_node(input).unwrap().layout.unwrap().rect;
     assert_eq!(multiline.width, 4);
     assert_eq!(multiline.height, 2);
 
     doc.set_input_value(input, "abcd").unwrap();
     doc.set_input_mask(input, Some('界')).unwrap();
     doc.compute_layout(20, 5).unwrap();
-    let masked = doc.get_node(input).unwrap().layout.unwrap();
+    let masked = doc.get_node(input).unwrap().layout.unwrap().rect;
     assert_eq!(masked.width, 8);
     assert_eq!(masked.height, 1);
 }
@@ -1481,7 +1481,7 @@ fn failed_layout_preserves_previous_snapshot() {
     doc.append_child(root, child).unwrap();
     doc.compute_layout(20, 5).unwrap();
 
-    let before = doc.get_node(child).unwrap().layout.unwrap();
+    let before = doc.get_node(child).unwrap().layout.unwrap().rect;
 
     doc.remove_layout_mapping_for_test(child);
 
@@ -1489,7 +1489,7 @@ fn failed_layout_preserves_previous_snapshot() {
         doc.compute_layout(20, 5),
         Err(TuidomError::LayoutMappingMissing { id: child })
     );
-    let after = doc.get_node(child).unwrap().layout.unwrap();
+    let after = doc.get_node(child).unwrap().layout.unwrap().rect;
     assert_eq!(after.x, before.x);
     assert_eq!(after.y, before.y);
     assert_eq!(after.width, before.width);
@@ -1538,14 +1538,14 @@ fn inherited_style_change_updates_layout_without_recreating_taffy_nodes() {
     let before = doc.layout_mapping_snapshot();
 
     doc.compute_layout(100, 10).unwrap();
-    assert_eq!(doc.get_node(child).unwrap().layout.unwrap().width, 10);
+    assert_eq!(doc.get_node(child).unwrap().layout.unwrap().rect.width, 10);
 
     doc.update_style(root, |style| style.width(Length::Pixels(20)))
         .unwrap();
     doc.compute_layout(100, 10).unwrap();
 
     assert_eq!(doc.layout_mapping_snapshot(), before);
-    assert_eq!(doc.get_node(child).unwrap().layout.unwrap().width, 20);
+    assert_eq!(doc.get_node(child).unwrap().layout.unwrap().rect.width, 20);
 }
 
 #[test]
@@ -1749,6 +1749,50 @@ fn only_scroll_overflow_is_scrollable() {
 
     doc.scroll_to(container, 0, 2).unwrap();
     assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
+fn node_view_exposes_scrollport_and_max_scroll() {
+    let (doc, container, lines) = scrolling_column();
+
+    let layout = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!((layout.max_scroll_x, layout.max_scroll_y), (0, 4));
+    // Borderless, so the scrollport is the whole rect.
+    assert_eq!(layout.scrollport.height, layout.rect.height);
+    assert_eq!(layout.scrollport.width, layout.rect.width);
+
+    // A non-scroll node overflowed by nothing reports no scroll range either way.
+    let line = doc.get_node(lines[0]).unwrap().layout.unwrap();
+    assert_eq!((line.max_scroll_x, line.max_scroll_y), (0, 0));
+
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.border(Border::new(BorderCharset::single()));
+    doc.set_style(container, &style).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+
+    // The scrollport is the padding box: the border frames it on every side.
+    let layout = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!(layout.scrollport.x, layout.rect.x + 1);
+    assert_eq!(layout.scrollport.y, layout.rect.y + 1);
+    assert_eq!(layout.scrollport.width, layout.rect.width - 2);
+    assert_eq!(layout.scrollport.height, layout.rect.height - 2);
+}
+
+#[test]
+fn node_view_max_scroll_is_zero_without_scroll_overflow() {
+    let (doc, container, _) = scrolling_column();
+
+    // Same overflowing content, but a Clip axis offers no scroll range.
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Clip);
+    doc.set_style(container, &style).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+
+    let layout = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!((layout.max_scroll_x, layout.max_scroll_y), (0, 0));
 }
 
 #[test]
@@ -2263,15 +2307,15 @@ fn focus_style_layout_effect_refreshes_on_focus_change() {
     doc.set_focus_style(node, &focus).unwrap();
 
     doc.compute_layout(10, 3).unwrap();
-    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().width, 1);
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().rect.width, 1);
 
     doc.focus(node).unwrap();
     doc.compute_layout(10, 3).unwrap();
-    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().width, 4);
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().rect.width, 4);
 
     doc.blur();
     doc.compute_layout(10, 3).unwrap();
-    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().width, 1);
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().rect.width, 1);
 }
 
 #[test]

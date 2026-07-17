@@ -633,7 +633,7 @@ mod tests {
         style.flex_direction(FlexDirection::Column);
         let (doc, container) = overflowing_container(FlexDirection::Column, style);
 
-        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        let layout = doc.get_node(container).unwrap().layout.unwrap().rect;
         assert_eq!(layout.height, 8);
     }
 
@@ -644,7 +644,7 @@ mod tests {
         style.overflow_y(Overflow::Scroll);
         let (doc, container) = overflowing_container(FlexDirection::Column, style);
 
-        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        let layout = doc.get_node(container).unwrap().layout.unwrap().rect;
         assert_eq!(layout.height, 4);
     }
 
@@ -655,7 +655,7 @@ mod tests {
         style.overflow_y(Overflow::Clip);
         let (doc, container) = overflowing_container(FlexDirection::Column, style);
 
-        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        let layout = doc.get_node(container).unwrap().layout.unwrap().rect;
         assert_eq!(layout.height, 4);
     }
 
@@ -665,7 +665,7 @@ mod tests {
         style.overflow_x(Overflow::Scroll);
         let (doc, container) = overflowing_container(FlexDirection::Row, style);
 
-        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        let layout = doc.get_node(container).unwrap().layout.unwrap().rect;
         assert_eq!(layout.width, 10);
     }
 
@@ -676,7 +676,7 @@ mod tests {
         style.overflow_y(Overflow::Scroll);
         let (doc, container) = overflowing_container(FlexDirection::Row, style);
 
-        let layout = doc.get_node(container).unwrap().layout.unwrap();
+        let layout = doc.get_node(container).unwrap().layout.unwrap().rect;
         assert_eq!(layout.width, 16);
     }
 
@@ -746,9 +746,9 @@ mod tests {
 
         compute_layout(&doc, 10, 1).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
-        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap().rect;
 
         assert_eq!(first_layout.x, 0);
         assert_eq!(
@@ -779,7 +779,7 @@ mod tests {
 
         compute_layout(&doc, 10, 4).unwrap();
 
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!((child_layout.x, child_layout.y), (3, 1));
     }
 
@@ -812,8 +812,8 @@ mod tests {
 
         compute_layout(&doc, 10, 1).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.x, 0);
         assert_eq!(second_layout.x, 3);
     }
@@ -842,8 +842,8 @@ mod tests {
 
         compute_layout(&doc, 10, 4).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!((first_layout.x, first_layout.y), (0, 0));
         assert_eq!((second_layout.x, second_layout.y), (0, 1));
     }
@@ -872,8 +872,8 @@ mod tests {
 
         compute_layout(&doc, 10, 1).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.x, 0);
         assert_eq!(second_layout.x, 4);
     }
@@ -903,8 +903,8 @@ mod tests {
 
         compute_layout(&doc, 2, 5).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.y, 0);
         assert_eq!(second_layout.y, 3);
     }
@@ -933,8 +933,8 @@ mod tests {
 
         compute_layout(&doc, 12, 1).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.width, 4);
         assert_eq!(second_layout.width, 8);
         assert_eq!(second_layout.x, 4);
@@ -964,8 +964,8 @@ mod tests {
 
         compute_layout(&doc, 8, 1).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.width, 5);
         assert_eq!(second_layout.width, 3);
         assert_eq!(second_layout.x, 5);
@@ -1013,13 +1013,13 @@ mod tests {
         compute_layout(&doc, 20, 10).unwrap();
 
         // The parent sits at the root's padding origin, and published rects are screen-absolute.
-        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap();
+        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap().rect;
         assert_eq!((parent_layout.x, parent_layout.y), (4, 4));
 
-        let flush_layout = doc.get_node(flush).unwrap().layout.unwrap();
+        let flush_layout = doc.get_node(flush).unwrap().layout.unwrap().rect;
         assert_eq!((flush_layout.x, flush_layout.y), (4, 4));
 
-        let offset_layout = doc.get_node(offset).unwrap().layout.unwrap();
+        let offset_layout = doc.get_node(offset).unwrap().layout.unwrap().rect;
         assert_eq!((offset_layout.x, offset_layout.y), (7, 5));
     }
 
@@ -1046,7 +1046,7 @@ mod tests {
         compute_layout(&doc, 20, 10).unwrap();
 
         // The parent keeps its full border-box rect; the frame comes out of the child.
-        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap();
+        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap().rect;
         assert_eq!(
             (
                 parent_layout.x,
@@ -1057,7 +1057,7 @@ mod tests {
             (0, 0, 10, 6)
         );
 
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!(
             (
                 child_layout.x,
@@ -1093,7 +1093,7 @@ mod tests {
 
         compute_layout(&doc, 20, 10).unwrap();
 
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!(
             (
                 child_layout.x,
@@ -1134,7 +1134,7 @@ mod tests {
         compute_layout(&doc, 20, 10).unwrap();
 
         // Inset by the border, but not by the parent's padding.
-        let flush_layout = doc.get_node(flush).unwrap().layout.unwrap();
+        let flush_layout = doc.get_node(flush).unwrap().layout.unwrap().rect;
         assert_eq!((flush_layout.x, flush_layout.y), (1, 1));
     }
 
@@ -1167,12 +1167,12 @@ mod tests {
         compute_layout(&doc, 10, 2).unwrap();
 
         // `second` takes the slot the absolute node would have occupied in flow.
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!((first_layout.x, first_layout.y), (0, 0));
         assert_eq!((second_layout.x, second_layout.y), (2, 0));
 
-        let absolute_layout = doc.get_node(absolute).unwrap().layout.unwrap();
+        let absolute_layout = doc.get_node(absolute).unwrap().layout.unwrap().rect;
         assert_eq!((absolute_layout.x, absolute_layout.y), (7, 1));
     }
 
@@ -1206,7 +1206,7 @@ mod tests {
         compute_layout(&doc, 20, 10).unwrap();
 
         // Flow child of an absolute node still honors that node's padding.
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!((child_layout.x, child_layout.y), (6, 3));
     }
 
@@ -1240,7 +1240,7 @@ mod tests {
         compute_layout(&doc, 20, 10).unwrap();
 
         // Escapes the parent box entirely; paint clips to the screen, not to the parent.
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!((child_layout.x, child_layout.y), (-1, -1));
     }
 
@@ -1294,8 +1294,8 @@ mod tests {
         compute_layout(&doc, 10, 1).unwrap();
 
         // First child packs against the right edge; DOM order runs right to left.
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.x, 8);
         assert_eq!(second_layout.x, 6);
     }
@@ -1324,8 +1324,8 @@ mod tests {
 
         compute_layout(&doc, 4, 6).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
         assert_eq!(first_layout.y, 4);
         assert_eq!(second_layout.y, 2);
     }
@@ -1357,9 +1357,9 @@ mod tests {
         compute_layout(&doc, 5, 2).unwrap();
 
         // Same wrapping as `Wrap`, but the first line sits at the bottom.
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
-        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap().rect;
         assert_eq!((first_layout.x, first_layout.y), (0, 1));
         assert_eq!((second_layout.x, second_layout.y), (2, 1));
         assert_eq!((third_layout.x, third_layout.y), (0, 0));
@@ -1385,7 +1385,7 @@ mod tests {
 
         compute_layout(&doc, 10, 1).unwrap();
 
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!(child_layout.width, 4);
     }
 
@@ -1415,9 +1415,9 @@ mod tests {
 
         compute_layout(&doc, 5, 2).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
-        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap().rect;
         assert_eq!((first_layout.x, first_layout.y), (0, 0));
         assert_eq!((second_layout.x, second_layout.y), (2, 0));
         assert_eq!((third_layout.x, third_layout.y), (0, 1));
@@ -1450,9 +1450,9 @@ mod tests {
 
         compute_layout(&doc, 5, 6).unwrap();
 
-        let first_layout = doc.get_node(first).unwrap().layout.unwrap();
-        let second_layout = doc.get_node(second).unwrap().layout.unwrap();
-        let third_layout = doc.get_node(third).unwrap().layout.unwrap();
+        let first_layout = doc.get_node(first).unwrap().layout.unwrap().rect;
+        let second_layout = doc.get_node(second).unwrap().layout.unwrap().rect;
+        let third_layout = doc.get_node(third).unwrap().layout.unwrap().rect;
         assert_eq!((first_layout.x, first_layout.y), (0, 2));
         assert_eq!((second_layout.x, second_layout.y), (2, 2));
         assert_eq!((third_layout.x, third_layout.y), (0, 3));
@@ -1480,7 +1480,7 @@ mod tests {
 
         compute_layout(&doc, 10, 5).unwrap();
 
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
         assert_eq!((child_layout.x, child_layout.y), (0, 2));
     }
 
@@ -1506,9 +1506,9 @@ mod tests {
 
         compute_layout(&doc, 100, 40).unwrap();
 
-        let root_layout = doc.get_node(root).unwrap().layout.unwrap();
-        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap();
-        let child_layout = doc.get_node(child).unwrap().layout.unwrap();
+        let root_layout = doc.get_node(root).unwrap().layout.unwrap().rect;
+        let parent_layout = doc.get_node(parent).unwrap().layout.unwrap().rect;
+        let child_layout = doc.get_node(child).unwrap().layout.unwrap().rect;
 
         assert_eq!((root_layout.x, root_layout.y), (0, 0));
         assert_eq!((parent_layout.x, parent_layout.y), (25, 10));
