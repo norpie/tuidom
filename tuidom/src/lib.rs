@@ -34,6 +34,8 @@ pub mod performance;
 /// Screen buffer and rendering.
 pub(crate) mod render;
 mod runtime_event;
+/// Virtualization primitives: window range math for large collections.
+pub mod virtualize;
 
 /// The [`Document`] type and public API.
 pub mod document;
