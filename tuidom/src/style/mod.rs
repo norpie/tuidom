@@ -377,6 +377,10 @@ pub struct Style {
     pub(crate) stacking_context: StyleValue<bool>,
     /// Whether mouse drag selection is confined to this node's subtree.
     pub(crate) selection_boundary: StyleValue<bool>,
+    /// Background for selected text. Unset swaps the glyph's colors (reverse video).
+    pub(crate) selection_bg: StyleValue<Color>,
+    /// Foreground for selected text. Unset swaps the glyph's colors (reverse video).
+    pub(crate) selection_fg: StyleValue<Color>,
     /// Bold text.
     pub(crate) bold: StyleValue<bool>,
     /// Italic text.
@@ -436,6 +440,8 @@ impl Style {
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
             selection_boundary: StyleValue::Unset,
+            selection_bg: StyleValue::Unset,
+            selection_fg: StyleValue::Unset,
             bold: StyleValue::Unset,
             italic: StyleValue::Unset,
             underline: StyleValue::Unset,
@@ -1068,6 +1074,38 @@ impl Style {
     /// Reset selection boundary behavior to the document/default style.
     pub fn unset_selection_boundary(&mut self) {
         self.selection_boundary = StyleValue::Unset;
+    }
+
+    // -- Selection Colors ----------------------------------------------
+
+    /// Set the background color for selected text.
+    pub fn selection_bg(&mut self, value: Color) {
+        self.selection_bg = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the selected-text background from the parent node.
+    pub fn inherit_selection_bg(&mut self) {
+        self.selection_bg = StyleValue::Inherit;
+    }
+
+    /// Reset the selected-text background to the document/default style.
+    pub fn unset_selection_bg(&mut self) {
+        self.selection_bg = StyleValue::Unset;
+    }
+
+    /// Set the foreground color for selected text.
+    pub fn selection_fg(&mut self, value: Color) {
+        self.selection_fg = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the selected-text foreground from the parent node.
+    pub fn inherit_selection_fg(&mut self) {
+        self.selection_fg = StyleValue::Inherit;
+    }
+
+    /// Reset the selected-text foreground to the document/default style.
+    pub fn unset_selection_fg(&mut self) {
+        self.selection_fg = StyleValue::Unset;
     }
 
     // -- Cursor Shape ---------------------------------------------------

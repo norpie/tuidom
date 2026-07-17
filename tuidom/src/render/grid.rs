@@ -638,6 +638,70 @@ impl Grid {
         glyphs
     }
 
+    /// Recolor a run of selected glyph cells on one row.
+    ///
+    /// With explicit selection colors, blends them over the run at the given alpha.
+    /// With neither, swaps each cell's colors — reverse video — using the grid's
+    /// default background where a cell has no color of its own. A wide glyph's
+    /// continuation cell follows its head, so both halves highlight as one.
+    pub fn apply_selection_colors(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: u16,
+        fg: Option<Rgb>,
+        bg: Option<Rgb>,
+        alpha: f64,
+    ) {
+        let alpha = clamp_alpha(alpha);
+        if alpha <= 0.0 || width == 0 {
+            return;
+        }
+
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
+        let row = i64::from(y);
+        if row < bound_top || row >= bound_bottom {
+            return;
+        }
+        let start = i64::from(x).max(bound_left);
+        let end = (i64::from(x) + i64::from(width)).min(bound_right);
+        if end <= start {
+            return;
+        }
+
+        let default_bg = self.default_bg;
+        let row_index = row as usize;
+        let mut head_fg: Option<Rgb> = None;
+        let mut head_bg: Option<Rgb> = None;
+        for col in start..end {
+            let cell = &mut self.cells[row_index][col as usize];
+            let is_continuation = matches!(cell.content, CellContent::WideContinuation);
+            if !is_continuation {
+                head_fg = cell.fg;
+                head_bg = cell.bg;
+            }
+
+            if fg.is_none() && bg.is_none() {
+                // Reverse video: a rearrangement of colors already composited into the
+                // cell, so alpha plays no part.
+                if !is_continuation {
+                    cell.fg = Some(head_bg.unwrap_or(default_bg));
+                }
+                cell.bg = Some(head_fg.unwrap_or(default_bg));
+                continue;
+            }
+
+            if bg.is_some() {
+                cell.bg = blend_color(cell.bg, bg, alpha, default_bg);
+            }
+            if fg.is_some() && !is_continuation {
+                let cell_bg = cell.bg;
+                cell.fg = blend_fg(cell.fg, fg, alpha, cell_bg, default_bg);
+            }
+        }
+        self.touch_span(row_index, start as usize, end as usize);
+    }
+
     /// Draw a border around the edge cells of `rect`, clipped to the grid.
     ///
     /// Bg is left as-is: the border sits on whatever background the node already filled.

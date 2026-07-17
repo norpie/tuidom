@@ -92,6 +92,12 @@ pub struct ResolvedStyle {
     pub stacking_context: bool,
     /// Whether mouse drag selection is confined to this node's subtree.
     pub selection_boundary: bool,
+    /// Resolved selected-text background. `None` means reverse video: selected glyphs
+    /// swap their foreground and background.
+    pub selection_bg: Option<ResolvedColor>,
+    /// Resolved selected-text foreground. `None` means reverse video: selected glyphs
+    /// swap their foreground and background.
+    pub selection_fg: Option<ResolvedColor>,
     /// Whether text is drawn bold.
     pub bold: bool,
     /// Whether text is drawn italic.
@@ -165,6 +171,8 @@ pub(crate) struct StyleDefaults {
     z_index: i32,
     stacking_context: bool,
     selection_boundary: bool,
+    selection_bg: Option<ResolvedColor>,
+    selection_fg: Option<ResolvedColor>,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -213,6 +221,8 @@ impl Default for StyleDefaults {
             z_index: 0,
             stacking_context: false,
             selection_boundary: false,
+            selection_bg: None,
+            selection_fg: None,
             bold: false,
             italic: false,
             underline: false,
@@ -273,6 +283,8 @@ impl StyleDefaults {
             z_index: self.z_index,
             stacking_context: self.stacking_context,
             selection_boundary: self.selection_boundary,
+            selection_bg: self.selection_bg,
+            selection_fg: self.selection_fg,
             bold: self.bold,
             italic: self.italic,
             underline: self.underline,
@@ -494,6 +506,18 @@ impl ResolvedStyle {
                 &data.style.selection_boundary,
                 parent.map(|p| &p.selection_boundary),
                 &defaults.selection_boundary,
+            ),
+            selection_bg: resolve_opt(
+                &data.style.selection_bg,
+                parent.and_then(|p| p.selection_bg),
+                defaults.selection_bg,
+                &ctx,
+            ),
+            selection_fg: resolve_opt(
+                &data.style.selection_fg,
+                parent.and_then(|p| p.selection_fg),
+                defaults.selection_fg,
+                &ctx,
             ),
             bold: resolve(&data.style.bold, parent.map(|p| &p.bold), &defaults.bold),
             italic: resolve(
@@ -753,6 +777,20 @@ impl ResolvedStyle {
             &style.selection_boundary,
             parent.map(|p| &p.selection_boundary),
             &defaults.selection_boundary,
+        );
+        apply_opt_override(
+            &mut self.selection_bg,
+            &style.selection_bg,
+            parent.and_then(|p| p.selection_bg),
+            defaults.selection_bg,
+            &ctx,
+        );
+        apply_opt_override(
+            &mut self.selection_fg,
+            &style.selection_fg,
+            parent.and_then(|p| p.selection_fg),
+            defaults.selection_fg,
+            &ctx,
         );
         apply_override(
             &mut self.bold,

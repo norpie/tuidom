@@ -784,6 +784,85 @@ mod tests {
     }
 
     #[test]
+    fn selected_text_renders_reverse_video_by_default() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        let mut style = Style::new();
+        style.color(Color::white());
+        style.background(Color::black());
+        doc.set_style(text, &style).unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (2, 0));
+        runtime.render().unwrap();
+
+        let selected = runtime.get_cell(1, 0).unwrap();
+        assert_eq!(selected.fg, Some(ScreenColor::from_rgb(0, 0, 0)));
+        assert_eq!(selected.bg, Some(ScreenColor::from_rgb(255, 255, 255)));
+
+        let unselected = runtime.get_cell(4, 0).unwrap();
+        assert_eq!(unselected.fg, Some(ScreenColor::from_rgb(255, 255, 255)));
+        assert_eq!(unselected.bg, Some(ScreenColor::from_rgb(0, 0, 0)));
+    }
+
+    #[test]
+    fn selected_text_uses_explicit_selection_colors() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        let mut style = Style::new();
+        style.color(Color::black());
+        style.background(Color::white());
+        style.selection_bg(Color::black());
+        style.selection_fg(Color::white());
+        doc.set_style(text, &style).unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (2, 0));
+        runtime.render().unwrap();
+
+        let selected = runtime.get_cell(1, 0).unwrap();
+        assert_eq!(selected.fg, Some(ScreenColor::from_rgb(255, 255, 255)));
+        assert_eq!(selected.bg, Some(ScreenColor::from_rgb(0, 0, 0)));
+
+        let unselected = runtime.get_cell(4, 0).unwrap();
+        assert_eq!(unselected.fg, Some(ScreenColor::from_rgb(0, 0, 0)));
+        assert_eq!(unselected.bg, Some(ScreenColor::from_rgb(255, 255, 255)));
+    }
+
+    #[test]
+    fn wide_glyph_selection_highlights_both_cells() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("日本").unwrap();
+        let mut style = Style::new();
+        style.color(Color::white());
+        style.background(Color::black());
+        doc.set_style(text, &style).unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        // Select only 日 (cells 0 and 1).
+        runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+        runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+        runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+        runtime.render().unwrap();
+
+        // Head and continuation cell both carry the swapped background.
+        let head = runtime.get_cell(0, 0).unwrap();
+        let continuation = runtime.get_cell(1, 0).unwrap();
+        assert_eq!(head.bg, Some(ScreenColor::from_rgb(255, 255, 255)));
+        assert_eq!(continuation.bg, Some(ScreenColor::from_rgb(255, 255, 255)));
+
+        // 本 stays unswapped.
+        let outside = runtime.get_cell(2, 0).unwrap();
+        assert_eq!(outside.bg, Some(ScreenColor::from_rgb(0, 0, 0)));
+    }
+
+    #[test]
     fn click_clears_the_selection() {
         let doc = Document::new().unwrap();
         let text = doc.create_text("hello").unwrap();

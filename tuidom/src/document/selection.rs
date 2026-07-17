@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -169,6 +170,55 @@ impl Document {
             }
         }
         subtree
+    }
+
+    /// The selected byte range of every Text node in the selection, in document order.
+    ///
+    /// A preorder walk of the boundary subtree from the start point to the end point:
+    /// the endpoints contribute partial ranges, everything between contributes its full
+    /// content — including text the pointer never crossed, since a selection is a range
+    /// in the document, not a screen region. Empty when nothing is selected.
+    pub(crate) fn selection_ranges(&self) -> Vec<(NodeId, Range<usize>)> {
+        let Some(state) = *lock::mutex(&self.inner.selection) else {
+            return Vec::new();
+        };
+        let Some((start, end)) = self.ordered_selection(&state) else {
+            return Vec::new();
+        };
+
+        let mut ranges = Vec::new();
+        let mut in_range = false;
+        let mut stack = vec![state.boundary];
+        while let Some(node) = stack.pop() {
+            if node == start.node {
+                in_range = true;
+            }
+            if in_range && let Some(len) = self.text_content_len(node) {
+                let from = if node == start.node { start.offset } else { 0 };
+                let to = if node == end.node {
+                    end.offset.min(len)
+                } else {
+                    len
+                };
+                if from < to {
+                    ranges.push((node, from..to));
+                }
+            }
+            if node == end.node {
+                break;
+            }
+            let children = self.get_children(node);
+            stack.extend(children.iter().rev());
+        }
+        ranges
+    }
+
+    fn text_content_len(&self, node: NodeId) -> Option<usize> {
+        let data = self.inner.nodes.get(&node)?;
+        match &data.kind {
+            NodeKind::Text { content } => Some(content.len()),
+            _ => None,
+        }
     }
 
     /// Normalize raw drag geometry to a document-ordered, end-extended pair.

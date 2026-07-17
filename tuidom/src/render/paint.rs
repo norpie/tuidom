@@ -1,5 +1,7 @@
 //! Tree → grid painting using z-index sorted sibling subtrees.
 
+use std::collections::HashMap;
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -64,6 +66,7 @@ pub(crate) fn paint(
     let collect_time = collect_start.elapsed();
 
     let focused = doc.focused();
+    let selection: HashMap<NodeId, Range<usize>> = doc.selection_ranges().into_iter().collect();
     let mut profile = PaintProfile {
         enabled: instrument,
         ..PaintProfile::default()
@@ -95,6 +98,7 @@ pub(crate) fn paint(
             grid,
             entry,
             focused,
+            selection.get(&entry.id),
             rgb_cache,
             &mut profile,
             clear_result.skipped_background,
@@ -117,10 +121,12 @@ pub(crate) fn paint(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_entry(
     grid: &mut Grid,
     node: &PaintEntry,
     focused: Option<crate::id::NodeId>,
+    selected: Option<&Range<usize>>,
     rgb_cache: &mut RgbCache,
     profile: &mut PaintProfile,
     skipped_background: Option<NodeId>,
@@ -150,6 +156,9 @@ fn paint_entry(
 
         NodeKindView::Text { content } => {
             paint_text(grid, node, fg_rgb, alpha, content, profile);
+            if let Some(range) = selected {
+                paint_text_selection(grid, node, content, range, rgb_cache, profile);
+            }
             None
         }
 
@@ -309,6 +318,79 @@ fn paint_text(
         profile.text_write_time += start.elapsed();
         profile.glyphs_written += glyphs;
     }
+}
+
+/// Recolor the cells of a text node's selected byte range.
+///
+/// Runs right after the node's glyphs are painted, under the same clip, so the
+/// recolor sees exactly the cells this node wrote. Unset selection colors mean
+/// reverse video, applied per cell by the grid.
+fn paint_text_selection(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    content: &str,
+    range: &Range<usize>,
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) {
+    let rect = node.layout.content_rect(&node.resolved);
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+
+    let fg = node
+        .resolved
+        .selection_fg
+        .map(|c| resolve_rgb(rgb_cache, c, profile));
+    let bg = node
+        .resolved
+        .selection_bg
+        .map(|c| resolve_rgb(rgb_cache, c, profile));
+
+    let mut line_start = 0usize;
+    for (index, line) in content.split('\n').take(rect.height as usize).enumerate() {
+        let line_end = line_start + line.len();
+        let from = range.start.max(line_start);
+        let to = range.end.min(line_end);
+        if from < to
+            && let Some((col_start, col_end)) = selected_cell_span(line, line_start, from, to)
+        {
+            // The glyph write already clipped to the content rect; clip the run the
+            // same way so a long line's selection cannot spill past the node's box.
+            let col_end = col_end.min(i32::from(rect.width));
+            if col_start < col_end {
+                grid.apply_selection_colors(
+                    rect.x + col_start,
+                    rect.y + index as i32,
+                    (col_end - col_start) as u16,
+                    fg,
+                    bg,
+                    node.resolved.opacity,
+                );
+            }
+        }
+        line_start = line_end + 1;
+    }
+}
+
+/// The cell columns a selected byte range covers on one line, relative to the line's
+/// first cell. `None` when the range covers no visible glyph.
+fn selected_cell_span(line: &str, line_start: usize, from: usize, to: usize) -> Option<(i32, i32)> {
+    let mut col = 0i32;
+    let mut span: Option<(i32, i32)> = None;
+    for (offset, grapheme) in line.grapheme_indices(true) {
+        let width = UnicodeWidthStr::width(grapheme).min(2) as i32;
+        if width == 0 {
+            continue;
+        }
+        let absolute = line_start + offset;
+        if absolute >= from && absolute < to {
+            let start = span.map_or(col, |(start, _)| start);
+            span = Some((start, col + width));
+        }
+        col += width;
+    }
+    span
 }
 
 #[derive(Debug, Clone, Copy, Default)]
