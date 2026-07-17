@@ -536,10 +536,14 @@ mod tests {
         let red = ResolvedColor::red();
         let blue = ResolvedColor::blue();
 
-        let mut from_style = ResolvedStyle::default();
-        from_style.background = Some(red);
-        let mut to_style = ResolvedStyle::default();
-        to_style.background = Some(blue);
+        let from_style = ResolvedStyle {
+            background: Some(red),
+            ..ResolvedStyle::default()
+        };
+        let to_style = ResolvedStyle {
+            background: Some(blue),
+            ..ResolvedStyle::default()
+        };
         let configs = HashMap::from([(
             TransitionProperty::Background,
             TransitionConfig::new(
@@ -564,10 +568,14 @@ mod tests {
         let node = NodeId::new(1);
         let start = Instant::now();
 
-        let mut from_style = ResolvedStyle::default();
-        from_style.width = crate::style::Length::Pixels(4);
-        let mut to_style = ResolvedStyle::default();
-        to_style.width = crate::style::Length::Percent(50.0);
+        let from_style = ResolvedStyle {
+            width: crate::style::Length::Pixels(4),
+            ..ResolvedStyle::default()
+        };
+        let to_style = ResolvedStyle {
+            width: crate::style::Length::Percent(50.0),
+            ..ResolvedStyle::default()
+        };
         let configs = HashMap::from([(
             TransitionProperty::Width,
             TransitionConfig::new(
