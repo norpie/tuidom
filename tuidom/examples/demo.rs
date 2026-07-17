@@ -16,11 +16,13 @@
 //! Click background     — toggle container background
 //! Wheel anywhere       — adjust text opacity via container wheel handler
 //! Wheel over the list  — scroll it; its bar tracks the offset
+//! Wheel over the 10k pane — virtualized: only the visible window exists in the DOM
 //! [ / ] outside input  — scroll the horizontal pane
 //! m outside input      — open the modal: focus is trapped inside it and the
 //!                        content behind it goes inert (no tab, hover, or clicks)
 //! q outside input      — quit
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,6 +33,8 @@ use tuidom::style::{
     AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
     FlexGap, JustifyContent, Length, Overflow, Position, ScrollbarCharset, Sides, Style,
 };
+use tuidom::virtualize::Virtualizer;
+use tuidom::{Document, NodeId};
 
 fn init_logging() {
     // Best-effort file logging for the smoke test.
@@ -454,9 +458,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(wide, wide_text)?;
     doc.on_wheel(wide, |event| event.stop_propagation())?;
 
+    // A virtualized pane: 10,000 rows, but the DOM only ever holds the visible window
+    // plus overscan between two spacers. The spacers keep the container's content size
+    // at the true total, so the scrollbar and wheel routing need nothing special.
+    let virtual_status = doc.create_text("top row 0")?;
+    doc.set_style(virtual_status, &label_style)?;
+
+    let virtual_pane = Arc::new(Mutex::new(VirtualPane::build(&doc, 10_000, &label_style)?));
+    let virtual_container = {
+        let mut pane = virtual_pane.lock().unwrap();
+        // Three content rows: the pane is five cells tall inside a one-cell border.
+        pane.apply(0, 3);
+        pane.container
+    };
+    {
+        let doc_for_virtual = doc.clone();
+        let pane_for_scroll = virtual_pane.clone();
+        doc.on_scroll(virtual_container, move |event| {
+            if let Ok(mut pane) = pane_for_scroll.lock() {
+                pane.apply(event.y, 3);
+            }
+            let _ =
+                doc_for_virtual.set_text_content(virtual_status, format!("top row {}", event.y));
+        })?;
+    }
+    doc.on_wheel(virtual_container, |event| event.stop_propagation())?;
+
     doc.append_child(scroll_row, list)?;
     doc.append_child(scroll_row, scroll_status)?;
     doc.append_child(scroll_row, wide)?;
+    doc.append_child(scroll_row, virtual_container)?;
+    doc.append_child(scroll_row, virtual_status)?;
 
     let attrs_label = doc.create_text("Text attributes")?;
     doc.set_style(attrs_label, &section_label_style)?;
@@ -712,4 +744,90 @@ fn update_perf_counter(doc: &tuidom::Document, node: tuidom::NodeId) {
         frame.frame_time.as_secs_f64() * 1000.0
     );
     let _ = doc.set_text_content(node, text);
+}
+
+/// The spacer pattern behind the demo's virtualized pane: a scroll container holding
+/// a leading spacer, the materialized rows, and a trailing spacer, diffed by a
+/// [`Virtualizer`] on every scroll. Only the window plus overscan exists in the DOM;
+/// the spacers keep the content size at the true total.
+struct VirtualPane {
+    doc: Document,
+    container: NodeId,
+    lead: NodeId,
+    trail: NodeId,
+    virtualizer: Virtualizer,
+    rows: BTreeMap<usize, NodeId>,
+    row_style: Style,
+}
+
+impl VirtualPane {
+    fn build(doc: &Document, count: usize, row_style: &Style) -> tuidom::Result<Self> {
+        let container = doc.create_box()?;
+        let mut style = Style::new();
+        style.flex_direction(FlexDirection::Column);
+        style.height(Length::Pixels(5));
+        style.overflow_y(Overflow::Scroll);
+        style.border(Border::new(BorderCharset::single()));
+        style.border_color(Color::oklch(0.55, 0.02, 260.0));
+        style.padding(EdgeInsets::new(0, 1, 0, 1));
+        doc.set_style(container, &style)?;
+
+        let lead = doc.create_box()?;
+        doc.append_child(container, lead)?;
+        let trail = doc.create_box()?;
+        doc.append_child(container, trail)?;
+
+        Ok(Self {
+            doc: doc.clone(),
+            container,
+            lead,
+            trail,
+            virtualizer: Virtualizer::uniform(count, 1, 2),
+            rows: BTreeMap::new(),
+            row_style: row_style.clone(),
+        })
+    }
+
+    fn apply(&mut self, offset: u16, viewport: u16) {
+        let Some(update) = self.virtualizer.update(offset, viewport) else {
+            return;
+        };
+
+        for range in update.remove {
+            for index in range {
+                if let Some(node) = self.rows.remove(&index) {
+                    let _ = self.doc.remove_child(self.container, node);
+                }
+            }
+        }
+        for range in update.add {
+            for index in range {
+                let Ok(node) = self.doc.create_text(format!("virtual row {index:04}")) else {
+                    continue;
+                };
+                let _ = self.doc.set_style(node, &self.row_style);
+                // Before the next materialized row, or before the trailing spacer.
+                let before = self
+                    .rows
+                    .range(index + 1..)
+                    .next()
+                    .map(|(_, node)| *node)
+                    .unwrap_or(self.trail);
+                let _ = self.doc.insert_before(self.container, node, before);
+                self.rows.insert(index, node);
+            }
+        }
+
+        self.set_spacer(self.lead, update.window.lead);
+        self.set_spacer(self.trail, update.window.trail);
+    }
+
+    fn set_spacer(&self, spacer: NodeId, cells: u64) {
+        let mut style = Style::new();
+        style.height(Length::Pixels(u16::try_from(cells).unwrap_or(u16::MAX)));
+        // An empty box has no content floor, so default flex shrink would collapse
+        // the spacer to fit the container — and with it the whole scroll range.
+        style.flex_shrink(0.0);
+        let _ = self.doc.set_style(spacer, &style);
+    }
 }
