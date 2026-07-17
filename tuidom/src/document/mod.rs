@@ -172,6 +172,121 @@ impl Document {
         Ok(())
     }
 
+    /// Create a new frames node: text content cycling on a timer.
+    ///
+    /// Frames render like text, but the node is measured on its largest frame,
+    /// so cycling never reflows the content around it. The current frame is a
+    /// function of elapsed time — a lone frames node paces rendering at its own
+    /// interval rather than the animation tick rate. A single frame, or a zero
+    /// interval, shows frame zero and drives no rendering at all.
+    ///
+    /// Returns the [`NodeId`] of the created node.
+    pub fn create_frames(
+        &self,
+        frames: impl IntoIterator<Item = impl Into<String>>,
+        interval: Duration,
+    ) -> Result<NodeId> {
+        let frames: Vec<String> = frames.into_iter().map(Into::into).collect();
+        let count = frames.len();
+        let started = self.now();
+        let id = self
+            .inner
+            .alloc(NodeData::frames(frames, interval, started));
+        if let Err(err) = self.register_layout_node(id) {
+            self.inner.nodes.remove(&id);
+            return Err(err);
+        }
+        lock::mutex(&self.inner.animation).set_frames_schedule(id, interval, started, count);
+        self.inner.anim_config_changed.notify_one();
+        self.inner.notify.notify_one();
+        Ok(id)
+    }
+
+    /// Replace a frames node's frame list.
+    ///
+    /// The cycle keeps its phase: the current index still counts from the
+    /// original start instant, modulo the new frame count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not a frames node.
+    pub fn set_frames(
+        &self,
+        node: NodeId,
+        frames: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<()> {
+        let new_frames: Vec<String> = frames.into_iter().map(Into::into).collect();
+        self.update_frames(node, |frames, _, _| *frames = new_frames)
+    }
+
+    /// Change a frames node's flip interval.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not a frames node.
+    pub fn set_frames_interval(&self, node: NodeId, new_interval: Duration) -> Result<()> {
+        self.update_frames(node, |_, interval, _| *interval = new_interval)
+    }
+
+    /// The frame index a frames node is currently showing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not a frames node.
+    pub fn current_frame(&self, node: NodeId) -> Result<usize> {
+        let data = self
+            .inner
+            .nodes
+            .get(&node)
+            .ok_or(TuidomError::NodeNotFound { id: node })?;
+        let NodeKind::Frames {
+            frames,
+            interval,
+            started,
+        } = &data.kind
+        else {
+            return Err(TuidomError::NodeNotFrames { id: node });
+        };
+        Ok(crate::node::frames_index(
+            frames.len(),
+            *interval,
+            *started,
+            self.now(),
+        ))
+    }
+
+    /// Mutate a frames node's data, then refresh measurement, schedule, and paint.
+    fn update_frames(
+        &self,
+        node: NodeId,
+        mutate: impl FnOnce(&mut Vec<String>, &mut Duration, &mut Instant),
+    ) -> Result<()> {
+        let (interval, started, count) = {
+            let mut data = self
+                .inner
+                .nodes
+                .get_mut(&node)
+                .ok_or(TuidomError::NodeNotFound { id: node })?;
+            let NodeKind::Frames {
+                frames,
+                interval,
+                started,
+            } = &mut data.kind
+            else {
+                return Err(TuidomError::NodeNotFrames { id: node });
+            };
+            mutate(frames, interval, started);
+            (*interval, *started, frames.len())
+        };
+
+        // The largest frame may have changed, so the measure context must too.
+        self.register_layout_node(node)?;
+        lock::mutex(&self.inner.animation).set_frames_schedule(node, interval, started, count);
+        self.inner.anim_config_changed.notify_one();
+        self.inner.notify.notify_one();
+        Ok(())
+    }
+
     /// Create a new editable input node with the given content.
     ///
     /// Returns the [`NodeId`] of the created node. Input nodes are focusable

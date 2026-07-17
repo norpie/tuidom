@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::RwLock;
+use std::time::{Duration, Instant};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -239,7 +240,33 @@ pub(crate) enum NodeKind {
     Text { content: String },
     /// Editable text input.
     Input { state: InputState },
-    // Future: Frames, Canvas
+    /// Text content cycling on a timer.
+    Frames {
+        frames: Vec<String>,
+        interval: Duration,
+        /// When the cycle started. The current frame is computed from elapsed
+        /// time, so cycling needs no per-flip mutation.
+        started: Instant,
+    },
+    // Future: Canvas
+}
+
+/// The frame index a frames node shows at `now`.
+///
+/// Computed from elapsed time rather than stored, so a flip is nothing but the
+/// clock passing a boundary. An empty frame list, or a zero interval (which
+/// would flip infinitely fast), pins the index at zero.
+pub(crate) fn frames_index(
+    count: usize,
+    interval: Duration,
+    started: Instant,
+    now: Instant,
+) -> usize {
+    if count == 0 || interval.is_zero() {
+        return 0;
+    }
+    let elapsed = now.saturating_duration_since(started).as_nanos();
+    (elapsed / interval.as_nanos()) as usize % count
 }
 
 /// Internal representation of a DOM node, stored in the arena.
@@ -304,6 +331,23 @@ impl NodeData {
             attrs: HashMap::new(),
         }
     }
+
+    /// Create a new frames node starting its cycle at `started`.
+    pub fn frames(frames: Vec<String>, interval: Duration, started: Instant) -> Self {
+        Self {
+            kind: NodeKind::Frames {
+                frames,
+                interval,
+                started,
+            },
+            parent: None,
+            children: Vec::new(),
+            style: Style::default(),
+            resolved_style: RwLock::new(None),
+            transition_configs: HashMap::new(),
+            attrs: HashMap::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -354,11 +398,23 @@ pub enum NodeKindView {
         /// Vertical scroll offset in terminal rows.
         scroll_y: u16,
     },
+    /// Timed frame-cycling content snapshot.
+    Frames {
+        /// The frame contents, cycled in order.
+        frames: Vec<String>,
+        /// Time each frame is shown.
+        interval: Duration,
+        /// Index of the frame showing at the time of this snapshot.
+        current: usize,
+    },
 }
 
 impl NodeKind {
-    /// Convert to the public-facing view.
-    pub fn to_view(&self) -> NodeKindView {
+    /// Convert to the public-facing view, as of `now`.
+    ///
+    /// The instant matters only to frames nodes, whose current frame is a
+    /// function of elapsed time.
+    pub fn to_view(&self, now: Instant) -> NodeKindView {
         match self {
             NodeKind::Box => NodeKindView::Box,
             NodeKind::Text { content } => NodeKindView::Text {
@@ -372,6 +428,15 @@ impl NodeKind {
                 mask: state.mask,
                 scroll_x: state.scroll_x,
                 scroll_y: state.scroll_y,
+            },
+            NodeKind::Frames {
+                frames,
+                interval,
+                started,
+            } => NodeKindView::Frames {
+                frames: frames.clone(),
+                interval: *interval,
+                current: frames_index(frames.len(), *interval, *started, now),
             },
         }
     }

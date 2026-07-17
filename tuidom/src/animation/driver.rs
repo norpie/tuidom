@@ -1,7 +1,7 @@
 //! Animation driver — manages transition state, interpolation, and tick scheduling.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::animation::value::{AnimatedValue, extract_animated_value};
 use crate::animation::{
@@ -154,12 +154,41 @@ impl KeyframeState {
     }
 }
 
+/// A frames node's cycling schedule, mirrored here so the render loop can pace
+/// itself by the next flip without touching the DOM.
+struct FramesSchedule {
+    node_id: NodeId,
+    interval: Duration,
+    started: Instant,
+    count: usize,
+}
+
+impl FramesSchedule {
+    /// Whether this node ever flips: more than one frame, at a real interval.
+    fn cycles(&self) -> bool {
+        self.count > 1 && !self.interval.is_zero()
+    }
+
+    /// The instant of the next frame flip after `now`.
+    fn next_flip(&self, now: Instant) -> Option<Instant> {
+        if !self.cycles() {
+            return None;
+        }
+        let elapsed = now.saturating_duration_since(self.started);
+        let intervals = elapsed.as_nanos() / self.interval.as_nanos() + 1;
+        let offset = self.interval.checked_mul(u32::try_from(intervals).ok()?)?;
+        self.started.checked_add(offset)
+    }
+}
+
 /// Manages all active transitions and tick scheduling.
 pub(crate) struct AnimationDriver {
     /// All active transitions.
     active: Vec<TransitionState>,
     /// All running keyframe animations.
     keyframes: Vec<KeyframeState>,
+    /// All frames nodes' cycling schedules.
+    frames: Vec<FramesSchedule>,
 }
 
 impl AnimationDriver {
@@ -168,7 +197,44 @@ impl AnimationDriver {
         Self {
             active: Vec::new(),
             keyframes: Vec::new(),
+            frames: Vec::new(),
         }
+    }
+
+    /// Register or update a frames node's cycling schedule.
+    pub fn set_frames_schedule(
+        &mut self,
+        node_id: NodeId,
+        interval: Duration,
+        started: Instant,
+        count: usize,
+    ) {
+        self.frames.retain(|schedule| schedule.node_id != node_id);
+        self.frames.push(FramesSchedule {
+            node_id,
+            interval,
+            started,
+            count,
+        });
+    }
+
+    /// The soonest instant any frames node flips to its next frame.
+    ///
+    /// Frames pace themselves: with only frames active, the render loop sleeps
+    /// to the next flip instead of ticking at the animation rate — a 100ms
+    /// spinner repaints ten times a second, not sixty.
+    pub fn next_frames_flip(&self, now: Instant) -> Option<Instant> {
+        self.frames
+            .iter()
+            .filter_map(|schedule| schedule.next_flip(now))
+            .min()
+    }
+
+    /// Whether any transition or unpaused keyframe animation is in flight —
+    /// the animations that need tick-rate frames, unlike frames nodes, which
+    /// pace themselves by their intervals.
+    pub fn has_smooth_active(&self) -> bool {
+        !self.active.is_empty() || self.keyframes.iter().any(|state| state.paused_at.is_none())
     }
 
     /// Called after a style change to check for transitionable properties.
@@ -383,9 +449,10 @@ impl AnimationDriver {
     /// Return whether anything needs animation frames right now.
     ///
     /// Paused animations do not: their values are frozen, so the renderer can
-    /// idle until they resume.
+    /// idle until they resume. A frames node counts only when it actually
+    /// cycles — more than one frame, at a nonzero interval.
     pub fn has_active(&self) -> bool {
-        !self.active.is_empty() || self.keyframes.iter().any(|state| state.paused_at.is_none())
+        self.has_smooth_active() || self.frames.iter().any(FramesSchedule::cycles)
     }
 
     /// Nodes whose interpolated style must be fed to the layout engine this
@@ -407,11 +474,13 @@ impl AnimationDriver {
         nodes
     }
 
-    /// Remove all active transitions and animations for a removed node.
+    /// Remove all active transitions, animations, and frames schedules for a
+    /// removed node.
     pub fn remove_node(&mut self, node_id: NodeId) {
         self.active
             .retain(|transition| transition.node_id != node_id);
         self.keyframes.retain(|state| state.node_id != node_id);
+        self.frames.retain(|schedule| schedule.node_id != node_id);
     }
 
     /// Remove completed transitions, reporting each one so the caller can fire

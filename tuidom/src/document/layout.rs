@@ -74,7 +74,7 @@ impl Document {
             .and_then(|layout| self.layout_view(id, layout));
         self.inner.nodes.get(&id).map(|r| NodeView {
             id,
-            kind: r.kind.to_view(),
+            kind: r.kind.to_view(self.now()),
             parent: r.parent,
             children: r.children.clone(),
             layout,

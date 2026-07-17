@@ -68,20 +68,9 @@ impl LayoutEngine {
         }
 
         let style = to_taffy_style(resolved);
-        let taffy_id = match kind {
-            NodeKind::Text { content } => self.taffy.new_leaf_with_context(
-                style,
-                MeasureContext::Text {
-                    content: content.clone(),
-                },
-            )?,
-            NodeKind::Input { state } => self.taffy.new_leaf_with_context(
-                style,
-                MeasureContext::Text {
-                    content: state.display_content(),
-                },
-            )?,
-            NodeKind::Box => self.taffy.new_leaf(style)?,
+        let taffy_id = match measure_context_for(kind) {
+            Some(context) => self.taffy.new_leaf_with_context(style, context)?,
+            None => self.taffy.new_leaf(style)?,
         };
 
         self.mapping.insert(node_id, taffy_id);
@@ -126,17 +115,8 @@ impl LayoutEngine {
             return Err(TuidomError::LayoutMappingMissing { id: node_id });
         };
 
-        let context = match kind {
-            NodeKind::Text { content } => Some(MeasureContext::Text {
-                content: content.clone(),
-            }),
-            NodeKind::Input { state } => Some(MeasureContext::Text {
-                content: state.display_content(),
-            }),
-            NodeKind::Box => None,
-        };
-
-        self.taffy.set_node_context(taffy_id, context)?;
+        self.taffy
+            .set_node_context(taffy_id, measure_context_for(kind))?;
         Ok(())
     }
 
@@ -271,6 +251,25 @@ impl LayoutEngine {
 enum MeasureContext {
     /// Text node content for width calculation.
     Text { content: String },
+    /// Frame-cycling content: measured on the largest frame, so cycling never
+    /// reflows the layout around it.
+    Frames { frames: Vec<String> },
+}
+
+/// The measurement context a node kind carries into taffy, if any.
+fn measure_context_for(kind: &NodeKind) -> Option<MeasureContext> {
+    match kind {
+        NodeKind::Text { content } => Some(MeasureContext::Text {
+            content: content.clone(),
+        }),
+        NodeKind::Input { state } => Some(MeasureContext::Text {
+            content: state.display_content(),
+        }),
+        NodeKind::Frames { frames, .. } => Some(MeasureContext::Frames {
+            frames: frames.clone(),
+        }),
+        NodeKind::Box => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -370,19 +369,32 @@ fn measure_fn(
     _style: &Style,
 ) -> Size<f32> {
     match context {
-        Some(MeasureContext::Text { content }) => {
-            measure_text_content(content, known_dimensions, available_space)
+        Some(MeasureContext::Text { content }) => measure_natural(
+            natural_text_size(content),
+            known_dimensions,
+            available_space,
+        ),
+        // The largest frame sizes the node, so a spinner's narrow frames never
+        // reflow the content around it as they cycle.
+        Some(MeasureContext::Frames { frames }) => {
+            let natural = frames.iter().map(|frame| natural_text_size(frame)).fold(
+                Size::ZERO,
+                |acc, size| Size {
+                    width: acc.width.max(size.width),
+                    height: acc.height.max(size.height),
+                },
+            );
+            measure_natural(natural, known_dimensions, available_space)
         }
         None => Size::ZERO,
     }
 }
 
-fn measure_text_content(
-    content: &str,
+fn measure_natural(
+    natural: Size<f32>,
     known_dimensions: Size<Option<f32>>,
     available_space: Size<AvailableSpace>,
 ) -> Size<f32> {
-    let natural = natural_text_size(content);
     Size {
         width: resolve_measured_axis(known_dimensions.width, available_space.width, natural.width),
         height: resolve_measured_axis(
@@ -707,8 +719,8 @@ mod tests {
 
     #[test]
     fn text_measurement_uses_known_dimensions() {
-        let measured = measure_text_content(
-            "hello",
+        let measured = measure_natural(
+            natural_text_size("hello"),
             Size {
                 width: Some(2.0),
                 height: Some(3.0),
@@ -725,8 +737,8 @@ mod tests {
 
     #[test]
     fn text_measurement_clips_to_definite_available_space() {
-        let measured = measure_text_content(
-            "hello world\nwide line",
+        let measured = measure_natural(
+            natural_text_size("hello world\nwide line"),
             Size {
                 width: None,
                 height: None,

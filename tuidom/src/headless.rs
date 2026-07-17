@@ -967,6 +967,114 @@ mod tests {
     }
 
     #[test]
+    fn a_frames_node_advances_exactly_on_interval_boundaries() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        let spinner = doc
+            .create_frames(["A", "B", "C"], Duration::from_millis(100))
+            .unwrap();
+        doc.append_child(doc.root(), spinner).unwrap();
+
+        runtime.render().unwrap();
+        assert_eq!(doc.current_frame(spinner).unwrap(), 0);
+        assert_eq!(runtime.get_cell(0, 0).unwrap().text, "A");
+
+        // One nanosecond short of the boundary still shows the first frame.
+        runtime.advance_time(Duration::from_millis(100) - Duration::from_nanos(1));
+        runtime.render().unwrap();
+        assert_eq!(runtime.get_cell(0, 0).unwrap().text, "A");
+
+        runtime.advance_time(Duration::from_nanos(1));
+        runtime.render().unwrap();
+        assert_eq!(doc.current_frame(spinner).unwrap(), 1);
+        assert_eq!(runtime.get_cell(0, 0).unwrap().text, "B");
+
+        // The cycle wraps: 350ms in, the fourth flip returns to the first frame.
+        runtime.advance_time(Duration::from_millis(250));
+        runtime.render().unwrap();
+        assert_eq!(doc.current_frame(spinner).unwrap(), 0);
+        assert_eq!(runtime.get_cell(0, 0).unwrap().text, "A");
+    }
+
+    #[test]
+    fn a_frames_node_is_measured_on_its_largest_frame() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        let spinner = doc
+            .create_frames([".", "..."], Duration::from_millis(100))
+            .unwrap();
+        doc.append_child(doc.root(), spinner).unwrap();
+
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(spinner).unwrap().layout.unwrap().rect.width, 3);
+
+        // Replacing the frames re-measures on the new largest frame.
+        doc.set_frames(spinner, ["....."]).unwrap();
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(spinner).unwrap().layout.unwrap().rect.width, 5);
+    }
+
+    #[test]
+    fn a_lone_frames_node_paces_by_its_interval_not_the_tick() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        let spinner = doc
+            .create_frames(["A", "B"], Duration::from_millis(100))
+            .unwrap();
+        doc.append_child(doc.root(), spinner).unwrap();
+
+        {
+            let driver = lock::mutex(&doc.inner.animation);
+            assert!(driver.has_active());
+            assert!(!driver.has_smooth_active());
+            let flip = driver.next_frames_flip(doc.now()).unwrap();
+            assert_eq!(flip.duration_since(doc.now()), Duration::from_millis(100));
+        }
+
+        // Mid-interval, the next flip is the remainder — not a fixed tick.
+        runtime.advance_time(Duration::from_millis(30));
+        let driver = lock::mutex(&doc.inner.animation);
+        let flip = driver.next_frames_flip(doc.now()).unwrap();
+        assert_eq!(flip.duration_since(doc.now()), Duration::from_millis(70));
+    }
+
+    #[test]
+    fn a_single_frame_or_zero_interval_drives_no_rendering() {
+        let doc = Document::new().unwrap();
+        let runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+
+        let still = doc
+            .create_frames(["only"], Duration::from_millis(100))
+            .unwrap();
+        doc.append_child(doc.root(), still).unwrap();
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+
+        let frozen = doc.create_frames(["a", "b"], Duration::ZERO).unwrap();
+        doc.append_child(doc.root(), frozen).unwrap();
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+        assert_eq!(doc.current_frame(frozen).unwrap(), 0);
+    }
+
+    #[test]
+    fn frames_apis_reject_non_frames_nodes() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("plain").unwrap();
+
+        assert!(matches!(
+            doc.current_frame(text),
+            Err(crate::TuidomError::NodeNotFrames { .. })
+        ));
+        assert!(matches!(
+            doc.set_frames(text, ["a"]),
+            Err(crate::TuidomError::NodeNotFrames { .. })
+        ));
+    }
+
+    #[test]
     fn transition_end_fires_once_at_completion_and_bubbles() {
         let doc = Document::new().unwrap();
         let container = doc.create_box().unwrap();

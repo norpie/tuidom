@@ -179,13 +179,35 @@ async fn render_task(doc: Document) -> io::Result<()> {
 
 /// Wait until the next animation-driven frame is due, then advance the deadline.
 ///
-/// Active animations pace frames at the document's animation tick rate; an
-/// unlimited rate (`None`) degrades to a yield, rendering as fast as the
-/// runtime allows. Missed slots are skipped rather than replayed, so a slow
-/// frame does not cause a burst. The deadline lives with the caller and is
+/// Transitions and keyframe animations pace frames at the document's animation
+/// tick rate; an unlimited rate (`None`) degrades to a yield, rendering as fast
+/// as the runtime allows. Missed slots are skipped rather than replayed, so a
+/// slow frame does not cause a burst. The deadline lives with the caller and is
 /// reset when animations go idle, so a fresh animation never inherits a stale
 /// deadline.
+///
+/// With only frames nodes active, the wait is the next frame flip instead: a
+/// 100ms spinner repaints ten times a second, not at the tick rate.
 async fn wait_for_anim_tick(doc: &Document, next_anim_frame_at: &mut Option<TokioInstant>) {
+    let (smooth, next_flip) = {
+        let driver = lock::mutex(&doc.inner.animation);
+        (
+            driver.has_smooth_active(),
+            driver.next_frames_flip(doc.now()),
+        )
+    };
+
+    if !smooth {
+        *next_anim_frame_at = None;
+        match next_flip {
+            Some(flip) => sleep_until(TokioInstant::from_std(flip)).await,
+            // Guarded by animations_active, so something exists; a schedule
+            // that stopped cycling between checks just yields once.
+            None => tokio::task::yield_now().await,
+        }
+        return;
+    }
+
     let Some(interval) = *lock::rw_read(&doc.inner.animation_frame_interval) else {
         *next_anim_frame_at = None;
         tokio::task::yield_now().await;

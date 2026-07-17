@@ -163,6 +163,15 @@ fn paint_entry(
             None
         }
 
+        NodeKindView::Frames {
+            frames, current, ..
+        } => {
+            if let Some(content) = frames.get(*current) {
+                paint_text(grid, node, fg_rgb, alpha, content, profile);
+            }
+            None
+        }
+
         NodeKindView::Input {
             value,
             cursor,
@@ -546,6 +555,9 @@ fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
         NodeKindView::Box => true,
         NodeKindView::Text { content } => content.is_empty(),
         NodeKindView::Input { .. } => false,
+        NodeKindView::Frames {
+            frames, current, ..
+        } => frames.get(*current).is_none_or(|frame| frame.is_empty()),
     }
 }
 
@@ -707,6 +719,7 @@ fn node_kind_label(kind: &NodeKindView) -> &'static str {
         NodeKindView::Box => "box",
         NodeKindView::Text { .. } => "text",
         NodeKindView::Input { .. } => "input",
+        NodeKindView::Frames { .. } => "frames",
     }
 }
 

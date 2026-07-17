@@ -77,6 +77,13 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node exists but is not a frames node.
+    #[error("node {id:?} is not a frames node")]
+    NodeNotFrames {
+        /// The node that is not a frames node.
+        id: NodeId,
+    },
+
     /// An attribute key is invalid.
     #[error("attribute key cannot be empty")]
     InvalidAttributeKey,
