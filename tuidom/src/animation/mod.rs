@@ -1,7 +1,11 @@
 //! Animation types — easing curves, transition properties, and configuration.
 
 pub(crate) mod driver;
+mod keyframes;
 pub(crate) mod value;
+
+pub use keyframes::{AnimatableProperty, AnimationDirection, AnimationHandle, KeyframeAnimation};
+pub(crate) use keyframes::{ResolvedKeyframes, ResolvedTrack};
 
 use std::time::Duration;
 

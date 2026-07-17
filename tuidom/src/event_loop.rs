@@ -342,17 +342,14 @@ fn animations_active(doc: &Document) -> bool {
     lock::mutex(&doc.inner.animation).has_active()
 }
 
-/// Remove finished transitions and queue their end events.
+/// Remove finished transitions and animations and queue their events.
 ///
 /// The render task never runs user code: like post-frame, the events go through
 /// the runtime queue so handlers run on the event task, ordered with input. A
 /// send failure means the runtime is shutting down and is safe to ignore.
 fn cleanup_animations(doc: &Document) {
-    for transition in doc.run_animation_upkeep() {
-        let _ = doc.inner.event_tx.send(RuntimeEvent::TransitionEnd {
-            node: transition.node_id,
-            property: transition.property,
-        });
+    for event in doc.run_animation_upkeep() {
+        let _ = doc.inner.event_tx.send(event);
     }
 }
 

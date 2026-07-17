@@ -145,6 +145,9 @@ pub(crate) struct DocumentInner {
     /// Monotonically increasing counter for event listener ids.
     pub next_listener_id: AtomicU64,
 
+    /// Monotonically increasing counter for keyframe animation ids.
+    pub next_animation_id: AtomicU64,
+
     /// The permanent document root node.
     pub root: NodeId,
 

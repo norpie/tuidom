@@ -2,13 +2,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use crate::animation::TransitionProperty;
+use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
-    EventPhase, FocusEvent, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent,
-    PostFrameEvent, ResizeEvent, ScrollEvent, SelectionChangeEvent, TargetedEvent,
-    TargetedEventKind, TransitionEndEvent, WheelEvent,
+    AnimationEndEvent, AnimationIterationEvent, EventPhase, FocusEvent, KeyEvent, Listener,
+    ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent, ScrollEvent,
+    SelectionChangeEvent, TargetedEvent, TargetedEventKind, TransitionEndEvent, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -154,6 +154,43 @@ impl Document {
             node,
             TargetedEventKind::TransitionEnd,
             ListenerKind::TransitionEnd(Arc::new(handler)),
+        )
+    }
+
+    /// Register an animation end listener on a node.
+    ///
+    /// Fires once a keyframe animation runs all its iterations, and bubbles like
+    /// the DOM's `animationend`. When it fires the animation has been removed and
+    /// the node has returned to its underlying style; hold the final state by
+    /// setting it as the node's style from the handler. Cancelled animations and
+    /// removed nodes fire no end event.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_animation_end<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut AnimationEndEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::AnimationEnd,
+            ListenerKind::AnimationEnd(Arc::new(handler)),
+        )
+    }
+
+    /// Register an animation iteration listener on a node.
+    ///
+    /// Fires when a keyframe animation crosses an iteration boundary, and bubbles
+    /// like the DOM's `animationiteration`. Boundaries crossed within one frame
+    /// coalesce into a single event carrying the latest iteration count; the
+    /// final boundary is reported through the end event instead.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_animation_iteration<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut AnimationIterationEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::AnimationIteration,
+            ListenerKind::AnimationIteration(Arc::new(handler)),
         )
     }
 
@@ -414,6 +451,41 @@ impl Document {
         );
     }
 
+    /// Dispatch an animation end event from the node whose animation finished.
+    pub(crate) fn dispatch_animation_end_to(&self, target: NodeId, handle: AnimationHandle) {
+        let mut event = AnimationEndEvent::new(handle);
+        self.dispatch_targeted_event(
+            target,
+            &mut event,
+            TargetedEventKind::AnimationEnd,
+            |kind, event| {
+                if let ListenerKind::AnimationEnd(handler) = kind {
+                    handler(event);
+                }
+            },
+        );
+    }
+
+    /// Dispatch an animation iteration event from the animated node.
+    pub(crate) fn dispatch_animation_iteration_to(
+        &self,
+        target: NodeId,
+        handle: AnimationHandle,
+        iteration: u64,
+    ) {
+        let mut event = AnimationIterationEvent::new(handle, iteration);
+        self.dispatch_targeted_event(
+            target,
+            &mut event,
+            TargetedEventKind::AnimationIteration,
+            |kind, event| {
+                if let ListenerKind::AnimationIteration(handler) = kind {
+                    handler(event);
+                }
+            },
+        );
+    }
+
     /// Build the post-frame event for the frame that was just recorded.
     ///
     /// Returns `None` when no post-frame listener is registered or no frame has
@@ -488,14 +560,18 @@ impl Document {
         // A disabled or inert node swallows input instead of letting it bubble to an
         // interactive ancestor, matching how disabled controls behave in HTML.
         //
-        // Focus, blur, and transition end are exempt: they report a change the engine
-        // has already made — a node losing focus is often losing it *because* it just
-        // became disabled or inert, and a transition finishes regardless of either.
-        // Swallowing those would hide the change from the handler that exists to
-        // observe it.
+        // Focus, blur, and the animation events are exempt: they report a change the
+        // engine has already made — a node losing focus is often losing it *because*
+        // it just became disabled or inert, and a transition or animation finishes
+        // regardless of either. Swallowing those would hide the change from the
+        // handler that exists to observe it.
         let is_input = !matches!(
             event_kind,
-            TargetedEventKind::Focus | TargetedEventKind::Blur | TargetedEventKind::TransitionEnd
+            TargetedEventKind::Focus
+                | TargetedEventKind::Blur
+                | TargetedEventKind::TransitionEnd
+                | TargetedEventKind::AnimationEnd
+                | TargetedEventKind::AnimationIteration
         );
         if is_input && self.blocks_interaction(target) {
             return;

@@ -184,7 +184,7 @@ pub(crate) fn apply_animated_value(
     }
 }
 
-fn length_value(length: Length) -> Option<AnimatedValue> {
+pub(crate) fn length_value(length: Length) -> Option<AnimatedValue> {
     match length {
         Length::Pixels(v) => Some(AnimatedValue::Cells(f64::from(v))),
         Length::Percent(v) => Some(AnimatedValue::Percent(v)),
@@ -192,7 +192,7 @@ fn length_value(length: Length) -> Option<AnimatedValue> {
     }
 }
 
-fn insets_value(insets: EdgeInsets) -> AnimatedValue {
+pub(crate) fn insets_value(insets: EdgeInsets) -> AnimatedValue {
     AnimatedValue::Insets {
         top: f64::from(insets.top),
         right: f64::from(insets.right),

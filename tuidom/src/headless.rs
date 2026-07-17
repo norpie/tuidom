@@ -42,21 +42,14 @@ impl HeadlessRuntime {
 
     /// Advance the frozen document clock.
     ///
-    /// Active transitions progress by exactly `delta`; finished ones settle on
-    /// their target value and dispatch their end events through the shared
-    /// runtime path. The next [`render`](Self::render) shows the frame as it
-    /// would look at the advanced instant.
+    /// Active transitions and animations progress by exactly `delta`; finished
+    /// ones settle and dispatch their end and iteration events through the
+    /// shared runtime path. The next [`render`](Self::render) shows the frame
+    /// as it would look at the advanced instant.
     pub fn advance_time(&mut self, delta: Duration) {
         self.doc.advance_manual_time(delta);
-        for transition in self.doc.run_animation_upkeep() {
-            process_runtime_event(
-                &self.doc,
-                RuntimeEvent::TransitionEnd {
-                    node: transition.node_id,
-                    property: transition.property,
-                },
-                &mut self.event_state,
-            );
+        for event in self.doc.run_animation_upkeep() {
+            process_runtime_event(&self.doc, event, &mut self.event_state);
         }
     }
 
@@ -390,7 +383,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::animation::{Easing, TransitionConfig, TransitionProperty};
+    use crate::animation::{
+        AnimatableProperty, AnimationDirection, Easing, KeyframeAnimation, TransitionConfig,
+        TransitionProperty,
+    };
     use crate::document::SelectionPoint;
     use crate::event::EventPhase;
     use crate::lock;
@@ -688,6 +684,286 @@ mod tests {
         doc.focus(node).unwrap();
 
         assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
+    fn a_keyframe_animation_samples_between_keyframes() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.animate(
+            node,
+            KeyframeAnimation::new(Duration::from_secs(1))
+                .keyframe(0.0, [AnimatableProperty::Opacity(1.0)])
+                .keyframe(50.0, [AnimatableProperty::Opacity(0.2)])
+                .keyframe(100.0, [AnimatableProperty::Opacity(1.0)]),
+        )
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(250));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.6).abs() < 1e-9);
+
+        runtime.advance_time(Duration::from_millis(250));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.2).abs() < 1e-9);
+
+        // After the last iteration the animation is removed and the node
+        // returns to its underlying style.
+        runtime.advance_time(Duration::from_secs(1));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
+    fn alternate_direction_reverses_odd_iterations() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.animate(
+            node,
+            KeyframeAnimation::from_to(
+                Duration::from_secs(1),
+                [AnimatableProperty::Opacity(0.0)],
+                [AnimatableProperty::Opacity(1.0)],
+            )
+            .iterations(4)
+            .direction(AnimationDirection::Alternate),
+        )
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.5).abs() < 1e-9);
+
+        // 1.25s in: the second iteration plays backward, so 25% in reads 0.75.
+        runtime.advance_time(Duration::from_millis(750));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_infinite_animation_stays_active_and_coalesces_iterations() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let iterations = Arc::new(Mutex::new(Vec::new()));
+        let seen = iterations.clone();
+        doc.on_animation_iteration(node, move |event| {
+            seen.lock().unwrap().push(event.iteration);
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.animate(
+            node,
+            KeyframeAnimation::from_to(
+                Duration::from_secs(1),
+                [AnimatableProperty::Opacity(0.0)],
+                [AnimatableProperty::Opacity(1.0)],
+            )
+            .infinite(),
+        )
+        .unwrap();
+
+        // Ten iterations pass within one upkeep: boundaries coalesce into a
+        // single event carrying the latest count, and the animation stays active.
+        runtime.advance_time(Duration::from_millis(10_500));
+        assert_eq!(*iterations.lock().unwrap(), vec![10]);
+        assert!(lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
+    fn pausing_freezes_values_and_resuming_continues() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        let handle = doc
+            .animate(
+                node,
+                KeyframeAnimation::from_to(
+                    Duration::from_secs(1),
+                    [AnimatableProperty::Opacity(0.0)],
+                    [AnimatableProperty::Opacity(1.0)],
+                ),
+            )
+            .unwrap();
+
+        runtime.advance_time(Duration::from_millis(250));
+        assert!(doc.pause_animation(handle));
+
+        // A paused animation holds its value and drives no frames.
+        runtime.advance_time(Duration::from_secs(5));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.25).abs() < 1e-9);
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+
+        assert!(doc.resume_animation(handle));
+        runtime.advance_time(Duration::from_millis(250));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cancelling_restores_the_underlying_style_without_an_end_event() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let ends = Arc::new(Mutex::new(0));
+        let seen = ends.clone();
+        doc.on_animation_end(doc.root(), move |_| {
+            *seen.lock().unwrap() += 1;
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        let handle = doc
+            .animate(
+                node,
+                KeyframeAnimation::from_to(
+                    Duration::from_secs(1),
+                    [AnimatableProperty::Opacity(0.0)],
+                    [AnimatableProperty::Opacity(1.0)],
+                ),
+            )
+            .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        assert!(doc.cancel_animation(handle));
+        assert!(!doc.cancel_animation(handle));
+
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+        runtime.advance_time(Duration::from_secs(2));
+        assert_eq!(*ends.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn animation_end_fires_once_and_bubbles_with_the_handle() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let ends = Arc::new(Mutex::new(Vec::new()));
+        let seen = ends.clone();
+        doc.on_animation_end(doc.root(), move |event| {
+            seen.lock()
+                .unwrap()
+                .push((event.target(), event.phase(), event.handle));
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        let handle = doc
+            .animate(
+                node,
+                KeyframeAnimation::from_to(
+                    Duration::from_secs(1),
+                    [AnimatableProperty::Opacity(0.0)],
+                    [AnimatableProperty::Opacity(1.0)],
+                )
+                .iterations(2),
+            )
+            .unwrap();
+
+        runtime.advance_time(Duration::from_millis(2_100));
+        assert_eq!(
+            *ends.lock().unwrap(),
+            vec![(node, EventPhase::Bubble, handle)]
+        );
+
+        runtime.advance_time(Duration::from_secs(1));
+        assert_eq!(ends.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_lone_keyframe_uses_the_underlying_value_as_implicit_endpoints() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.animate(
+            node,
+            KeyframeAnimation::new(Duration::from_secs(1))
+                .keyframe(50.0, [AnimatableProperty::Opacity(0.0)]),
+        )
+        .unwrap();
+
+        // Base opacity is 1.0: the track dips to 0 at 50% and returns.
+        runtime.advance_time(Duration::from_millis(250));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.5).abs() < 1e-9);
+        runtime.advance_time(Duration::from_millis(500));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn animations_override_transitions_on_conflict() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.update_style(node, |style| {
+            style.opacity(0.0);
+        })
+        .unwrap();
+        doc.animate(
+            node,
+            KeyframeAnimation::from_to(
+                Duration::from_secs(1),
+                [AnimatableProperty::Opacity(0.9)],
+                [AnimatableProperty::Opacity(0.7)],
+            ),
+        )
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        assert!((doc.resolved_style(node).unwrap().opacity - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_keyframe_width_animation_drives_layout() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let mut style = Style::new();
+        style.width(Length::Pixels(4));
+        style.height(Length::Pixels(1));
+        doc.set_style(node, &style).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        let doc = runtime.document().clone();
+        doc.animate(
+            node,
+            KeyframeAnimation::from_to(
+                Duration::from_secs(1),
+                [AnimatableProperty::Width(Length::Pixels(2))],
+                [AnimatableProperty::Width(Length::Pixels(10))],
+            ),
+        )
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(node).unwrap().layout.unwrap().rect.width, 6);
+
+        // Ending settles layout back on the underlying width.
+        runtime.advance_time(Duration::from_secs(1));
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(node).unwrap().layout.unwrap().rect.width, 4);
     }
 
     #[test]

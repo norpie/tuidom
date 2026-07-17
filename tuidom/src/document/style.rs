@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 
-use crate::animation::TransitionConfig;
-use crate::animation::driver::FinishedTransition;
+use crate::animation::driver::KeyframeEventKind;
 use crate::animation::value::apply_animated_value;
+use crate::animation::{AnimationHandle, TransitionConfig};
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::lock;
+use crate::runtime_event::RuntimeEvent;
 use crate::style::color::ColorContext;
 use crate::style::resolution::{ColorScope, ResolvedStyle, StyleDefaults};
 use crate::style::{Color, ResolvedColor, Style};
@@ -196,10 +197,18 @@ impl Document {
     pub(crate) fn resolved_style_unlocked(&self, id: NodeId) -> Result<ResolvedStyle> {
         let mut resolved = self.resolved_base_style_unlocked(id)?;
 
-        // Apply animation overrides
+        // Apply animation overrides: transitions first, then keyframe values on
+        // top — animations win on conflict, as in CSS. Keyframes sample against
+        // the transition-adjusted style, so an implicit endpoint tracks the
+        // underlying value it will hand back to.
         {
             let driver = lock::mutex(&self.inner.animation);
-            for (prop, val) in driver.overrides_for(id, self.now()) {
+            let now = self.now();
+            for (prop, val) in driver.overrides_for(id, now) {
+                apply_animated_value(&mut resolved, prop, val);
+            }
+            let keyframe_overrides = driver.keyframe_overrides_for(id, now, &resolved);
+            for (prop, val) in keyframe_overrides {
                 apply_animated_value(&mut resolved, prop, val);
             }
         }
@@ -308,24 +317,60 @@ impl Document {
         Ok(())
     }
 
-    /// Remove finished transitions, settling layout-affecting ones.
+    /// Remove finished transitions and animations, settling layout-affecting
+    /// ones, and return the runtime events to dispatch for them.
     ///
     /// The layout engine holds the last interpolated value a tick pushed; a
-    /// finished layout transition pushes the settled style once more so layout
-    /// rests exactly on the target. Returns the finished transitions so the
-    /// caller can dispatch their end events.
-    pub(crate) fn run_animation_upkeep(&self) -> Vec<FinishedTransition> {
-        let finished = lock::mutex(&self.inner.animation).cleanup(self.now());
-        for transition in &finished {
-            if !transition.property.affects_layout() {
-                continue;
+    /// finished layout transition or animation pushes the settled style once
+    /// more so layout rests exactly on the underlying value.
+    pub(crate) fn run_animation_upkeep(&self) -> Vec<RuntimeEvent> {
+        let now = self.now();
+        let (finished, keyframe_events) = {
+            let mut driver = lock::mutex(&self.inner.animation);
+            (driver.cleanup(now), driver.keyframe_upkeep(now))
+        };
+
+        let mut events = Vec::new();
+        let mut settle = Vec::new();
+        for transition in finished {
+            if transition.property.affects_layout() {
+                settle.push(transition.node_id);
             }
-            let Ok(resolved) = self.resolved_style(transition.node_id) else {
+            events.push(RuntimeEvent::TransitionEnd {
+                node: transition.node_id,
+                property: transition.property,
+            });
+        }
+        for event in keyframe_events {
+            let handle = AnimationHandle {
+                document_id: self.inner.document_id,
+                id: event.animation_id,
+            };
+            match event.kind {
+                KeyframeEventKind::Iteration { iteration } => {
+                    events.push(RuntimeEvent::AnimationIteration {
+                        node: event.node_id,
+                        handle,
+                        iteration,
+                    });
+                }
+                KeyframeEventKind::End => {
+                    settle.push(event.node_id);
+                    events.push(RuntimeEvent::AnimationEnd {
+                        node: event.node_id,
+                        handle,
+                    });
+                }
+            }
+        }
+
+        for node in settle {
+            let Ok(resolved) = self.resolved_style(node) else {
                 continue;
             };
-            let _ = lock::mutex(&self.inner.layout).set_style(transition.node_id, &resolved);
+            let _ = lock::mutex(&self.inner.layout).set_style(node, &resolved);
         }
-        finished
+        events
     }
 
     /// Invalidate the resolved style cache for a node and all descendants.

@@ -19,6 +19,7 @@ use crate::node::{NodeData, NodeKind};
 use crate::performance::{PerformanceDetail, PerformanceSnapshot, PerformanceState, RenderMetrics};
 use crate::style::Color;
 
+mod animation;
 mod attrs;
 mod events;
 mod focus;
@@ -75,6 +76,7 @@ impl Document {
                 document_id,
                 next_id: AtomicU64::new(1),
                 next_listener_id: AtomicU64::new(0),
+                next_animation_id: AtomicU64::new(0),
                 root,
                 focus_contexts: Mutex::new(FocusStack::new(root)),
                 focusable_nodes: Mutex::new(HashSet::new()),

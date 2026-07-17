@@ -1,4 +1,4 @@
-use crate::animation::TransitionProperty;
+use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::document::selection::PendingSelection;
 use crate::event::{KeyEvent, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent};
@@ -35,6 +35,17 @@ pub(crate) enum RuntimeEvent {
     TransitionEnd {
         node: NodeId,
         property: TransitionProperty,
+    },
+    /// A completed keyframe animation, queued by animation upkeep.
+    AnimationEnd {
+        node: NodeId,
+        handle: AnimationHandle,
+    },
+    /// A keyframe animation crossing an iteration boundary, queued by animation upkeep.
+    AnimationIteration {
+        node: NodeId,
+        handle: AnimationHandle,
+        iteration: u64,
     },
 }
 
@@ -136,6 +147,16 @@ pub(crate) fn process_runtime_event(
         // dispatch is naturally a no-op.
         RuntimeEvent::TransitionEnd { node, property } => {
             doc.dispatch_transition_end_to(node, property);
+        }
+        RuntimeEvent::AnimationEnd { node, handle } => {
+            doc.dispatch_animation_end_to(node, handle);
+        }
+        RuntimeEvent::AnimationIteration {
+            node,
+            handle,
+            iteration,
+        } => {
+            doc.dispatch_animation_iteration_to(node, handle, iteration);
         }
     }
 }

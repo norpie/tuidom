@@ -9,7 +9,7 @@ mod key;
 pub(crate) use key::convert_key_event;
 pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
 
-use crate::animation::TransitionProperty;
+use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::SelectionPoint;
 use crate::id::NodeId;
 use crate::performance::FrameMetrics;
@@ -451,6 +451,108 @@ impl TransitionEndEvent {
     }
 }
 
+/// A keyframe animation that ran all its iterations.
+///
+/// Fires on the animated node and bubbles, like the DOM's `animationend`. Like
+/// transition end, it reports a change the engine has already made, so disabled
+/// or inert nodes do not swallow it. Cancelled animations and removed nodes
+/// fire no end event.
+///
+/// When it fires, the animation has been removed and the node has returned to
+/// its underlying style — a handler that wants to hold the final state sets it
+/// as the node's style here.
+#[derive(Debug, Clone)]
+pub struct AnimationEndEvent {
+    /// The handle of the animation that finished.
+    pub handle: AnimationHandle,
+    metadata: TargetedMetadata,
+}
+
+impl AnimationEndEvent {
+    pub(crate) fn new(handle: AnimationHandle) -> Self {
+        Self {
+            handle,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node whose animation finished.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
+/// A keyframe animation crossing an iteration boundary.
+///
+/// Fires on the animated node and bubbles, like the DOM's `animationiteration`.
+/// Animation upkeep runs per frame, so when frames are coarser than iterations
+/// — a long jump of a frozen test clock, a stalled terminal — boundaries
+/// crossed within one frame coalesce into a single event carrying the latest
+/// iteration count. The final boundary is reported as the end event instead.
+#[derive(Debug, Clone)]
+pub struct AnimationIterationEvent {
+    /// The handle of the animation that crossed an iteration boundary.
+    pub handle: AnimationHandle,
+    /// Completed iterations so far (1-based).
+    pub iteration: u64,
+    metadata: TargetedMetadata,
+}
+
+impl AnimationIterationEvent {
+    pub(crate) fn new(handle: AnimationHandle, iteration: u64) -> Self {
+        Self {
+            handle,
+            iteration,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node whose animation crossed an iteration boundary.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
 /// A document selection change.
 ///
 /// Document-level like resize: selection is document state, so the event has no
@@ -567,6 +669,28 @@ impl TargetedEvent for TransitionEndEvent {
     }
 }
 
+impl TargetedEvent for AnimationEndEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
+impl TargetedEvent for AnimationIterationEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
 pub(crate) type KeyEventHandler = Arc<dyn Fn(&mut KeyEvent) + Send + Sync + 'static>;
 pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 'static>;
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
@@ -574,6 +698,10 @@ pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
 pub(crate) type TransitionEndEventHandler =
     Arc<dyn Fn(&mut TransitionEndEvent) + Send + Sync + 'static>;
+pub(crate) type AnimationEndEventHandler =
+    Arc<dyn Fn(&mut AnimationEndEvent) + Send + Sync + 'static>;
+pub(crate) type AnimationIterationEventHandler =
+    Arc<dyn Fn(&mut AnimationIterationEvent) + Send + Sync + 'static>;
 pub(crate) type SelectionChangeEventHandler =
     Arc<dyn Fn(&mut SelectionChangeEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
@@ -590,6 +718,8 @@ pub(crate) enum TargetedEventKind {
     Wheel,
     Scroll,
     TransitionEnd,
+    AnimationEnd,
+    AnimationIteration,
 }
 
 /// Registered event listener callback.
@@ -613,6 +743,10 @@ pub(crate) enum ListenerKind {
     Scroll(ScrollEventHandler),
     /// Transition end listener.
     TransitionEnd(TransitionEndEventHandler),
+    /// Animation end listener.
+    AnimationEnd(AnimationEndEventHandler),
+    /// Animation iteration listener.
+    AnimationIteration(AnimationIterationEventHandler),
     /// Selection change listener.
     SelectionChange(SelectionChangeEventHandler),
     /// Terminal resize listener.

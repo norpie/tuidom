@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::animation::value::{AnimatedValue, extract_animated_value};
-use crate::animation::{Easing, TransitionConfig, TransitionProperty};
+use crate::animation::{
+    AnimationDirection, Easing, ResolvedKeyframes, ResolvedTrack, TransitionConfig,
+    TransitionProperty,
+};
 use crate::id::NodeId;
 use crate::style::resolution::ResolvedStyle;
 
@@ -71,16 +74,101 @@ pub(crate) struct FinishedTransition {
     pub property: TransitionProperty,
 }
 
+/// A keyframe-animation event produced by upkeep: an iteration boundary crossed,
+/// or the animation running to completion. Cancelled animations and removed
+/// nodes produce neither.
+pub(crate) struct KeyframeEvent {
+    /// The animated node.
+    pub node_id: NodeId,
+    /// The animation's id, for rebuilding its public handle.
+    pub animation_id: u64,
+    /// What happened.
+    pub kind: KeyframeEventKind,
+}
+
+/// What a [`KeyframeEvent`] reports.
+pub(crate) enum KeyframeEventKind {
+    /// The animation crossed into iteration `iteration` (1-based count of
+    /// completed iterations).
+    Iteration { iteration: u64 },
+    /// The animation ran all its iterations.
+    End,
+}
+
+/// A running keyframe animation on one node.
+struct KeyframeState {
+    id: u64,
+    node_id: NodeId,
+    keyframes: ResolvedKeyframes,
+    started: Instant,
+    /// Set while paused: the instant the pause began, freezing elapsed time.
+    paused_at: Option<Instant>,
+    /// Iterations already reported through upkeep events.
+    reported_iterations: u64,
+}
+
+impl KeyframeState {
+    /// Elapsed animation time, frozen while paused.
+    fn elapsed(&self, now: Instant) -> f64 {
+        let end = self.paused_at.unwrap_or(now);
+        end.duration_since(self.started).as_secs_f64()
+    }
+
+    /// Completed whole iterations at the current time.
+    fn iterations_elapsed(&self, now: Instant) -> u64 {
+        let duration = self.keyframes.duration.as_secs_f64();
+        if duration <= 0.0 {
+            return u64::from(self.keyframes.iterations.unwrap_or(1) > 0);
+        }
+        (self.elapsed(now) / duration) as u64
+    }
+
+    /// Whether the animation has run all its iterations.
+    fn is_done(&self, now: Instant) -> bool {
+        match self.keyframes.iterations {
+            Some(count) => self.iterations_elapsed(now) >= u64::from(count),
+            None => false,
+        }
+    }
+
+    /// Progress through the current iteration (0–1), with direction applied.
+    fn direction_progress(&self, now: Instant) -> f64 {
+        let duration = self.keyframes.duration.as_secs_f64();
+        if duration <= 0.0 {
+            return 1.0;
+        }
+        let raw = self.elapsed(now) / duration;
+        let iteration = raw as u64;
+        let progress = (raw - iteration as f64).clamp(0.0, 1.0);
+        match self.keyframes.direction {
+            AnimationDirection::Normal => progress,
+            AnimationDirection::Reverse => 1.0 - progress,
+            AnimationDirection::Alternate => {
+                if iteration.is_multiple_of(2) {
+                    progress
+                } else {
+                    1.0 - progress
+                }
+            }
+        }
+    }
+}
+
 /// Manages all active transitions and tick scheduling.
 pub(crate) struct AnimationDriver {
     /// All active transitions.
     active: Vec<TransitionState>,
+    /// All running keyframe animations.
+    keyframes: Vec<KeyframeState>,
 }
 
 impl AnimationDriver {
     /// Create a new empty driver.
     pub fn new() -> Self {
-        Self { active: Vec::new() }
+        Self {
+            active: Vec::new(),
+            keyframes: Vec::new(),
+        }
     }
 
     /// Called after a style change to check for transitionable properties.
@@ -173,13 +261,137 @@ impl AnimationDriver {
         overrides
     }
 
-    /// Return whether any transitions are currently active.
-    pub fn has_active(&self) -> bool {
-        !self.active.is_empty()
+    /// Start a keyframe animation on a node, replacing any animation with the
+    /// same id.
+    pub fn animate(
+        &mut self,
+        id: u64,
+        node_id: NodeId,
+        keyframes: ResolvedKeyframes,
+        now: Instant,
+    ) {
+        self.keyframes.retain(|state| state.id != id);
+        self.keyframes.push(KeyframeState {
+            id,
+            node_id,
+            keyframes,
+            started: now,
+            paused_at: None,
+            reported_iterations: 0,
+        });
     }
 
-    /// Nodes with an in-flight transition on a layout-affecting property — the
-    /// nodes whose interpolated style must be fed to the layout engine this frame.
+    /// Freeze an animation's clock. Returns whether the id named a running,
+    /// unpaused animation.
+    pub fn pause_animation(&mut self, id: u64, now: Instant) -> bool {
+        let Some(state) = self.keyframes.iter_mut().find(|state| state.id == id) else {
+            return false;
+        };
+        if state.paused_at.is_some() {
+            return false;
+        }
+        state.paused_at = Some(now);
+        true
+    }
+
+    /// Resume a paused animation where it left off: the pause span is added to
+    /// the start instant, so elapsed time excludes it. Returns whether the id
+    /// named a paused animation.
+    pub fn resume_animation(&mut self, id: u64, now: Instant) -> bool {
+        let Some(state) = self.keyframes.iter_mut().find(|state| state.id == id) else {
+            return false;
+        };
+        let Some(paused_at) = state.paused_at.take() else {
+            return false;
+        };
+        state.started += now.duration_since(paused_at);
+        true
+    }
+
+    /// Drop an animation without finishing it — no end event fires and the node
+    /// returns to its underlying style. Returns the animated node when the id
+    /// named a running animation, so the caller can settle its layout style.
+    pub fn cancel_animation(&mut self, id: u64) -> Option<NodeId> {
+        let index = self.keyframes.iter().position(|state| state.id == id)?;
+        Some(self.keyframes.swap_remove(index).node_id)
+    }
+
+    /// Keyframe values for a node at the current time, sampled against `base` —
+    /// the node's resolved style before keyframe overrides, which supplies the
+    /// implicit 0%/100% endpoints for properties a track leaves open.
+    ///
+    /// Applied after transition overrides, so animations win on conflict.
+    pub fn keyframe_overrides_for(
+        &self,
+        node_id: NodeId,
+        now: Instant,
+        base: &ResolvedStyle,
+    ) -> Vec<(TransitionProperty, AnimatedValue)> {
+        let mut overrides = Vec::new();
+        for state in &self.keyframes {
+            if state.node_id != node_id || state.is_done(now) {
+                continue;
+            }
+            let progress = state.direction_progress(now);
+            for (property, track) in &state.keyframes.tracks {
+                let underlying = extract_animated_value(base, *property);
+                if let Some(value) =
+                    sample_track(track, underlying, progress, state.keyframes.easing)
+                {
+                    overrides.push((*property, value));
+                }
+            }
+        }
+        overrides
+    }
+
+    /// Report iteration boundaries crossed since the last call and remove
+    /// animations that ran all their iterations, reporting their end.
+    pub fn keyframe_upkeep(&mut self, now: Instant) -> Vec<KeyframeEvent> {
+        let mut events = Vec::new();
+        self.keyframes.retain_mut(|state| {
+            let iterations = state.iterations_elapsed(now);
+            let done = state.is_done(now);
+            // The final boundary is reported as the end, not as one more iteration.
+            let boundary = if done {
+                iterations.saturating_sub(1)
+            } else {
+                iterations
+            };
+            if boundary > state.reported_iterations {
+                state.reported_iterations = boundary;
+                events.push(KeyframeEvent {
+                    node_id: state.node_id,
+                    animation_id: state.id,
+                    kind: KeyframeEventKind::Iteration {
+                        iteration: boundary,
+                    },
+                });
+            }
+            if done {
+                events.push(KeyframeEvent {
+                    node_id: state.node_id,
+                    animation_id: state.id,
+                    kind: KeyframeEventKind::End,
+                });
+            }
+            !done
+        });
+        events
+    }
+
+    /// Return whether anything needs animation frames right now.
+    ///
+    /// Paused animations do not: their values are frozen, so the renderer can
+    /// idle until they resume.
+    pub fn has_active(&self) -> bool {
+        !self.active.is_empty() || self.keyframes.iter().any(|state| state.paused_at.is_none())
+    }
+
+    /// Nodes whose interpolated style must be fed to the layout engine this
+    /// frame: in-flight transitions and keyframe animations on layout-affecting
+    /// properties. Paused animations stay listed — their frozen value still
+    /// belongs in layout whenever something else triggers a pass.
     pub fn layout_animating_nodes(&self) -> Vec<NodeId> {
         let mut nodes = Vec::new();
         for t in &self.active {
@@ -187,13 +399,19 @@ impl AnimationDriver {
                 nodes.push(t.node_id);
             }
         }
+        for state in &self.keyframes {
+            if state.keyframes.affects_layout() && !nodes.contains(&state.node_id) {
+                nodes.push(state.node_id);
+            }
+        }
         nodes
     }
 
-    /// Remove all active transitions for a removed node.
+    /// Remove all active transitions and animations for a removed node.
     pub fn remove_node(&mut self, node_id: NodeId) {
         self.active
             .retain(|transition| transition.node_id != node_id);
+        self.keyframes.retain(|state| state.node_id != node_id);
     }
 
     /// Remove completed transitions, reporting each one so the caller can fire
@@ -218,6 +436,67 @@ impl AnimationDriver {
         self.active
             .retain(|t| !(t.node_id == node_id && t.property == property));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Keyframe sampling
+// ---------------------------------------------------------------------------
+
+/// Sample one property's keyframe track at `progress` (0–1).
+///
+/// The track is sorted by offset with values resolved. A track that does not
+/// start at 0% or end at 100% uses `underlying` — the node's resolved value
+/// beneath the animation — as the implicit endpoint; with no underlying value
+/// to interpolate from (an unset background, an `Auto` size), the nearest
+/// keyframe value holds instead. Easing applies per segment. Values that
+/// cannot interpolate (mismatched units) snap to the segment's end value.
+fn sample_track(
+    track: &ResolvedTrack,
+    underlying: Option<AnimatedValue>,
+    progress: f64,
+    easing: Easing,
+) -> Option<AnimatedValue> {
+    let first = track.first()?;
+    let last = track.last()?;
+
+    // Before the first keyframe: interpolate up from the underlying value, or
+    // hold the first keyframe's value when there is nothing to come from.
+    if progress <= first.0 {
+        let Some(underlying) = underlying.filter(|_| first.0 > 0.0) else {
+            return Some(first.1);
+        };
+        return sample_segment((0.0, underlying), *first, progress, easing);
+    }
+    // Past the last keyframe: interpolate out toward the underlying value.
+    if progress >= last.0 {
+        let Some(underlying) = underlying.filter(|_| last.0 < 1.0) else {
+            return Some(last.1);
+        };
+        return sample_segment(*last, (1.0, underlying), progress, easing);
+    }
+
+    let next_index = track.partition_point(|(offset, _)| *offset <= progress);
+    let start = track.get(next_index.checked_sub(1)?)?;
+    let end = track.get(next_index)?;
+    sample_segment(*start, *end, progress, easing)
+}
+
+/// Interpolate between two keyframes at `progress`, easing the local fraction.
+fn sample_segment(
+    start: (f64, AnimatedValue),
+    end: (f64, AnimatedValue),
+    progress: f64,
+    easing: Easing,
+) -> Option<AnimatedValue> {
+    let span = end.0 - start.0;
+    if span <= 0.0 {
+        return Some(end.1);
+    }
+    let local = ((progress - start.0) / span).clamp(0.0, 1.0);
+    let eased = apply_easing(local, easing);
+    // Mismatched variants (a cells width keyed against a percent underlying
+    // value) cannot interpolate; the segment holds its end value instead.
+    Some(start.1.lerp(end.1, eased).unwrap_or(end.1))
 }
 
 // ---------------------------------------------------------------------------
