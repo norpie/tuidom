@@ -375,6 +375,8 @@ pub struct Style {
     pub(crate) z_index: StyleValue<i32>,
     /// Whether this node creates an isolated stacking context for descendants.
     pub(crate) stacking_context: StyleValue<bool>,
+    /// Whether mouse drag selection is confined to this node's subtree.
+    pub(crate) selection_boundary: StyleValue<bool>,
     /// Bold text.
     pub(crate) bold: StyleValue<bool>,
     /// Italic text.
@@ -433,6 +435,7 @@ impl Style {
             position: StyleValue::Unset,
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
+            selection_boundary: StyleValue::Unset,
             bold: StyleValue::Unset,
             italic: StyleValue::Unset,
             underline: StyleValue::Unset,
@@ -1050,6 +1053,23 @@ impl Style {
         self.stacking_context = StyleValue::Unset;
     }
 
+    // -- Selection Boundary --------------------------------------------
+
+    /// Set whether mouse drag selection is confined to this node's subtree.
+    pub fn selection_boundary(&mut self, value: bool) {
+        self.selection_boundary = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit selection boundary behavior from the parent node.
+    pub fn inherit_selection_boundary(&mut self) {
+        self.selection_boundary = StyleValue::Inherit;
+    }
+
+    /// Reset selection boundary behavior to the document/default style.
+    pub fn unset_selection_boundary(&mut self) {
+        self.selection_boundary = StyleValue::Unset;
+    }
+
     // -- Cursor Shape ---------------------------------------------------
 
     /// Set the input cursor shape.
@@ -1143,6 +1163,7 @@ mod tests {
 
         style.z_index(10);
         style.stacking_context(true);
+        style.selection_boundary(true);
         style.cursor_shape(CursorShape::Bar);
         style.set_custom("--role", "panel");
 
@@ -1165,6 +1186,7 @@ mod tests {
         );
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
+        assert_eq!(style.selection_boundary, StyleValue::Set(true));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
         assert_eq!(style.get_custom("--role"), Some("panel"));
     }
@@ -1188,6 +1210,7 @@ mod tests {
         assert_eq!(style.position, StyleValue::Unset);
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
+        assert_eq!(style.selection_boundary, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
         assert_eq!(style.get_custom("--role"), None);
     }
@@ -1225,6 +1248,7 @@ mod tests {
         style.inherit_position();
         style.inherit_z_index();
         style.inherit_stacking_context();
+        style.inherit_selection_boundary();
         style.inherit_cursor_shape();
 
         assert_eq!(style.width, StyleValue::Inherit);
@@ -1243,6 +1267,7 @@ mod tests {
         assert_eq!(style.position, StyleValue::Inherit);
         assert_eq!(style.z_index, StyleValue::Inherit);
         assert_eq!(style.stacking_context, StyleValue::Inherit);
+        assert_eq!(style.selection_boundary, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);
     }
 }

@@ -90,6 +90,8 @@ pub struct ResolvedStyle {
     pub z_index: i32,
     /// Whether this node creates an isolated stacking context.
     pub stacking_context: bool,
+    /// Whether mouse drag selection is confined to this node's subtree.
+    pub selection_boundary: bool,
     /// Whether text is drawn bold.
     pub bold: bool,
     /// Whether text is drawn italic.
@@ -162,6 +164,7 @@ pub(crate) struct StyleDefaults {
     position: Position,
     z_index: i32,
     stacking_context: bool,
+    selection_boundary: bool,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -209,6 +212,7 @@ impl Default for StyleDefaults {
             position: Position::Flow,
             z_index: 0,
             stacking_context: false,
+            selection_boundary: false,
             bold: false,
             italic: false,
             underline: false,
@@ -268,6 +272,7 @@ impl StyleDefaults {
             position: self.position,
             z_index: self.z_index,
             stacking_context: self.stacking_context,
+            selection_boundary: self.selection_boundary,
             bold: self.bold,
             italic: self.italic,
             underline: self.underline,
@@ -484,6 +489,11 @@ impl ResolvedStyle {
                 &data.style.stacking_context,
                 parent.map(|p| &p.stacking_context),
                 &defaults.stacking_context,
+            ),
+            selection_boundary: resolve(
+                &data.style.selection_boundary,
+                parent.map(|p| &p.selection_boundary),
+                &defaults.selection_boundary,
             ),
             bold: resolve(&data.style.bold, parent.map(|p| &p.bold), &defaults.bold),
             italic: resolve(
@@ -737,6 +747,12 @@ impl ResolvedStyle {
             &style.stacking_context,
             parent.map(|p| &p.stacking_context),
             &defaults.stacking_context,
+        );
+        apply_override(
+            &mut self.selection_boundary,
+            &style.selection_boundary,
+            parent.map(|p| &p.selection_boundary),
+            &defaults.selection_boundary,
         );
         apply_override(
             &mut self.bold,
