@@ -186,23 +186,35 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Semi-transparent colors blend with buffer content below
   - [x] Translucent background fills preserve existing text content
   - [x] Enables modal overlays, frosted effects, etc.
-- [ ] Selection colors (`selection_bg`, `selection_fg`) — inherited like other colors
+- [x] Selection colors (`selection_bg`, `selection_fg`) — inherited like other colors; unset means reverse video
 
 ## Text Selection
 
-- [ ] Screen-wide text selection (not just Input fields)
-- [ ] Selection boundaries — containers marked as `selection_boundary: true`
-  - [ ] Mouse drag selection respects boundaries, doesn't bleed across
-  - [ ] Sidebar, main content, input areas can be separate boundaries
-- [ ] Selection state tracked at document level:
-  - [ ] Which boundary container
-  - [ ] Start/end positions or character ranges
-- [ ] API:
-  - [ ] `doc.get_selection() -> Option<String>` — returns selected text in reading order
-  - [ ] `doc.clear_selection()`
-  - [ ] Selection changed event
-- [ ] Rendering: selected characters use `selection_bg`/`selection_fg` colors (inherited via style system)
-- [ ] No built-in clipboard keybinds — user binds Ctrl+C to `clipboard.set(doc.get_selection())`
+- [x] Screen-wide text selection (not just Input fields)
+- [x] Selection boundaries — containers marked as `selection_boundary: true`
+  - [x] Mouse drag selection respects boundaries, doesn't bleed across — the drag is
+        confined to its starting point's boundary for the whole gesture
+  - [x] Sidebar, main content, input areas can be separate boundaries
+  - [x] An Input is an implicit boundary: dragging inside it drives the input's own
+        selection (and click positions the input cursor)
+- [x] Selection state tracked at document level:
+  - [x] Which boundary container
+  - [x] Anchor/focus as `SelectionPoint` (Text node + grapheme-normalized byte offset);
+        consumers see the pair in document order with the end extended past the glyph
+        under it, so both endpoint cells are included
+  - [x] A point on a non-text cell snaps to the nearest character in the boundary
+  - [x] Selection survives scrolling (content-addressed) and is pruned on node removal
+        and clamped on text content changes
+- [x] API:
+  - [x] `doc.get_selection() -> Option<String>` — returns selected text in reading order
+        (document order; newline between slices that don't share a screen row)
+  - [x] `doc.clear_selection()`
+  - [x] `doc.selection() -> Option<(SelectionPoint, SelectionPoint)>`
+  - [x] Selection changed event (document-level, fires only on actual change)
+- [x] Rendering: selected characters use `selection_bg`/`selection_fg` colors (inherited via style system)
+  - [x] Unset colors mean reverse video: selected cells swap fg/bg
+  - [x] Focused inputs highlight their selection the same way; masked inputs highlight mask glyphs
+- [x] No built-in clipboard keybinds — user binds Ctrl+C to `clipboard.set(doc.get_selection())`
 
 ## Rendering
 
@@ -237,7 +249,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Frame: `on_post_frame` — document-level like resize, fires after each rendered frame with its metrics; DOM mutation in the handler schedules another frame, so handlers pace their mutations
   - [ ] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
 - [x] Listener registration returns handle for removal
-- [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults) and wheel (default scroll)
+- [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults), wheel (default scroll), and mouse down (selection start)
 
 ## Transitions & Animations
 

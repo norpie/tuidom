@@ -138,9 +138,11 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Spatial Navigation** — Arrow key focus movement based on visual distance (edge-to-edge) rather than DOM order.
 
-**Selection Boundary** — Container marked `selection_boundary: true`. Mouse drag selection respects boundaries, doesn't bleed across.
+**Selection Boundary** — Container marked `selection_boundary: true`. A drag is confined to the boundary of its *starting* point — the nearest marked ancestor-or-self, the root when nothing is marked — for the whole gesture: crossing into another boundary just snaps the focus point to the nearest text inside the original one. An Input is an implicit boundary whose drag drives the input's own selection instead. Within one boundary, the selected range follows document order, so two unmarked columns select browser-style — the tail of one plus the head of the other.
 
-**SelectionPoint** — Position in selection range: which Text node + character offset.
+**SelectionPoint** — A position in a document selection: a Text node plus a byte offset on a grapheme boundary. Content-addressed rather than screen-addressed, so scrolling never moves or invalidates it — rendering re-maps it through the current layout each frame. Consumers see the anchor/focus pair normalized to document order with the end extended past the glyph under it, so both endpoint cells of a drag are included, the way terminals select.
+
+**Selection Colors** — `selection_bg` / `selection_fg`, the style colors selected glyphs render with. Unset means reverse video: each selected cell swaps its foreground and background, visible on any theme with zero configuration. A drag that starts on a non-text cell snaps to the nearest character in the boundary, and a left press both clears the selection and arms a new drag — `prevent_default()` on the mouse down suppresses that default, keeping the selection.
 
 ## Animation
 
