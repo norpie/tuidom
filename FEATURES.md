@@ -10,7 +10,10 @@
 - [ ] Node kinds:
   - [x] Box (generic container, div equivalent)
   - [x] Text (static text content)
-  - [ ] Frames (cycles through content on a timer — for spinners, ASCII animations)
+  - [x] Frames (cycles through content on a timer — for spinners, ASCII animations)
+    - [x] Current frame is a function of elapsed time — no per-flip mutation
+    - [x] Measured on the largest frame, so cycling never reflows surrounding content
+    - [x] Self-paced: a lone frames node renders at its interval, not the animation tick
   - [ ] Canvas (downstream-controlled rendering region)
     - [ ] Participates in layout like any Box
     - [ ] Cell buffer mode: callback fills 2D grid of cells (char, fg, bg, attrs)
@@ -247,6 +250,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
     - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
   - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
   - [x] Frame: `on_post_frame` — document-level like resize, fires after each rendered frame with its metrics; DOM mutation in the handler schedules another frame, so handlers pace their mutations
+  - [x] Animation: `on_transition_end`, `on_animation_end`, `on_animation_iteration` — node-targeted and bubbling like the DOM's; exempt from the disabled/inert swallow, since they report a change the engine already made
   - [ ] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
 - [x] Listener registration returns handle for removal
 - [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults), wheel (default scroll), and mouse down (selection start)
@@ -255,17 +259,33 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 
 - [x] Transitions: property changes animate over time
   - [x] Animatable: opacity
-  - [ ] Animatable: position, size, colors (interpolated in OKLCH), numeric style values (padding, margin, etc.)
-  - [ ] Not animatable: discrete values (border style, text content, booleans)
-  - [x] Configurable duration, easing
-  - [ ] `on_transition_end` event
-- [ ] Keyframe animations: multi-step property animations
-  - [ ] Define keyframes at percentages (0%, 50%, 100%, etc.)
-  - [ ] Duration, easing, iteration count, direction (normal, reverse, alternate)
-  - [ ] `from_to()` shorthand for simple two-state animations
-  - [ ] Control: pause, resume, cancel
-  - [ ] Events: `on_animation_end`, `on_animation_iteration`
-- [ ] Frames node handles content-based animation (see Core DOM Model)
+  - [x] Animatable: position (absolute offsets), size (width/height), colors (interpolated
+        in OKLCH), padding, margin — layout-affecting values drive the layout engine per
+        animation frame while in flight, and only then
+  - [x] Not animatable: discrete values (border style, text content, booleans) — and
+        non-interpolable states (`Auto` sizes, unset colors, `Flow` position, unit
+        changes) snap, like CSS `auto`
+  - [x] Configurable duration, easing (including CSS-style `CubicBezier`)
+  - [x] Pseudo-state changes (focus/active/disabled) trigger transitions like explicit
+        style changes — the merged resolved style is what is diffed
+  - [x] Interruption continues from the displayed value; a pure reversal is shortened to
+        the share of the duration matching the distance covered
+  - [x] `on_transition_end` event (node-targeted, bubbles; interrupted transitions and
+        removed nodes fire none)
+- [x] Keyframe animations: multi-step property animations
+  - [x] Define keyframes at percentages (0%, 50%, 100%, etc.) holding typed
+        `AnimatableProperty` values — non-animatable properties are unrepresentable
+  - [x] Duration, easing (per segment), iteration count (finite or infinite), direction
+        (normal, reverse, alternate)
+  - [x] Implicit 0%/100% endpoints from the node's underlying value; animations apply
+        over transitions (animations win on conflict)
+  - [x] `from_to()` shorthand for simple two-state animations
+  - [x] Control: pause (frozen values drive no frames), resume, cancel (no end event)
+  - [x] Events: `on_animation_end`, `on_animation_iteration` (node-targeted, bubble;
+        boundaries crossed within one frame coalesce)
+- [x] Frames node handles content-based animation (see Core DOM Model)
+- [x] Paced animation frames: default ~60fps tick, `set_animation_fps(None)` unpaces
+      entirely; frames nodes self-pace at their flip intervals; idle stays passive
 
 ## Async Runtime
 

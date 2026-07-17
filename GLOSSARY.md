@@ -146,15 +146,17 @@ Terms and concepts used throughout the tuidom codebase.
 
 ## Animation
 
-**Transition** — Property animation triggered by value change. One per node/property pair.
+**Transition** — Property animation triggered by a change in a node's *merged* resolved value — an explicit style change and a pseudo-state change (focus, active, disabled) animate alike. One per node/property pair. An interrupted transition hands over its currently displayed value, so a retarget never jumps; a pure reversal gets only the share of the duration matching the distance it covers. States with no interpolable value — an unset background, an `Auto` size, a `Flow` position, a cells↔percent unit change — snap instead of transitioning, the way CSS cannot animate `auto`. Completion fires a bubbling transition-end event; interrupted transitions and removed nodes fire none. Colors interpolate in OKLCH; cell values interpolate fractionally and round only at application. Layout-affecting properties (position, size, padding, margin) feed the layout engine per animation frame while in flight — and only then.
 
-**Keyframe Animation** — Multi-step animation with defined frames at percentages (0%, 50%, 100%, etc.).
+**Keyframe Animation** — Multi-step animation started with `doc.animate`: keyframes at percentages holding typed [AnimatableProperty] values, played over a duration for an iteration count (finite or infinite) in a direction (normal, reverse, alternate). Easing applies per keyframe segment, like CSS. A property missing an explicit 0%/100% keyframe uses the node's underlying resolved value as the implicit endpoint. Values apply on top of any running transitions — animations win on conflict — and when the animation ends it is removed, returning the node to its underlying style; a handler holds the final state by setting it as the node's style from the end event. The returned `AnimationHandle` pauses (values freeze, no frames driven), resumes (elapsed time excludes the pause), and cancels (no end event). End and iteration events bubble from the animated node; iteration boundaries crossed within one frame coalesce into a single event carrying the latest count.
 
-**Frames Node** — Node type that cycles through text content on a timer (for spinners, ASCII animations).
+**Frames Node** — Node type that cycles through text content on a timer (for spinners, ASCII animations). The current frame is a function of elapsed time, not stored state — a flip is nothing but the clock passing a boundary. Measured on the largest frame, so cycling never reflows the content around it. A lone frames node paces rendering at its own interval rather than the animation tick, so a 100ms spinner repaints ten times a second; a single frame or zero interval drives no rendering at all.
 
-**AnimatableProperty** — Type-safe enum of properties that can interpolate. Non-animatable properties (e.g., border style) cause compile errors.
+**AnimatableProperty** — Typed keyframe value, one variant per animatable property (opacity, colors, absolute position offsets, width/height, padding, margin). A non-animatable property — border style, text content, a boolean — is unrepresentable, so a keyframe cannot be written that the engine would have to ignore. Color values are `Color` expressions evaluated once against the node's scope when `animate` is called.
 
-**Easing** — Interpolation curve (Linear, EaseIn, EaseOut, EaseInOut, CubicBezier).
+**Easing** — Interpolation curve: Linear, EaseIn, EaseOut, EaseInOut, and CSS-style `CubicBezier(x1, y1, x2, y2)`. Transitions ease their whole run; keyframe animations ease each segment.
+
+**Animation Tick** — The pacing of animation-driven frames: transitions and keyframe animations render on a document-wide tick (default ~60fps, `set_animation_fps`), where `None` removes the pacing entirely — a stress-test mode, not a default. Frames nodes schedule by their own flip intervals instead. The tick exists only while something animates: an idle document stays fully passive, and paused animations do not count.
 
 ## Rendering
 

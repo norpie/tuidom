@@ -21,6 +21,10 @@
 //! Drag over text      — select it (drag in an input selects within the input);
 //!                        the two selection columns are separate boundaries, and the
 //!                        status line echoes get_selection()
+//! Animations section   — a frames-node spinner and an infinite keyframe pulse
+//!                        run unpaced (set_animation_fps(None)) as a stress test;
+//!                        hover the "hover me" chip — its background fades via a
+//!                        transition triggered by the focus pseudo-state
 //! [ / ] outside input  — scroll the horizontal pane
 //! m outside input      — open the modal: focus is trapped inside it and the
 //!                        content behind it goes inert (no tab, hover, or clicks)
@@ -31,7 +35,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tuidom::animation::{Easing, TransitionConfig};
+use tuidom::animation::{
+    AnimatableProperty, AnimationDirection, Easing, KeyframeAnimation, TransitionConfig,
+    TransitionProperty,
+};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
     AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
@@ -565,6 +572,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(selection_row, left_boundary)?;
     doc.append_child(selection_row, right_boundary)?;
 
+    // --- Animations -----------------------------------------------------
+
+    let animation_label = doc.create_text("Animations")?;
+    doc.set_style(animation_label, &section_label_style)?;
+
+    let animation_row = doc.create_box()?;
+    doc.set_style(animation_row, &row_style)?;
+
+    // A frames node: content-based animation, self-paced at its own interval
+    // rather than the animation tick rate.
+    let spinner = doc.create_frames(
+        ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+        Duration::from_millis(80),
+    )?;
+    doc.set_style(spinner, &label_style)?;
+
+    let spinner_caption = doc.create_text("spinner")?;
+    doc.set_style(spinner_caption, &label_style)?;
+
+    // An infinite alternate keyframe pulse — the reason the FPS counter never
+    // reads an idle renderer while this section is on screen.
+    let pulse = doc.create_text("  pulse  ")?;
+    let mut pulse_style = Style::new();
+    pulse_style.color(Color::white());
+    pulse_style.background(Color::oklch(0.55, 0.18, 300.0));
+    doc.set_style(pulse, &pulse_style)?;
+    doc.animate(
+        pulse,
+        KeyframeAnimation::from_to(
+            Duration::from_millis(900),
+            [AnimatableProperty::Opacity(1.0)],
+            [AnimatableProperty::Opacity(0.35)],
+        )
+        .easing(Easing::EaseInOut)
+        .direction(AnimationDirection::Alternate)
+        .infinite(),
+    )?;
+
+    // A background transition driven by a pseudo-state change: hovering focuses
+    // the chip, and the focus style's background fades in over 300ms (in OKLCH).
+    let hover_fade = doc.create_text("  hover me  ")?;
+    let mut hover_base = Style::new();
+    hover_base.color(Color::white());
+    hover_base.background(Color::oklch(0.35, 0.05, 220.0));
+    doc.set_style(hover_fade, &hover_base)?;
+    doc.set_focusable(hover_fade, true)?;
+    let mut hover_focus = Style::new();
+    hover_focus.background(Color::oklch(0.6, 0.16, 220.0));
+    doc.set_focus_style(hover_fade, &hover_focus)?;
+    doc.set_transition(
+        hover_fade,
+        TransitionConfig::new(
+            TransitionProperty::Background,
+            Duration::from_millis(300),
+            Easing::EaseOut,
+        ),
+    )?;
+
+    doc.append_child(animation_row, spinner)?;
+    doc.append_child(animation_row, spinner_caption)?;
+    doc.append_child(animation_row, pulse)?;
+    doc.append_child(animation_row, hover_fade)?;
+
     let attrs_label = doc.create_text("Text attributes")?;
     doc.set_style(attrs_label, &section_label_style)?;
 
@@ -604,6 +674,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, selection_label)?;
     doc.append_child(stack, selection_row)?;
     doc.append_child(stack, selection_status)?;
+    doc.append_child(stack, animation_label)?;
+    doc.append_child(stack, animation_row)?;
     doc.append_child(stack, attrs_label)?;
     doc.append_child(stack, attrs_row)?;
 
@@ -662,6 +734,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         text,
         TransitionConfig::opacity(Duration::from_millis(1000), Easing::EaseInOut),
     )?;
+
+    // Animations drive frames unpaced on purpose: the FPS counter doubles as a
+    // stress readout, so the demo removes the default ~60fps animation tick.
+    doc.set_animation_fps(None);
 
     // --- Shared state -------------------------------------------------
 
