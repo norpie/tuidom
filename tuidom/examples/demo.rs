@@ -14,7 +14,8 @@
 //! Space outside input  — toggle first button opacity (fade in/out)
 //! Click first button   — toggle button background, stop propagation
 //! Click background     — toggle container background
-//! Wheel anywhere       — adjust text opacity via container wheel handler
+//! Wheel anywhere       — scroll the page (the center area is a scroll container)
+//! Wheel over 1st button — adjust its opacity; prevent_default keeps the page still
 //! Wheel over the list  — scroll it; its bar tracks the offset
 //! Wheel over the 10k pane — virtualized: only the visible window exists in the DOM
 //! Drag over text      — select it (drag in an input selects within the input);
@@ -69,11 +70,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     top_bar_style.flex_direction(FlexDirection::Row);
     top_bar_style.justify_content(JustifyContent::FlexEnd);
 
+    // The page viewport: scrolls vertically when the section stack outgrows the
+    // terminal. Cross-axis alignment stays at the start — centering an overflowing
+    // stack would push its top above the reachable scroll range.
     let mut center_area_style = Style::new();
     center_area_style.width(Length::Percent(100.0));
     center_area_style.flex_grow(1.0);
     center_area_style.justify_content(JustifyContent::Center);
-    center_area_style.align_items(AlignItems::Center);
+    center_area_style.align_items(AlignItems::FlexStart);
+    center_area_style.overflow_y(Overflow::Scroll);
 
     let mut stack_style = Style::new();
     stack_style.width(Length::Auto);
@@ -440,8 +445,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = doc_for_scroll.set_text_content(status, format!("offset {}", event.y));
         })?;
     }
-    // The default scroll still runs; stopping propagation just keeps the wheel from
-    // also reaching the container's opacity handler below.
+    // The default scroll still runs; stopping propagation only demonstrates that
+    // ancestor wheel listeners never see the event.
     doc.on_wheel(list, |event| event.stop_propagation())?;
 
     let wide = doc.create_box()?;
@@ -806,9 +811,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = d.update_style(container, |s| s.background(color));
     })?;
 
+    // Scoped to the button now that the page itself scrolls: prevent_default keeps
+    // the wheel from also scrolling the page while it adjusts opacity.
     let d = doc.clone();
     let opacity_for_wheel = text_opacity.clone();
-    doc.on_wheel(container, move |event| {
+    doc.on_wheel(toggle_button, move |event| {
+        event.prevent_default();
         if let Ok(mut opacity) = opacity_for_wheel.lock() {
             let direction = if event.delta > 0 { 1.0 } else { -1.0 };
             *opacity = (*opacity + direction * 0.1).clamp(0.1, 1.0);
