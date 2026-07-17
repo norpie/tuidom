@@ -2,12 +2,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use crate::animation::TransitionProperty;
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
     EventPhase, FocusEvent, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent,
     PostFrameEvent, ResizeEvent, ScrollEvent, SelectionChangeEvent, TargetedEvent,
-    TargetedEventKind, WheelEvent,
+    TargetedEventKind, TransitionEndEvent, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -135,6 +136,24 @@ impl Document {
             node,
             TargetedEventKind::Scroll,
             ListenerKind::Scroll(Arc::new(handler)),
+        )
+    }
+
+    /// Register a transition end listener on a node.
+    ///
+    /// Fires once a transitioned property settles on its target value, and bubbles
+    /// like the DOM's `transitionend` — register on a container to observe all of
+    /// its children's transitions. An interrupted transition fires no end event
+    /// (its replacement fires its own), and a node removed mid-transition fires none.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_transition_end<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut TransitionEndEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::TransitionEnd,
+            ListenerKind::TransitionEnd(Arc::new(handler)),
         )
     }
 
@@ -380,6 +399,21 @@ impl Document {
         }
     }
 
+    /// Dispatch a transition end event from the node whose transition finished.
+    pub(crate) fn dispatch_transition_end_to(&self, target: NodeId, property: TransitionProperty) {
+        let mut event = TransitionEndEvent::new(property);
+        self.dispatch_targeted_event(
+            target,
+            &mut event,
+            TargetedEventKind::TransitionEnd,
+            |kind, event| {
+                if let ListenerKind::TransitionEnd(handler) = kind {
+                    handler(event);
+                }
+            },
+        );
+    }
+
     /// Build the post-frame event for the frame that was just recorded.
     ///
     /// Returns `None` when no post-frame listener is registered or no frame has
@@ -454,13 +488,14 @@ impl Document {
         // A disabled or inert node swallows input instead of letting it bubble to an
         // interactive ancestor, matching how disabled controls behave in HTML.
         //
-        // Focus and blur are exempt: they report a focus change the engine has already
-        // made, and the node losing focus is often losing it *because* it just became
-        // disabled or inert. Swallowing those would hide the transition from the handler
-        // that exists to observe it.
+        // Focus, blur, and transition end are exempt: they report a change the engine
+        // has already made — a node losing focus is often losing it *because* it just
+        // became disabled or inert, and a transition finishes regardless of either.
+        // Swallowing those would hide the change from the handler that exists to
+        // observe it.
         let is_input = !matches!(
             event_kind,
-            TargetedEventKind::Focus | TargetedEventKind::Blur
+            TargetedEventKind::Focus | TargetedEventKind::Blur | TargetedEventKind::TransitionEnd
         );
         if is_input && self.blocks_interaction(target) {
             return;

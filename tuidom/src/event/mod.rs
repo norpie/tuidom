@@ -9,6 +9,7 @@ mod key;
 pub(crate) use key::convert_key_event;
 pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
 
+use crate::animation::TransitionProperty;
 use crate::document::SelectionPoint;
 use crate::id::NodeId;
 use crate::performance::FrameMetrics;
@@ -399,6 +400,57 @@ impl ScrollEvent {
     }
 }
 
+/// A completed property transition.
+///
+/// Fires on the transitioned node once the property settles on its target value,
+/// and bubbles like the DOM's `transitionend` — a container can observe all of
+/// its children's transitions. Like scroll, it reports a change the engine has
+/// already made, so disabled or inert nodes do not swallow it.
+///
+/// Only completion fires it: a transition interrupted by a new target fires no
+/// end event (the replacement fires its own), and a node removed mid-transition
+/// fires none.
+#[derive(Debug, Clone)]
+pub struct TransitionEndEvent {
+    /// The property that finished transitioning.
+    pub property: TransitionProperty,
+    metadata: TargetedMetadata,
+}
+
+impl TransitionEndEvent {
+    pub(crate) fn new(property: TransitionProperty) -> Self {
+        Self {
+            property,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node whose transition finished.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
 /// A document selection change.
 ///
 /// Document-level like resize: selection is document state, so the event has no
@@ -504,11 +556,24 @@ impl TargetedEvent for ScrollEvent {
     }
 }
 
+impl TargetedEvent for TransitionEndEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
 pub(crate) type KeyEventHandler = Arc<dyn Fn(&mut KeyEvent) + Send + Sync + 'static>;
 pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 'static>;
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
+pub(crate) type TransitionEndEventHandler =
+    Arc<dyn Fn(&mut TransitionEndEvent) + Send + Sync + 'static>;
 pub(crate) type SelectionChangeEventHandler =
     Arc<dyn Fn(&mut SelectionChangeEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
@@ -524,6 +589,7 @@ pub(crate) enum TargetedEventKind {
     Click,
     Wheel,
     Scroll,
+    TransitionEnd,
 }
 
 /// Registered event listener callback.
@@ -545,6 +611,8 @@ pub(crate) enum ListenerKind {
     Wheel(WheelEventHandler),
     /// Scroll offset change listener.
     Scroll(ScrollEventHandler),
+    /// Transition end listener.
+    TransitionEnd(TransitionEndEventHandler),
     /// Selection change listener.
     SelectionChange(SelectionChangeEventHandler),
     /// Terminal resize listener.

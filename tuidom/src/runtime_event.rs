@@ -1,3 +1,4 @@
+use crate::animation::TransitionProperty;
 use crate::document::Document;
 use crate::document::selection::PendingSelection;
 use crate::event::{KeyEvent, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent};
@@ -30,6 +31,11 @@ pub(crate) enum RuntimeEvent {
     /// A rendered frame, queued by the render task for post-frame dispatch.
     /// Boxed so the frame's metrics don't dominate the size of every queued event.
     PostFrame(Box<PostFrameEvent>),
+    /// A completed transition, queued by animation upkeep for end-event dispatch.
+    TransitionEnd {
+        node: NodeId,
+        property: TransitionProperty,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,6 +130,12 @@ pub(crate) fn process_runtime_event(
         // Not input: a frame between a mouse down and up must not suppress the click.
         RuntimeEvent::PostFrame(mut event) => {
             doc.dispatch_post_frame(&mut event);
+        }
+        // Not input either: a transition finishing mid-click must not suppress it.
+        // A node removed after its transition finished has an empty event path, so
+        // dispatch is naturally a no-op.
+        RuntimeEvent::TransitionEnd { node, property } => {
+            doc.dispatch_transition_end_to(node, property);
         }
     }
 }

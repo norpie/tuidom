@@ -342,8 +342,19 @@ fn animations_active(doc: &Document) -> bool {
     lock::mutex(&doc.inner.animation).has_active()
 }
 
-fn cleanup_animations(doc: &Document) -> bool {
-    lock::mutex(&doc.inner.animation).cleanup(doc.now())
+/// Remove finished transitions and queue their end events.
+///
+/// The render task never runs user code: like post-frame, the events go through
+/// the runtime queue so handlers run on the event task, ordered with input. A
+/// send failure means the runtime is shutting down and is safe to ignore.
+fn cleanup_animations(doc: &Document) {
+    let finished = lock::mutex(&doc.inner.animation).cleanup(doc.now());
+    for transition in finished {
+        let _ = doc.inner.event_tx.send(RuntimeEvent::TransitionEnd {
+            node: transition.node_id,
+            property: transition.property,
+        });
+    }
 }
 
 /// Convert a crossterm event into an internal runtime event.

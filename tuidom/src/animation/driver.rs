@@ -50,6 +50,17 @@ impl TransitionState {
 // Animation driver
 // ---------------------------------------------------------------------------
 
+/// A transition that ran to completion, reported by [`AnimationDriver::cleanup`].
+///
+/// Interrupted and removed transitions are discarded, not finished — only a
+/// transition that settled on its target produces one of these.
+pub(crate) struct FinishedTransition {
+    /// The node whose property finished transitioning.
+    pub node_id: NodeId,
+    /// The property that finished.
+    pub property: TransitionProperty,
+}
+
 /// Manages all active transitions and tick scheduling.
 pub(crate) struct AnimationDriver {
     /// All active transitions.
@@ -63,8 +74,6 @@ impl AnimationDriver {
     }
 
     /// Called after a style change to check for transitionable properties.
-    ///
-    /// Returns `true` if a new transition was started.
     pub fn style_changed(
         &mut self,
         node_id: NodeId,
@@ -72,22 +81,31 @@ impl AnimationDriver {
         new_resolved: &ResolvedStyle,
         configs: &HashMap<TransitionProperty, TransitionConfig>,
         now: Instant,
-    ) -> bool {
-        let had_active = !self.active.is_empty();
-
+    ) {
         // Check opacity
-        if let Some(config) = configs.get(&TransitionProperty::Opacity).cloned() {
+        if let Some(mut config) = configs.get(&TransitionProperty::Opacity).cloned() {
             let old_val = old_resolved.opacity;
             let new_val = new_resolved.opacity;
             if (old_val - new_val).abs() >= f64::EPSILON {
                 // An interrupted transition hands over its current displayed value:
                 // the old base value is the interrupted transition's *target*, and
                 // starting from it would jump the node to the far end mid-flight.
-                let from = self
+                let interrupted = self
                     .active
                     .iter()
-                    .find(|t| t.node_id == node_id && t.property == TransitionProperty::Opacity)
-                    .map_or(old_val, |t| t.value(now));
+                    .find(|t| t.node_id == node_id && t.property == TransitionProperty::Opacity);
+                let from = interrupted.map_or(old_val, |t| t.value(now));
+                // A pure reversal — heading back to where the interrupted transition
+                // started — covers only the distance already traveled, so it gets only
+                // the matching share of the duration. Reversing a barely started fade
+                // at full duration would crawl compared to the flick it undoes.
+                if let Some(t) = interrupted
+                    && (new_val - t.from).abs() < f64::EPSILON
+                    && (t.to - t.from).abs() >= f64::EPSILON
+                {
+                    let covered = ((from - t.from) / (t.to - t.from)).abs().clamp(0.0, 1.0);
+                    config.duration = config.duration.mul_f64(covered);
+                }
                 self.active.retain(|t| {
                     !(t.node_id == node_id && t.property == TransitionProperty::Opacity)
                 });
@@ -105,8 +123,6 @@ impl AnimationDriver {
                 }
             }
         }
-
-        !self.active.is_empty() && !had_active
     }
 
     /// Get overrides that should be applied to resolved style for a node.
@@ -133,10 +149,22 @@ impl AnimationDriver {
             .retain(|transition| transition.node_id != node_id);
     }
 
-    /// Remove completed transitions. Returns `true` if any remain active.
-    pub fn cleanup(&mut self, now: Instant) -> bool {
-        self.active.retain(|t| !t.is_done(now));
-        !self.active.is_empty()
+    /// Remove completed transitions, reporting each one so the caller can fire
+    /// its end event.
+    pub fn cleanup(&mut self, now: Instant) -> Vec<FinishedTransition> {
+        let mut finished = Vec::new();
+        self.active.retain(|t| {
+            if t.is_done(now) {
+                finished.push(FinishedTransition {
+                    node_id: t.node_id,
+                    property: t.property,
+                });
+                false
+            } else {
+                true
+            }
+        });
+        finished
     }
 }
 
@@ -230,6 +258,7 @@ mod tests {
         );
         // Reverse mid-flight: the old base is the interrupted target (1.0), but the
         // display sits at 0.5 — the reversal must start there, not jump to 1.0.
+        // As a pure reversal it also runs at half the duration (500ms).
         driver.style_changed(
             node,
             &opacity_style(1.0),
@@ -240,8 +269,102 @@ mod tests {
 
         let at_reversal = opacity_override(&driver, node, midpoint);
         assert!((at_reversal.unwrap_or(f64::NAN) - 0.5).abs() < 1e-9);
-        let later = opacity_override(&driver, node, midpoint + Duration::from_millis(500));
+        let later = opacity_override(&driver, node, midpoint + Duration::from_millis(250));
         assert!((later.unwrap_or(f64::NAN) - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_pure_reversal_gets_a_matching_share_of_the_duration() {
+        let mut driver = AnimationDriver::new();
+        let node = NodeId::new(1);
+        let start = Instant::now();
+        let quarter = start + Duration::from_millis(250);
+
+        driver.style_changed(
+            node,
+            &opacity_style(0.0),
+            &opacity_style(1.0),
+            &opacity_config(),
+            start,
+        );
+        // Reverse a quarter of the way in: the way back covers a quarter of the
+        // distance, so it gets a quarter of the duration.
+        driver.style_changed(
+            node,
+            &opacity_style(1.0),
+            &opacity_style(0.0),
+            &opacity_config(),
+            quarter,
+        );
+
+        let halfway_back = opacity_override(&driver, node, quarter + Duration::from_millis(125));
+        assert!((halfway_back.unwrap_or(f64::NAN) - 0.125).abs() < 1e-9);
+
+        let finished = driver.cleanup(quarter + Duration::from_millis(250));
+        assert_eq!(finished.len(), 1);
+        assert!(!driver.has_active());
+    }
+
+    #[test]
+    fn retargeting_keeps_the_full_duration() {
+        let mut driver = AnimationDriver::new();
+        let node = NodeId::new(1);
+        let start = Instant::now();
+        let quarter = start + Duration::from_millis(250);
+
+        driver.style_changed(
+            node,
+            &opacity_style(0.0),
+            &opacity_style(1.0),
+            &opacity_config(),
+            start,
+        );
+        // A new target that is not the interrupted start is no reversal: the full
+        // configured duration applies from the displayed value.
+        driver.style_changed(
+            node,
+            &opacity_style(1.0),
+            &opacity_style(0.5),
+            &opacity_config(),
+            quarter,
+        );
+
+        let mid = opacity_override(&driver, node, quarter + Duration::from_millis(500));
+        assert!((mid.unwrap_or(f64::NAN) - 0.375).abs() < 1e-9);
+        assert!(
+            driver
+                .cleanup(quarter + Duration::from_millis(900))
+                .is_empty()
+        );
+        assert!(driver.has_active());
+    }
+
+    #[test]
+    fn cleanup_reports_each_finished_transition_once() {
+        let mut driver = AnimationDriver::new();
+        let node = NodeId::new(1);
+        let start = Instant::now();
+
+        driver.style_changed(
+            node,
+            &opacity_style(0.0),
+            &opacity_style(1.0),
+            &opacity_config(),
+            start,
+        );
+
+        assert!(
+            driver
+                .cleanup(start + Duration::from_millis(500))
+                .is_empty()
+        );
+
+        let finished = driver.cleanup(start + Duration::from_secs(1));
+        assert_eq!(finished.len(), 1);
+        assert_eq!(finished[0].node_id, node);
+        assert_eq!(finished[0].property, TransitionProperty::Opacity);
+
+        assert!(driver.cleanup(start + Duration::from_secs(2)).is_empty());
     }
 
     #[test]

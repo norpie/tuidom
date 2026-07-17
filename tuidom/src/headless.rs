@@ -44,11 +44,22 @@ impl HeadlessRuntime {
     /// Advance the frozen document clock.
     ///
     /// Active transitions progress by exactly `delta`; finished ones settle on
-    /// their target value. The next [`render`](Self::render) shows the frame as
-    /// it would look at the advanced instant.
+    /// their target value and dispatch their end events through the shared
+    /// runtime path. The next [`render`](Self::render) shows the frame as it
+    /// would look at the advanced instant.
     pub fn advance_time(&mut self, delta: Duration) {
         self.doc.advance_manual_time(delta);
-        lock::mutex(&self.doc.inner.animation).cleanup(self.doc.now());
+        let finished = lock::mutex(&self.doc.inner.animation).cleanup(self.doc.now());
+        for transition in finished {
+            process_runtime_event(
+                &self.doc,
+                RuntimeEvent::TransitionEnd {
+                    node: transition.node_id,
+                    property: transition.property,
+                },
+                &mut self.event_state,
+            );
+        }
     }
 
     /// Return the document driven by this runtime.
@@ -383,6 +394,7 @@ mod tests {
     use super::*;
     use crate::animation::{Easing, TransitionConfig};
     use crate::document::SelectionPoint;
+    use crate::event::EventPhase;
     use crate::style::{Color, Length, Style};
 
     #[test]
@@ -435,6 +447,91 @@ mod tests {
 
         assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.25);
         assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
+    fn transition_end_fires_once_at_completion_and_bubbles() {
+        let doc = Document::new().unwrap();
+        let container = doc.create_box().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+        doc.append_child(container, node).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let fired = Arc::new(Mutex::new(Vec::new()));
+        let on_node = fired.clone();
+        doc.on_transition_end(node, move |event| {
+            on_node.lock().unwrap().push(("node", event.phase()));
+        })
+        .unwrap();
+        let on_container = fired.clone();
+        doc.on_transition_end(container, move |event| {
+            assert_eq!(event.target(), node);
+            assert_eq!(event.current_target(), container);
+            on_container
+                .lock()
+                .unwrap()
+                .push(("container", event.phase()));
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime
+            .document()
+            .update_style(node, |style| {
+                style.opacity(0.0);
+            })
+            .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        assert!(fired.lock().unwrap().is_empty());
+
+        runtime.advance_time(Duration::from_millis(600));
+        assert_eq!(
+            *fired.lock().unwrap(),
+            vec![
+                ("node", EventPhase::Target),
+                ("container", EventPhase::Bubble)
+            ]
+        );
+
+        runtime.advance_time(Duration::from_secs(1));
+        assert_eq!(fired.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn removing_a_node_mid_transition_fires_no_end_event() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let fired = Arc::new(Mutex::new(0));
+        let fired_in_handler = fired.clone();
+        doc.on_transition_end(doc.root(), move |_| {
+            *fired_in_handler.lock().unwrap() += 1;
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.update_style(node, |style| {
+            style.opacity(0.0);
+        })
+        .unwrap();
+
+        doc.remove_child(doc.root(), node).unwrap();
+        runtime.advance_time(Duration::from_secs(2));
+
+        assert_eq!(*fired.lock().unwrap(), 0);
     }
 
     #[test]
