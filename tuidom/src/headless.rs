@@ -167,7 +167,20 @@ impl HeadlessRuntime {
     pub fn simulate_mouse_move(&mut self, x: i32, y: i32) {
         process_runtime_event(
             &self.doc,
-            RuntimeEvent::MouseMove { x, y },
+            RuntimeEvent::MouseMove { x, y, held: None },
+            &mut self.event_state,
+        );
+    }
+
+    /// Dispatch a simulated drag movement: a pointer move with `button` held down.
+    pub fn simulate_mouse_drag_move(&mut self, x: i32, y: i32, button: MouseButton) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::MouseMove {
+                x,
+                y,
+                held: Some(button),
+            },
             &mut self.event_state,
         );
     }
@@ -215,13 +228,11 @@ impl HeadlessRuntime {
         }
     }
 
-    /// Dispatch a left-button press at `start` followed by a release at `end`.
-    ///
-    /// Drag movement events are not modeled yet, so this only exercises the
-    /// currently supported press/release and click-suppression behavior.
+    /// Dispatch a left-button press at `start`, a drag movement to `end`, and a
+    /// release at `end` — the sequence a terminal reports for a pointer drag.
     pub fn simulate_mouse_drag(&mut self, start: (i32, i32), end: (i32, i32)) {
         self.simulate_mouse_down(start.0, start.1, MouseButton::Left);
-        self.simulate_mouse_move(end.0, end.1);
+        self.simulate_mouse_drag_move(end.0, end.1, MouseButton::Left);
         self.simulate_mouse_up(end.0, end.1, MouseButton::Left);
     }
 }
@@ -498,6 +509,26 @@ mod tests {
         runtime.simulate_mouse_move(0, 0);
 
         assert_eq!(runtime.document().focused(), Some(parent));
+    }
+
+    #[test]
+    fn drag_movement_does_not_move_hover_focus() {
+        let doc = Document::new().unwrap();
+        let first = doc.create_text("A").unwrap();
+        let second = doc.create_text("B").unwrap();
+        doc.append_child(doc.root(), first).unwrap();
+        doc.append_child(doc.root(), second).unwrap();
+        doc.set_focusable(first, true).unwrap();
+        doc.set_focusable(second, true).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_move(0, 0);
+        assert_eq!(runtime.document().focused(), Some(first));
+
+        runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+        runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+        assert_eq!(runtime.document().focused(), Some(first));
     }
 
     #[test]

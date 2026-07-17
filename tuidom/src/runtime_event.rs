@@ -13,8 +13,13 @@ pub(crate) enum RuntimeEvent {
     KeyPress(KeyEvent),
     /// A mouse button press from the input stream.
     MouseDown(MouseEvent),
-    /// A mouse pointer movement from the input stream.
-    MouseMove { x: i32, y: i32 },
+    /// A mouse pointer movement from the input stream. `held` carries the button a
+    /// drag is holding down; a plain move holds none.
+    MouseMove {
+        x: i32,
+        y: i32,
+        held: Option<MouseButton>,
+    },
     /// A mouse button release from the input stream.
     MouseUp(MouseEvent),
     /// A mouse wheel movement from the input stream.
@@ -63,8 +68,12 @@ pub(crate) fn process_runtime_event(
                 button: mouse.button,
             });
         }
-        RuntimeEvent::MouseMove { x, y } => {
-            focus_hover_target(doc, x, y);
+        RuntimeEvent::MouseMove { x, y, held } => {
+            // A drag must not yank focus from node to node as it crosses the screen —
+            // hover-to-focus applies only to unpressed movement.
+            if held.is_none() {
+                focus_hover_target(doc, x, y);
+            }
         }
         RuntimeEvent::MouseUp(mut mouse) => {
             let target = mouse_target(doc, mouse.x, mouse.y);

@@ -373,9 +373,15 @@ fn convert_mouse_event(mouse: CrosstermMouseEvent) -> Option<RuntimeEvent> {
             i32::from(mouse.row),
             -1,
         ))),
-        MouseEventKind::Moved | MouseEventKind::Drag(_) => Some(RuntimeEvent::MouseMove {
+        MouseEventKind::Moved => Some(RuntimeEvent::MouseMove {
             x: i32::from(mouse.column),
             y: i32::from(mouse.row),
+            held: None,
+        }),
+        MouseEventKind::Drag(button) => Some(RuntimeEvent::MouseMove {
+            x: i32::from(mouse.column),
+            y: i32::from(mouse.row),
+            held: convert_mouse_button(button),
         }),
         MouseEventKind::ScrollLeft => Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
             i32::from(mouse.column),
