@@ -42,7 +42,7 @@ pub mod document;
 /// Style system: [`Color`](style::Color), [`Style`](style::Style), [`StyleValue`](style::StyleValue), and supporting types.
 pub mod style;
 
-pub use document::Document;
+pub use document::{Document, SelectionPoint};
 pub use error::{Result, TuidomError};
 pub use id::NodeId;
 pub use node::{LayoutRect, LayoutView, NodeKindView, NodeView, ScrollOffset};

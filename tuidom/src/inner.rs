@@ -8,6 +8,7 @@ use dashmap::DashMap;
 use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
+use crate::document::selection::SelectionState;
 use crate::event::{FocusKeys, Listener, TargetedEventKind};
 use crate::id::NodeId;
 use crate::layout::LayoutEngine;
@@ -207,6 +208,9 @@ pub(crate) struct DocumentInner {
 
     /// Current scroll offset per scroll container. Absent means `(0, 0)`.
     pub scroll_offsets: Mutex<HashMap<NodeId, ScrollOffset>>,
+
+    /// Current document text selection, if any.
+    pub selection: Mutex<Option<SelectionState>>,
 
     /// Collected runtime performance metrics.
     pub performance: Mutex<PerformanceState>,

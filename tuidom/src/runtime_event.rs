@@ -1,4 +1,5 @@
 use crate::document::Document;
+use crate::document::selection::PendingSelection;
 use crate::event::{KeyEvent, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent};
 use crate::id::NodeId;
 use crate::lock;
@@ -43,6 +44,7 @@ struct ClickCandidate {
 #[derive(Debug, Default)]
 pub(crate) struct RuntimeEventState {
     pending_click: Option<ClickCandidate>,
+    pending_selection: Option<PendingSelection>,
 }
 
 /// Process one queued or simulated runtime event.
@@ -67,12 +69,25 @@ pub(crate) fn process_runtime_event(
                 y: mouse.y,
                 button: mouse.button,
             });
+
+            // The mouse default action: a left press clears the selection and arms a
+            // new drag from this point. Preventing it keeps the selection too — the
+            // press was claimed for something other than selecting.
+            state.pending_selection = None;
+            if mouse.button == MouseButton::Left && !mouse.default_prevented() {
+                doc.clear_selection();
+                state.pending_selection = doc.begin_selection_drag(mouse.x, mouse.y, target);
+            }
         }
         RuntimeEvent::MouseMove { x, y, held } => {
             // A drag must not yank focus from node to node as it crosses the screen —
             // hover-to-focus applies only to unpressed movement.
             if held.is_none() {
                 focus_hover_target(doc, x, y);
+            } else if held == Some(MouseButton::Left)
+                && let Some(pending) = &state.pending_selection
+            {
+                doc.update_selection_drag(pending, x, y);
             }
         }
         RuntimeEvent::MouseUp(mut mouse) => {
@@ -80,6 +95,7 @@ pub(crate) fn process_runtime_event(
             // Release clears the pressed state wherever the cursor ended up, so dragging
             // off a node before releasing leaves nothing stuck active.
             set_active_node(doc, None);
+            state.pending_selection = None;
             doc.dispatch_mouse_up_to(target, &mut mouse);
 
             if state.pending_click.is_some_and(|down| {

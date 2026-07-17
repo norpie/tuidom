@@ -365,6 +365,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::document::SelectionPoint;
     use crate::style::{Color, Length, Style};
 
     #[test]
@@ -594,6 +595,228 @@ mod tests {
         runtime.simulate_mouse_drag((0, 0), (1, 0));
 
         assert_eq!(*calls.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn drag_selects_across_sibling_text_nodes() {
+        let doc = Document::new().unwrap();
+        let hello = doc.create_text("hello").unwrap();
+        let world = doc.create_text("world").unwrap();
+        doc.append_child(doc.root(), hello).unwrap();
+        doc.append_child(doc.root(), world).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((1, 0), (7, 0));
+
+        let (start, end) = runtime.document().selection().unwrap();
+        assert_eq!(
+            start,
+            SelectionPoint {
+                node: hello,
+                offset: 1
+            }
+        );
+        assert_eq!(
+            end,
+            SelectionPoint {
+                node: world,
+                offset: 3
+            }
+        );
+    }
+
+    #[test]
+    fn reverse_drag_produces_the_same_ordered_range() {
+        let doc = Document::new().unwrap();
+        let hello = doc.create_text("hello").unwrap();
+        let world = doc.create_text("world").unwrap();
+        doc.append_child(doc.root(), hello).unwrap();
+        doc.append_child(doc.root(), world).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((7, 0), (1, 0));
+
+        let (start, end) = runtime.document().selection().unwrap();
+        // Both endpoint cells are included regardless of drag direction: the range
+        // starts at the earlier cell and ends past the glyph under the later one.
+        assert_eq!(
+            start,
+            SelectionPoint {
+                node: hello,
+                offset: 1
+            }
+        );
+        assert_eq!(
+            end,
+            SelectionPoint {
+                node: world,
+                offset: 3
+            }
+        );
+    }
+
+    #[test]
+    fn drag_is_confined_to_its_selection_boundary() {
+        let doc = Document::new().unwrap();
+        let mut boundary_style = Style::new();
+        boundary_style.selection_boundary(true);
+
+        let sidebar = doc.create_box().unwrap();
+        doc.set_style(sidebar, &boundary_style).unwrap();
+        let main = doc.create_box().unwrap();
+        doc.set_style(main, &boundary_style).unwrap();
+        let side_text = doc.create_text("side").unwrap();
+        let main_text = doc.create_text("main content").unwrap();
+        doc.append_child(doc.root(), sidebar).unwrap();
+        doc.append_child(doc.root(), main).unwrap();
+        doc.append_child(sidebar, side_text).unwrap();
+        doc.append_child(main, main_text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 30, 3);
+        runtime.render().unwrap();
+        // "side" occupies x 0..4, "main content" starts at x 4. Drag well into main.
+        runtime.simulate_mouse_drag((1, 0), (8, 0));
+
+        let (start, end) = runtime.document().selection().unwrap();
+        assert_eq!(start.node, side_text);
+        assert_eq!(end.node, side_text);
+        // The focus snapped to the end of the boundary's text, not into `main`.
+        assert_eq!(end.offset, 4);
+    }
+
+    #[test]
+    fn two_columns_in_a_shared_boundary_select_the_dom_order_range() {
+        let doc = Document::new().unwrap();
+        let left = doc.create_box().unwrap();
+        let right = doc.create_box().unwrap();
+        let one = doc.create_text("one\ntwo\nthree").unwrap();
+        let four = doc.create_text("four\nfive\nsix").unwrap();
+        doc.append_child(doc.root(), left).unwrap();
+        doc.append_child(doc.root(), right).unwrap();
+        doc.append_child(left, one).unwrap();
+        doc.append_child(right, four).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 4);
+        runtime.render().unwrap();
+        // Anchor after "tw" in the left column, focus after "fi" in the right one.
+        // Left column is 5 wide ("three"), so the right column starts at x 5.
+        runtime.simulate_mouse_drag((2, 1), (6, 1));
+
+        let (start, end) = runtime.document().selection().unwrap();
+        // Everything between the two points in DOM order: the tail of the left
+        // column and the head of the right one, including "three" untouched by the
+        // pointer — browser semantics.
+        assert_eq!(
+            start,
+            SelectionPoint {
+                node: one,
+                offset: 6
+            }
+        );
+        assert_eq!(
+            end,
+            SelectionPoint {
+                node: four,
+                offset: 7
+            }
+        );
+    }
+
+    #[test]
+    fn drag_from_empty_space_snaps_to_nearest_text() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 5);
+        runtime.render().unwrap();
+        // Anchor below the text and past its end, focus on the first glyph.
+        runtime.simulate_mouse_drag((8, 2), (0, 0));
+
+        let (start, end) = runtime.document().selection().unwrap();
+        assert_eq!(
+            start,
+            SelectionPoint {
+                node: text,
+                offset: 0
+            }
+        );
+        // The anchor snapped to the line's end offset.
+        assert_eq!(
+            end,
+            SelectionPoint {
+                node: text,
+                offset: 5
+            }
+        );
+    }
+
+    #[test]
+    fn drag_over_wide_glyph_continuation_selects_the_glyph() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("日本").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        // x=1 is the continuation cell of 日 (width 2). Drag within the one glyph.
+        runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+        runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+        runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+
+        let (start, end) = runtime.document().selection().unwrap();
+        assert_eq!(
+            start,
+            SelectionPoint {
+                node: text,
+                offset: 0
+            }
+        );
+        assert_eq!(
+            end,
+            SelectionPoint {
+                node: text,
+                offset: "日".len()
+            }
+        );
+    }
+
+    #[test]
+    fn click_clears_the_selection() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (3, 0));
+        assert!(runtime.document().selection().is_some());
+
+        runtime.simulate_click(2, 0);
+        assert!(runtime.document().selection().is_none());
+    }
+
+    #[test]
+    fn prevent_default_on_mouse_down_keeps_the_selection() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        let button = doc.create_text("[ok]").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+        doc.append_child(doc.root(), button).unwrap();
+        doc.on_mouse_down(button, |event| event.prevent_default())
+            .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (3, 0));
+        let selected = runtime.document().selection();
+        assert!(selected.is_some());
+
+        // A press whose default is prevented neither clears nor restarts selection.
+        runtime.simulate_click(6, 0);
+        assert_eq!(runtime.document().selection(), selected);
     }
 
     #[test]

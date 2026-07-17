@@ -27,8 +27,11 @@ mod input;
 mod layout;
 mod pseudo;
 mod scroll;
+pub(crate) mod selection;
 mod style;
 mod tree;
+
+pub use selection::SelectionPoint;
 
 #[cfg(test)]
 mod tests;
@@ -90,6 +93,7 @@ impl Document {
                 layout: Mutex::new(LayoutEngine::new()),
                 layout_snapshot: RwLock::new(HashMap::new()),
                 scroll_offsets: Mutex::new(HashMap::new()),
+                selection: Mutex::new(None),
                 performance: Mutex::new(PerformanceState::new()),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),

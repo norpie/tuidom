@@ -226,6 +226,7 @@ pub struct MouseEvent {
     /// Mouse button involved in the event.
     pub button: MouseButton,
     metadata: TargetedMetadata,
+    default_prevented: bool,
 }
 
 impl MouseEvent {
@@ -236,7 +237,23 @@ impl MouseEvent {
             y,
             button,
             metadata: TargetedMetadata::pending(),
+            default_prevented: false,
         }
+    }
+
+    /// Prevent document-level default handling for this mouse event.
+    ///
+    /// The only mouse default action is starting a text selection on left mouse
+    /// down; preventing it also keeps the existing selection instead of clearing it.
+    /// This does not stop propagation. Use [`stop_propagation`](Self::stop_propagation)
+    /// when ancestor listeners should not receive the event.
+    pub fn prevent_default(&mut self) {
+        self.default_prevented = true;
+    }
+
+    /// Whether document-level default handling has been prevented.
+    pub fn default_prevented(&self) -> bool {
+        self.default_prevented
     }
 
     /// The node this event originally targeted.
