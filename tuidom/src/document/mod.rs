@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{Mutex as TokioMutex, Notify};
@@ -35,6 +35,9 @@ pub use selection::SelectionPoint;
 
 #[cfg(test)]
 mod tests;
+
+/// Default interval between animation-driven frames (~60fps).
+const DEFAULT_ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 
 /// The root container and public API surface for tuidom.
 ///
@@ -90,6 +93,8 @@ impl Document {
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
                 anim_config_changed: Arc::new(Notify::new()),
                 max_frame_interval: RwLock::new(None),
+                animation_frame_interval: RwLock::new(Some(DEFAULT_ANIMATION_FRAME_INTERVAL)),
+                manual_now: Mutex::new(None),
                 layout: Mutex::new(LayoutEngine::new()),
                 layout_snapshot: RwLock::new(HashMap::new()),
                 scroll_offsets: Mutex::new(HashMap::new()),
@@ -236,5 +241,54 @@ impl Document {
             .and_then(|fps| Duration::try_from_secs_f64(1.0 / fps).ok());
         *lock::rw_write(&self.inner.max_frame_interval) = interval;
         self.inner.notify.notify_one();
+    }
+
+    /// Set the rate at which active animations drive frames.
+    ///
+    /// Defaults to ~60fps. `None` removes the pacing entirely, rendering
+    /// animation frames as fast as the runtime allows — useful as a stress
+    /// test, pathological as a default. Non-finite or non-positive values are
+    /// treated as `None`. The [`set_max_fps`](Self::set_max_fps) cap still
+    /// applies on top if stricter.
+    ///
+    /// This only paces animation-driven frames: an idle document stays fully
+    /// passive regardless of this setting.
+    pub fn set_animation_fps(&self, fps: Option<f64>) {
+        let interval = fps
+            .filter(|fps| fps.is_finite() && *fps > 0.0)
+            .and_then(|fps| Duration::try_from_secs_f64(1.0 / fps).ok());
+        *lock::rw_write(&self.inner.animation_frame_interval) = interval;
+        self.inner.anim_config_changed.notify_one();
+    }
+
+    // ------------------------------------------------------------------
+    // Time
+    // ------------------------------------------------------------------
+
+    /// The document's current time — real time, or manual time when frozen.
+    ///
+    /// Every animation timestamp flows from here, so freezing the clock makes
+    /// interpolated values exact instead of racing the wall clock.
+    pub(crate) fn now(&self) -> Instant {
+        lock::mutex(&self.inner.manual_now).unwrap_or_else(Instant::now)
+    }
+
+    /// Freeze the document clock at the current instant.
+    ///
+    /// Used by the headless runtime: from here on, time only moves through
+    /// [`advance_manual_time`](Self::advance_manual_time).
+    pub(crate) fn enable_manual_time(&self) {
+        let mut manual = lock::mutex(&self.inner.manual_now);
+        if manual.is_none() {
+            *manual = Some(Instant::now());
+        }
+    }
+
+    /// Advance the frozen document clock.
+    pub(crate) fn advance_manual_time(&self, delta: Duration) {
+        let mut manual = lock::mutex(&self.inner.manual_now);
+        if let Some(now) = manual.as_mut() {
+            *now += delta;
+        }
     }
 }

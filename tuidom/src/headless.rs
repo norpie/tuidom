@@ -1,8 +1,9 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::document::Document;
 use crate::error::Result;
 use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
+use crate::lock;
 use crate::performance::RenderMetrics;
 use crate::render::grid::{Cell, Grid};
 use crate::render::{RenderCursor, render_to_grid};
@@ -23,7 +24,12 @@ pub struct HeadlessRuntime {
 
 impl HeadlessRuntime {
     /// Create a headless runtime for `doc` with the given screen dimensions.
+    ///
+    /// Freezes the document clock: animations only progress through
+    /// [`advance_time`](Self::advance_time), so interpolated values in tests are
+    /// exact instead of racing the wall clock.
     pub fn new(doc: Document, width: u16, height: u16) -> Self {
+        doc.enable_manual_time();
         Self {
             doc,
             width,
@@ -33,6 +39,16 @@ impl HeadlessRuntime {
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
         }
+    }
+
+    /// Advance the frozen document clock.
+    ///
+    /// Active transitions progress by exactly `delta`; finished ones settle on
+    /// their target value. The next [`render`](Self::render) shows the frame as
+    /// it would look at the advanced instant.
+    pub fn advance_time(&mut self, delta: Duration) {
+        self.doc.advance_manual_time(delta);
+        lock::mutex(&self.doc.inner.animation).cleanup(self.doc.now());
     }
 
     /// Return the document driven by this runtime.
@@ -365,8 +381,61 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::animation::{Easing, TransitionConfig};
     use crate::document::SelectionPoint;
     use crate::style::{Color, Length, Style};
+
+    #[test]
+    fn advancing_frozen_time_interpolates_a_transition_exactly() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.update_style(node, |style| {
+            style.opacity(0.0);
+        })
+        .unwrap();
+
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+
+        runtime.advance_time(Duration::from_millis(250));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.75);
+
+        runtime.advance_time(Duration::from_millis(250));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.5);
+    }
+
+    #[test]
+    fn advancing_past_the_end_settles_on_the_target_and_goes_idle() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.update_style(node, |style| {
+            style.opacity(0.25);
+        })
+        .unwrap();
+        assert!(lock::mutex(&doc.inner.animation).has_active());
+
+        runtime.advance_time(Duration::from_secs(2));
+
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.25);
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
 
     #[test]
     fn render_exposes_cells_for_inspection() {

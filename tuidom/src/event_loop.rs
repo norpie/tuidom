@@ -118,6 +118,7 @@ async fn render_task(doc: Document) -> io::Result<()> {
     let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
     let mut renderer = Renderer::new(screen_w, screen_h)?;
     let mut next_frame_at = None;
+    let mut next_anim_frame_at = None;
 
     render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at).await?;
 
@@ -127,6 +128,9 @@ async fn render_task(doc: Document) -> io::Result<()> {
         }
 
         let animation_frame_needed = animations_active(&doc);
+        if !animation_frame_needed {
+            next_anim_frame_at = None;
+        }
 
         tokio::select! {
             _ = doc.inner.shutdown_notify.notified() => break,
@@ -162,7 +166,7 @@ async fn render_task(doc: Document) -> io::Result<()> {
                 }
             }
 
-            _ = tokio::task::yield_now(), if animation_frame_needed => {
+            _ = wait_for_anim_tick(&doc, &mut next_anim_frame_at), if animation_frame_needed => {
                 cleanup_animations(&doc);
                 render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
                     .await?;
@@ -171,6 +175,32 @@ async fn render_task(doc: Document) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Wait until the next animation-driven frame is due, then advance the deadline.
+///
+/// Active animations pace frames at the document's animation tick rate; an
+/// unlimited rate (`None`) degrades to a yield, rendering as fast as the
+/// runtime allows. Missed slots are skipped rather than replayed, so a slow
+/// frame does not cause a burst. The deadline lives with the caller and is
+/// reset when animations go idle, so a fresh animation never inherits a stale
+/// deadline.
+async fn wait_for_anim_tick(doc: &Document, next_anim_frame_at: &mut Option<TokioInstant>) {
+    let Some(interval) = *lock::rw_read(&doc.inner.animation_frame_interval) else {
+        *next_anim_frame_at = None;
+        tokio::task::yield_now().await;
+        return;
+    };
+
+    let deadline = *next_anim_frame_at.get_or_insert_with(|| TokioInstant::now() + interval);
+    sleep_until(deadline).await;
+
+    let now = TokioInstant::now();
+    let mut next = deadline + interval;
+    while next <= now {
+        next += interval;
+    }
+    *next_anim_frame_at = Some(next);
 }
 
 fn is_shutdown(doc: &Document) -> bool {
@@ -313,7 +343,7 @@ fn animations_active(doc: &Document) -> bool {
 }
 
 fn cleanup_animations(doc: &Document) -> bool {
-    lock::mutex(&doc.inner.animation).cleanup(Instant::now())
+    lock::mutex(&doc.inner.animation).cleanup(doc.now())
 }
 
 /// Convert a crossterm event into an internal runtime event.

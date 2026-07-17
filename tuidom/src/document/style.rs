@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::animation::{TransitionConfig, TransitionProperty};
 use crate::document::Document;
@@ -198,7 +197,7 @@ impl Document {
         // Apply animation overrides
         {
             let driver = lock::mutex(&self.inner.animation);
-            for (prop, val) in driver.overrides_for(id, Instant::now()) {
+            for (prop, val) in driver.overrides_for(id, self.now()) {
                 match prop {
                     TransitionProperty::Opacity => resolved.opacity = val,
                 }
@@ -292,7 +291,7 @@ impl Document {
         let new_resolved = self.resolved_base_style(id)?;
 
         let mut driver = lock::mutex(&self.inner.animation);
-        driver.style_changed(id, old_resolved, &new_resolved, &configs, Instant::now());
+        driver.style_changed(id, old_resolved, &new_resolved, &configs, self.now());
         drop(driver);
 
         self.inner.anim_config_changed.notify_one();

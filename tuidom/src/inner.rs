@@ -200,6 +200,13 @@ pub(crate) struct DocumentInner {
     /// Optional document-wide frame-rate cap. `None` means uncapped.
     pub max_frame_interval: std::sync::RwLock<Option<std::time::Duration>>,
 
+    /// Interval between animation-driven frames. `None` means unlimited.
+    pub animation_frame_interval: std::sync::RwLock<Option<std::time::Duration>>,
+
+    /// Manual time source. `None` means real time; the headless runtime freezes
+    /// time here so animation tests advance it explicitly.
+    pub manual_now: Mutex<Option<std::time::Instant>>,
+
     /// Persistent taffy layout engine and DOM-to-layout-node mapping.
     pub layout: Mutex<LayoutEngine>,
 

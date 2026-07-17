@@ -2175,6 +2175,25 @@ fn invalid_max_fps_values_disable_the_cap() {
 }
 
 #[test]
+fn animation_fps_defaults_paced_and_none_unrestricts() {
+    let doc = Document::new().unwrap();
+
+    assert!(lock::rw_read(&doc.inner.animation_frame_interval).is_some());
+
+    doc.set_animation_fps(Some(30.0));
+    assert_eq!(
+        *lock::rw_read(&doc.inner.animation_frame_interval),
+        Some(Duration::try_from_secs_f64(1.0 / 30.0).unwrap())
+    );
+
+    doc.set_animation_fps(None);
+    assert!(lock::rw_read(&doc.inner.animation_frame_interval).is_none());
+
+    doc.set_animation_fps(Some(f64::NAN));
+    assert!(lock::rw_read(&doc.inner.animation_frame_interval).is_none());
+}
+
+#[test]
 fn listener_handle_removes_registered_listener() {
     let doc = Document::new().unwrap();
     let root = doc.root();
