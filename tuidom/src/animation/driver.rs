@@ -70,7 +70,8 @@ impl AnimationDriver {
         node_id: NodeId,
         old_resolved: &ResolvedStyle,
         new_resolved: &ResolvedStyle,
-        configs: &std::collections::HashMap<TransitionProperty, TransitionConfig>,
+        configs: &HashMap<TransitionProperty, TransitionConfig>,
+        now: Instant,
     ) -> bool {
         let had_active = !self.active.is_empty();
 
@@ -79,18 +80,29 @@ impl AnimationDriver {
             let old_val = old_resolved.opacity;
             let new_val = new_resolved.opacity;
             if (old_val - new_val).abs() >= f64::EPSILON {
-                // Remove existing, add new
+                // An interrupted transition hands over its current displayed value:
+                // the old base value is the interrupted transition's *target*, and
+                // starting from it would jump the node to the far end mid-flight.
+                let from = self
+                    .active
+                    .iter()
+                    .find(|t| t.node_id == node_id && t.property == TransitionProperty::Opacity)
+                    .map_or(old_val, |t| t.value(now));
                 self.active.retain(|t| {
                     !(t.node_id == node_id && t.property == TransitionProperty::Opacity)
                 });
-                self.active.push(TransitionState {
-                    node_id,
-                    property: TransitionProperty::Opacity,
-                    from: old_val,
-                    to: new_val,
-                    started: Instant::now(),
-                    config,
-                });
+                // A target the display already sits on has nothing to animate; a
+                // zero-distance transition would only hold the render loop active.
+                if (from - new_val).abs() >= f64::EPSILON {
+                    self.active.push(TransitionState {
+                        node_id,
+                        property: TransitionProperty::Opacity,
+                        from,
+                        to: new_val,
+                        started: now,
+                        config,
+                    });
+                }
             }
         }
 
@@ -98,8 +110,7 @@ impl AnimationDriver {
     }
 
     /// Get overrides that should be applied to resolved style for a node.
-    pub fn overrides_for(&self, node_id: NodeId) -> HashMap<TransitionProperty, f64> {
-        let now = Instant::now();
+    pub fn overrides_for(&self, node_id: NodeId, now: Instant) -> HashMap<TransitionProperty, f64> {
         let mut overrides = HashMap::new();
 
         for t in &self.active {
@@ -123,8 +134,7 @@ impl AnimationDriver {
     }
 
     /// Remove completed transitions. Returns `true` if any remain active.
-    pub fn cleanup(&mut self) -> bool {
-        let now = Instant::now();
+    pub fn cleanup(&mut self, now: Instant) -> bool {
         self.active.retain(|t| !t.is_done(now));
         !self.active.is_empty()
     }
@@ -155,4 +165,108 @@ fn apply_easing(t: f64, easing: Easing) -> f64 {
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::animation::TransitionConfig;
+
+    fn opacity_style(opacity: f64) -> ResolvedStyle {
+        ResolvedStyle {
+            opacity,
+            ..ResolvedStyle::default()
+        }
+    }
+
+    fn opacity_config() -> HashMap<TransitionProperty, TransitionConfig> {
+        HashMap::from([(
+            TransitionProperty::Opacity,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )])
+    }
+
+    fn opacity_override(driver: &AnimationDriver, node: NodeId, now: Instant) -> Option<f64> {
+        driver
+            .overrides_for(node, now)
+            .get(&TransitionProperty::Opacity)
+            .copied()
+    }
+
+    #[test]
+    fn fresh_transition_starts_from_the_old_base_value() {
+        let mut driver = AnimationDriver::new();
+        let node = NodeId::new(1);
+        let start = Instant::now();
+
+        driver.style_changed(
+            node,
+            &opacity_style(0.0),
+            &opacity_style(1.0),
+            &opacity_config(),
+            start,
+        );
+
+        assert_eq!(opacity_override(&driver, node, start), Some(0.0));
+        let mid = opacity_override(&driver, node, start + Duration::from_millis(500));
+        assert!((mid.unwrap_or(f64::NAN) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn interrupting_a_transition_continues_from_the_displayed_value() {
+        let mut driver = AnimationDriver::new();
+        let node = NodeId::new(1);
+        let start = Instant::now();
+        let midpoint = start + Duration::from_millis(500);
+
+        driver.style_changed(
+            node,
+            &opacity_style(0.0),
+            &opacity_style(1.0),
+            &opacity_config(),
+            start,
+        );
+        // Reverse mid-flight: the old base is the interrupted target (1.0), but the
+        // display sits at 0.5 — the reversal must start there, not jump to 1.0.
+        driver.style_changed(
+            node,
+            &opacity_style(1.0),
+            &opacity_style(0.0),
+            &opacity_config(),
+            midpoint,
+        );
+
+        let at_reversal = opacity_override(&driver, node, midpoint);
+        assert!((at_reversal.unwrap_or(f64::NAN) - 0.5).abs() < 1e-9);
+        let later = opacity_override(&driver, node, midpoint + Duration::from_millis(500));
+        assert!((later.unwrap_or(f64::NAN) - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_target_matching_the_displayed_value_ends_the_transition() {
+        let mut driver = AnimationDriver::new();
+        let node = NodeId::new(1);
+        let start = Instant::now();
+        let midpoint = start + Duration::from_millis(500);
+
+        driver.style_changed(
+            node,
+            &opacity_style(0.0),
+            &opacity_style(1.0),
+            &opacity_config(),
+            start,
+        );
+        driver.style_changed(
+            node,
+            &opacity_style(1.0),
+            &opacity_style(0.5),
+            &opacity_config(),
+            midpoint,
+        );
+
+        assert!(!driver.has_active());
+        assert_eq!(opacity_override(&driver, node, midpoint), None);
+    }
 }

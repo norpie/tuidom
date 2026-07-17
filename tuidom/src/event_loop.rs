@@ -313,7 +313,7 @@ fn animations_active(doc: &Document) -> bool {
 }
 
 fn cleanup_animations(doc: &Document) -> bool {
-    lock::mutex(&doc.inner.animation).cleanup()
+    lock::mutex(&doc.inner.animation).cleanup(Instant::now())
 }
 
 /// Convert a crossterm event into an internal runtime event.
