@@ -11,6 +11,10 @@
 //! Everything here is one axis: a vertical list virtualizes its rows, a horizontal
 //! strip its columns, and a 2D grid runs the same math once per axis.
 
+mod measure;
+
+pub use measure::MeasurementCache;
+
 use std::ops::Range;
 
 /// A collection of uniformly sized items on one scroll axis.
