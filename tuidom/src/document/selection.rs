@@ -44,9 +44,30 @@ pub(crate) struct SelectionState {
 /// An armed selection drag: the boundary and anchor resolved at mouse down, waiting for
 /// drag movement to produce a visible selection.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PendingSelection {
-    boundary: NodeId,
-    anchor: SelectionPoint,
+pub(crate) enum PendingSelection {
+    /// A drag over document text, confined to a boundary subtree.
+    Document {
+        /// The boundary the drag is confined to.
+        boundary: NodeId,
+        /// The snapped press position.
+        anchor: SelectionPoint,
+    },
+    /// A drag inside an Input. The Input is an implicit boundary: the drag drives the
+    /// input's own selection, and document selection never crosses its edge.
+    Input {
+        /// The Input node being dragged in.
+        node: NodeId,
+        /// The value byte offset the press landed on.
+        anchor: usize,
+    },
+}
+
+/// What a drag starting on a node is bounded by.
+enum DragBoundary {
+    /// A boundary subtree for document selection.
+    Document(NodeId),
+    /// An Input, selecting within its own value.
+    Input(NodeId),
 }
 
 impl Document {
@@ -126,29 +147,53 @@ impl Document {
     /// Arm a selection drag from a left mouse down.
     ///
     /// Resolves the boundary from the hit node and snaps the press position to the
-    /// nearest character within it. Returns `None` when the boundary contains no
-    /// selectable text, in which case the drag selects nothing.
+    /// nearest character within it. A press inside an Input arms an input drag
+    /// instead and positions the input cursor — click-to-position — since the press
+    /// is the collapsed start of that drag. Returns `None` when the boundary contains
+    /// no selectable text, in which case the drag selects nothing.
     pub(crate) fn begin_selection_drag(
         &self,
         x: i32,
         y: i32,
         hit: NodeId,
     ) -> Option<PendingSelection> {
-        let boundary = self.selection_boundary_of(hit);
-        let anchor = self.selection_point_at(x, y, boundary)?;
-        Some(PendingSelection { boundary, anchor })
+        match self.drag_boundary_of(hit) {
+            DragBoundary::Input(node) => {
+                let anchor = self.input_offset_at(node, x, y)?;
+                if let Err(err) = self.set_input_cursor(node, anchor) {
+                    log::error!("input click positioning failed: {err}");
+                }
+                Some(PendingSelection::Input { node, anchor })
+            }
+            DragBoundary::Document(boundary) => {
+                let anchor = self.selection_point_at(x, y, boundary)?;
+                Some(PendingSelection::Document { boundary, anchor })
+            }
+        }
     }
 
     /// Extend an armed selection drag to the current pointer position.
     pub(crate) fn update_selection_drag(&self, pending: &PendingSelection, x: i32, y: i32) {
-        let Some(focus) = self.selection_point_at(x, y, pending.boundary) else {
-            return;
-        };
-        self.set_selection_state(Some(SelectionState {
-            boundary: pending.boundary,
-            anchor: pending.anchor,
-            focus,
-        }));
+        match pending {
+            PendingSelection::Document { boundary, anchor } => {
+                let Some(focus) = self.selection_point_at(x, y, *boundary) else {
+                    return;
+                };
+                self.set_selection_state(Some(SelectionState {
+                    boundary: *boundary,
+                    anchor: *anchor,
+                    focus,
+                }));
+            }
+            PendingSelection::Input { node, anchor } => {
+                let Some(focus) = self.input_offset_at(*node, x, y) else {
+                    return;
+                };
+                if let Err(err) = self.drive_input_drag(*node, *anchor, focus) {
+                    log::error!("input drag selection failed: {err}");
+                }
+            }
+        }
     }
 
     pub(crate) fn set_selection_state(&self, state: Option<SelectionState>) {
@@ -166,19 +211,27 @@ impl Document {
     }
 
     /// The boundary a drag starting on `hit` is confined to: the nearest
-    /// ancestor-or-self marked `selection_boundary`, or the root.
-    fn selection_boundary_of(&self, hit: NodeId) -> NodeId {
+    /// ancestor-or-self that is an Input or is marked `selection_boundary`, or the root.
+    fn drag_boundary_of(&self, hit: NodeId) -> DragBoundary {
         let mut current = Some(hit);
         while let Some(node) = current {
+            if self
+                .inner
+                .nodes
+                .get(&node)
+                .is_some_and(|data| matches!(data.kind, NodeKind::Input { .. }))
+            {
+                return DragBoundary::Input(node);
+            }
             if self
                 .resolved_style(node)
                 .is_ok_and(|style| style.selection_boundary)
             {
-                return node;
+                return DragBoundary::Document(node);
             }
             current = self.get_parent(node);
         }
-        self.root()
+        DragBoundary::Document(self.root())
     }
 
     /// Map a screen cell to the nearest character position within `boundary`.
@@ -218,6 +271,61 @@ impl Document {
         }
 
         best.map(|(_, _, point)| point)
+    }
+
+    /// Map a screen cell to a byte offset in an Input's value.
+    ///
+    /// Works in display space — masked glyphs, single-line newline flattening, and the
+    /// input's own scroll offsets — then converts back to a value offset through the
+    /// 1:1 grapheme correspondence between value and display content. Positions
+    /// outside the input clamp to its nearest visible line and column.
+    fn input_offset_at(&self, node: NodeId, x: i32, y: i32) -> Option<usize> {
+        let (value, multiline, mask, scroll_x, scroll_y) = {
+            let data = self.inner.nodes.get(&node)?;
+            let NodeKind::Input { state } = &data.kind else {
+                return None;
+            };
+            (
+                state.content.clone(),
+                state.multiline,
+                state.mask,
+                state.scroll_x,
+                state.scroll_y,
+            )
+        };
+
+        let rect = lock::rw_read(&self.inner.layout_snapshot)
+            .get(&node)
+            .map(|layout| layout.rect)?
+            .content_rect(&self.resolved_style(node).ok()?);
+
+        let display = crate::node::input_display_content(&value, multiline, mask);
+        let lines: Vec<&str> = display.split('\n').collect();
+        let line_index =
+            ((y - rect.y).max(0) as usize + scroll_y as usize).min(lines.len().saturating_sub(1));
+        let line = lines[line_index];
+        let line_start: usize = lines[..line_index].iter().map(|line| line.len() + 1).sum();
+
+        let target_col = i32::from(scroll_x) + (x - rect.x).max(0);
+        let mut col = 0i32;
+        let mut offset_in_line = line.len();
+        for (offset, grapheme) in line.grapheme_indices(true) {
+            let width = unicode_width::UnicodeWidthStr::width(grapheme).min(2) as i32;
+            if width == 0 {
+                continue;
+            }
+            if target_col < col + width {
+                offset_in_line = offset;
+                break;
+            }
+            col += width;
+        }
+
+        Some(display_to_value_offset(
+            &value,
+            &display,
+            line_start + offset_in_line,
+        ))
     }
 
     /// All nodes in `boundary`'s subtree, boundary included.
@@ -360,6 +468,32 @@ impl Document {
             offset: end.offset + grapheme.len(),
         }
     }
+}
+
+/// Convert an Input display-content byte offset to a value byte offset.
+///
+/// Display content is grapheme-for-grapheme with the value — masking replaces each
+/// grapheme with one mask character, single-line mode replaces newlines with spaces —
+/// so the offset converts through the grapheme index.
+pub(crate) fn display_to_value_offset(value: &str, display: &str, offset: usize) -> usize {
+    let index = display
+        .get(..offset.min(display.len()))
+        .map_or(0, |prefix| prefix.graphemes(true).count());
+    value
+        .grapheme_indices(true)
+        .nth(index)
+        .map_or(value.len(), |(offset, _)| offset)
+}
+
+/// Convert an Input value byte offset to a display-content byte offset.
+pub(crate) fn value_to_display_offset(value: &str, display: &str, offset: usize) -> usize {
+    let index = value
+        .get(..offset.min(value.len()))
+        .map_or(0, |prefix| prefix.graphemes(true).count());
+    display
+        .grapheme_indices(true)
+        .nth(index)
+        .map_or(display.len(), |(offset, _)| offset)
 }
 
 /// The best character position this text node offers for a pointer cell, with its

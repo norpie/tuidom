@@ -863,6 +863,91 @@ mod tests {
     }
 
     #[test]
+    fn drag_inside_input_drives_input_selection() {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("hello world").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (4, 0));
+
+        let doc = runtime.document();
+        // Terminal-inclusive endpoints: cells 0..=4 select bytes 0..5.
+        assert_eq!(doc.input_selection(input).unwrap(), Some(0..5));
+        // The cursor follows the drag's focus end.
+        assert_eq!(doc.input_cursor(input).unwrap(), 4);
+        // The input is its own boundary: no document selection exists.
+        assert_eq!(doc.selection(), None);
+        assert_eq!(doc.get_selection(), None);
+    }
+
+    #[test]
+    fn click_positions_input_cursor() {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("hello").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+        doc.set_input_selection(input, 0..4).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_click(3, 0);
+
+        let doc = runtime.document();
+        assert_eq!(doc.input_cursor(input).unwrap(), 3);
+        assert_eq!(doc.input_selection(input).unwrap(), None);
+    }
+
+    #[test]
+    fn document_drag_does_not_cross_into_an_input() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("label").unwrap();
+        let input = doc.create_input("value").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        // "label" is cells 0..5, the input starts at cell 5. Drag deep into it.
+        runtime.simulate_mouse_drag((1, 0), (8, 0));
+
+        let doc = runtime.document();
+        let (start, end) = doc.selection().unwrap();
+        assert_eq!(start.node, text);
+        assert_eq!(end.node, text);
+        assert_eq!(end.offset, 5);
+        // The input's own selection is untouched by a document drag.
+        assert_eq!(doc.input_selection(input).unwrap(), None);
+    }
+
+    #[test]
+    fn focused_masked_input_renders_selection_over_mask_glyphs() {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("secret").unwrap();
+        doc.set_input_mask(input, Some('*')).unwrap();
+        let mut style = Style::new();
+        style.color(Color::white());
+        style.background(Color::black());
+        doc.set_style(input, &style).unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.document().focus(input).unwrap();
+        runtime.simulate_mouse_drag((0, 0), (2, 0));
+        runtime.render().unwrap();
+
+        // Selected mask glyphs render reverse video; the value stays masked.
+        let selected = runtime.get_cell(1, 0).unwrap();
+        assert_eq!(selected.text, "*");
+        assert_eq!(selected.bg, Some(ScreenColor::from_rgb(255, 255, 255)));
+
+        let unselected = runtime.get_cell(4, 0).unwrap();
+        assert_eq!(unselected.text, "*");
+        assert_eq!(unselected.bg, Some(ScreenColor::from_rgb(0, 0, 0)));
+    }
+
+    #[test]
     fn get_selection_joins_rows_with_newlines() {
         let doc = Document::new().unwrap();
         let mut column = Style::new();

@@ -206,6 +206,35 @@ impl Document {
         self.refresh_input_node(node)
     }
 
+    /// Drive an input's selection from a mouse drag between two value offsets.
+    ///
+    /// The endpoints are terminal-inclusive like document selection: the later one
+    /// extends past the glyph under it, unless that glyph is a line break. The cursor
+    /// follows the drag's focus end.
+    pub(crate) fn drive_input_drag(&self, node: NodeId, anchor: usize, focus: usize) -> Result<()> {
+        {
+            let mut data = self
+                .inner
+                .nodes
+                .get_mut(&node)
+                .ok_or(TuidomError::NodeNotFound { id: node })?;
+            let state = input_state_mut(&mut data.kind, node)?;
+            let low = anchor.min(focus).min(state.content.len());
+            let high = anchor.max(focus).min(state.content.len());
+            let high = match state
+                .content
+                .get(high..)
+                .and_then(|s| s.graphemes(true).next())
+            {
+                Some(grapheme) if grapheme != "\n" => high + grapheme.len(),
+                _ => high,
+            };
+            state.selection = normalize_selection(&state.content, low..high);
+            state.cursor = clamp_to_grapheme_boundary(&state.content, focus);
+        }
+        self.refresh_input_node(node)
+    }
+
     pub(crate) fn apply_input_default_action(&self, code: KeyCode) -> bool {
         let Some(node) = self.focused() else {
             return false;

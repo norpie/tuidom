@@ -8,6 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
+use crate::document::selection::value_to_display_offset;
 use crate::id::NodeId;
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
@@ -165,11 +166,11 @@ fn paint_entry(
         NodeKindView::Input {
             value,
             cursor,
+            selection,
             multiline,
             mask,
             scroll_x,
             scroll_y,
-            ..
         } => {
             let input_format_start = profile.enabled.then(Instant::now);
             let content = input_display_content(value, *multiline, *mask);
@@ -178,6 +179,13 @@ fn paint_entry(
                 profile.input_format_time += start.elapsed();
             }
             paint_text(grid, node, fg_rgb, alpha, &visible_content, profile);
+            // The selection highlight is gated on focus like the cursor: an input's
+            // selection is editing state, meaningful while the input is being edited.
+            if focused == Some(node.id)
+                && let Some(range) = selection
+            {
+                paint_input_selection(grid, node, value, &content, range, rgb_cache, profile);
+            }
             if focused == Some(node.id) {
                 input_cursor_metadata(
                     grid,
@@ -362,6 +370,78 @@ fn paint_text_selection(
                 grid.apply_selection_colors(
                     rect.x + col_start,
                     rect.y + index as i32,
+                    (col_end - col_start) as u16,
+                    fg,
+                    bg,
+                    node.resolved.opacity,
+                );
+            }
+        }
+        line_start = line_end + 1;
+    }
+}
+
+/// Recolor the cells of a focused input's selected value range.
+///
+/// The range lives in value bytes; painting happens in display space — masked glyphs,
+/// flattened newlines — shifted by the input's own scroll offsets. Masked content
+/// therefore highlights mask glyphs, never revealing structure of the real value
+/// beyond what is already on screen.
+fn paint_input_selection(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    value: &str,
+    display: &str,
+    range: &Range<usize>,
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) {
+    let rect = node.layout.content_rect(&node.resolved);
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+
+    let from = value_to_display_offset(value, display, range.start);
+    let to = value_to_display_offset(value, display, range.end);
+    if from >= to {
+        return;
+    }
+
+    let fg = node
+        .resolved
+        .selection_fg
+        .map(|c| resolve_rgb(rgb_cache, c, profile));
+    let bg = node
+        .resolved
+        .selection_bg
+        .map(|c| resolve_rgb(rgb_cache, c, profile));
+
+    let (scroll_x, scroll_y) = match &node.kind {
+        NodeKindView::Input {
+            scroll_x, scroll_y, ..
+        } => (i32::from(*scroll_x), i32::from(*scroll_y)),
+        _ => (0, 0),
+    };
+
+    let mut line_start = 0usize;
+    for (index, line) in display.split('\n').enumerate() {
+        let row = index as i32 - scroll_y;
+        if row >= i32::from(rect.height) {
+            break;
+        }
+        let line_end = line_start + line.len();
+        if row >= 0
+            && let (line_from, line_to) = (from.max(line_start), to.min(line_end))
+            && line_from < line_to
+            && let Some((col_start, col_end)) =
+                selected_cell_span(line, line_start, line_from, line_to)
+        {
+            let col_start = (col_start - scroll_x).max(0);
+            let col_end = (col_end - scroll_x).min(i32::from(rect.width));
+            if col_start < col_end {
+                grid.apply_selection_colors(
+                    rect.x + col_start,
+                    rect.y + row,
                     (col_end - col_start) as u16,
                     fg,
                     bg,
