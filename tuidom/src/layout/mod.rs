@@ -11,9 +11,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
+use crate::event::ScrollEvent;
 use crate::id::NodeId;
 use crate::lock;
-use crate::node::{LayoutRect, NodeKind, NodeLayout};
+use crate::node::{LayoutRect, NodeKind, NodeLayout, ScrollOffset};
 use crate::style::resolution::ResolvedStyle;
 // `Position` shadows `taffy::prelude::Position`; taffy's own positioning types are
 // referenced through `taffy::style::` below.
@@ -278,32 +279,50 @@ enum MeasureContext {
 
 /// Compute layout for the permanent document root using persistent taffy state.
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> Result<()> {
-    let _tree_guard = lock::rw_read(&doc.inner.tree_mutation);
-    let root = doc.root();
+    let reclamped = {
+        let _tree_guard = lock::rw_read(&doc.inner.tree_mutation);
+        let root = doc.root();
 
-    let mut visible = HashSet::new();
-    let mut visible_children = HashMap::new();
-    collect_visible_tree(doc, root, &mut visible, &mut visible_children)?;
+        let mut visible = HashSet::new();
+        let mut visible_children = HashMap::new();
+        collect_visible_tree(doc, root, &mut visible, &mut visible_children)?;
 
-    let mut engine = lock::mutex(&doc.inner.layout);
-    let layouts = if visible.contains(&root) {
-        engine.compute(root, &visible_children, screen_width, screen_height)?
-    } else {
-        Vec::new()
+        let mut engine = lock::mutex(&doc.inner.layout);
+        let layouts = if visible.contains(&root) {
+            engine.compute(root, &visible_children, screen_width, screen_height)?
+        } else {
+            Vec::new()
+        };
+
+        let mut layout_snapshot = lock::rw_write(&doc.inner.layout_snapshot);
+        layout_snapshot.clear();
+        layout_snapshot.extend(layouts);
+
+        // A relayout can shrink content, so stored offsets are re-clamped here — otherwise a
+        // stale offset would keep a container scrolled past content that no longer exists.
+        // A node absent from the snapshot (hidden subtree) keeps its offset untouched.
+        let mut scroll_offsets = lock::mutex(&doc.inner.scroll_offsets);
+        let mut reclamped = Vec::new();
+        for (id, offset) in scroll_offsets.iter_mut() {
+            if let Some(layout) = layout_snapshot.get(id) {
+                let clamped = ScrollOffset {
+                    x: offset.x.min(layout.max_scroll_x),
+                    y: offset.y.min(layout.max_scroll_y),
+                };
+                if clamped != *offset {
+                    *offset = clamped;
+                    reclamped.push((*id, clamped));
+                }
+            }
+        }
+        reclamped
     };
 
-    let mut layout_snapshot = lock::rw_write(&doc.inner.layout_snapshot);
-    layout_snapshot.clear();
-    layout_snapshot.extend(layouts);
-
-    // A relayout can shrink content, so stored offsets are re-clamped here — otherwise a
-    // stale offset would keep a container scrolled past content that no longer exists.
-    let mut scroll_offsets = lock::mutex(&doc.inner.scroll_offsets);
-    for (id, offset) in scroll_offsets.iter_mut() {
-        if let Some(layout) = layout_snapshot.get(id) {
-            offset.x = offset.x.min(layout.max_scroll_x);
-            offset.y = offset.y.min(layout.max_scroll_y);
-        }
+    // The re-clamp is a scroll the engine made on the container's behalf, so it reports
+    // like one. Dispatched with every lock released: a listener may mutate the document.
+    for (id, offset) in reclamped {
+        let mut event = ScrollEvent::new(offset.x, offset.y);
+        doc.dispatch_scroll_to(id, &mut event);
     }
     Ok(())
 }

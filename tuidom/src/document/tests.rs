@@ -1836,6 +1836,33 @@ fn relayout_reclamps_scroll_offsets_when_content_shrinks() {
 }
 
 #[test]
+fn relayout_reclamp_fires_on_scroll_with_the_clamped_offset() {
+    let (doc, container, lines) = scrolling_column();
+    doc.scroll_to(container, 0, 4).unwrap();
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_for_handler = events.clone();
+    doc.on_scroll(container, move |event| {
+        events_for_handler
+            .lock()
+            .unwrap()
+            .push((event.target(), event.x, event.y));
+    })
+    .unwrap();
+
+    // Six rows of content in a four-row viewport: the offset clamps from 4 to 2.
+    for line in &lines[6..] {
+        doc.remove_child(container, *line).unwrap();
+    }
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(*events.lock().unwrap(), vec![(container, 0, 2)]);
+
+    // A relayout that leaves the offset where it is reports nothing.
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(events.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn wheel_scrolls_the_nearest_scrollable_ancestor() {
     let (doc, container, _) = scrolling_column();
     let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
