@@ -94,8 +94,13 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Skip painting nodes outside the visible scroll area
   - [x] Nodes still exist in DOM, just not rendered when off-screen
   - [x] Exact for variable-height items — layout still positions everything; culling is paint-only
-- [ ] Explicit opt-in virtualization widget (name TBD) for large uniform-sized collections
-  - [ ] Works for both vertical and horizontal scrolling
+- [x] Virtualization primitives (`virtualize` module) — not a widget: the engine provides the math, downstream owns every node
+  - [x] Spacer pattern: leading/trailing spacers keep the container's content size at the true total, so clamping, scrollbar geometry, and wheel routing need nothing virtual (spacers must set `flex_shrink(0.0)`)
+  - [x] Uniform window math, axis-agnostic — vertical, horizontal, and 2D as the same math run per axis
+  - [x] Measurement cache for variable extents: estimates, recorded measurements, logarithmic offset queries, invalidation, anchoring compensation
+  - [x] `Virtualizer` window diffing helper: add/remove index ranges + spacer sizes per scroll, no-op inside the overscan margin
+  - [x] Tree-compatible: downstream supplies flattened visible rows, tuidom virtualizes the flat sequence — no built-in tree semantics
+  - [x] `NodeView` exposes the scrollport and per-axis max scroll for downstream window math
 - [x] Built-in scrollbars for overflow containers:
   - [x] Overlay bars: no layout cost, drawn over the viewport's last column/row above the content they scroll
   - [x] Configurable characters/styling (track, thumb colors)

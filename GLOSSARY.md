@@ -38,6 +38,22 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Position::Absolute** — Node removed from normal flow and positioned at a signed cell offset from its parent's box origin. Screen-root placement is expressed by parenting the node to the root. Published layout rectangles remain screen-absolute regardless of positioning mode.
 
+## Virtualization
+
+**Virtualization** — Materializing only the visible window of a large collection. Culling is paint-only — everything culled is still laid out — whereas virtualization decides what exists in the DOM at all. The engine does not virtualize on its own: the `virtualize` module provides the range math and window diffing, and downstream owns every node, the way a browser sits under a virtualized list rather than being one.
+
+**Spacer** — An empty Box holding open the space of every unmaterialized item on one side of the window. With a leading and a trailing spacer, a scroll container's measured content size is the true total, so scroll clamping, scrollbar geometry, and wheel routing stay correct with nothing virtual about them. A spacer must set `flex_shrink(0.0)`: an empty box has no content floor, so default flex shrink would collapse it — and with it the scroll range it exists to hold open.
+
+**Window** — The item range a virtualized collection should have in the DOM: the items covering the scrollport (straddlers included) plus overscan, together with the two spacer extents that stand in for everything else. Produced by the uniform math or the measurement cache; diffed against the materialized range by the `Virtualizer`.
+
+**Overscan** — Items materialized beyond each edge of the visible range, so a small scroll reveals rows that already exist instead of waiting for materialization. Measured in items, not cells.
+
+**Stride** — Cells from one item's start to the next: the item's extent plus any flex gap between items. The uniform window math is built on the stride, which is why virtualized items must not flex-grow or shrink.
+
+**Measurement Cache** — Extents for variably sized items: an estimate for items not yet measured, recorded measurements for the rest, answering offset and window queries over the mix. Backed by a Fenwick tree over the deltas from the estimate, so queries stay logarithmic however much of the collection has been measured. One axis, like all virtualization math — a 2D grid runs it per axis.
+
+**Anchoring** — Absorbing a measurement's extent change into the scroll offset when the measured item lies above the viewport, so the content on screen stays visually pinned instead of shifting under the user. `record` returns the signed change as the compensation to apply.
+
 ## Styling
 
 **Style** — User-provided style with unresolved values. Contains `StyleValue<T>` which can be `Unset`, `Set(T)`, or `Inherit`.
