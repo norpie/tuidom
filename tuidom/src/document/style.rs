@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 
-use crate::animation::{TransitionConfig, TransitionProperty};
+use crate::animation::TransitionConfig;
+use crate::animation::value::apply_animated_value;
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
@@ -198,9 +199,7 @@ impl Document {
         {
             let driver = lock::mutex(&self.inner.animation);
             for (prop, val) in driver.overrides_for(id, self.now()) {
-                match prop {
-                    TransitionProperty::Opacity => resolved.opacity = val,
-                }
+                apply_animated_value(&mut resolved, prop, val);
             }
         }
 

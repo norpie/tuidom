@@ -120,7 +120,7 @@ impl ResolvedColor {
     }
 
     /// Blend toward `other`, component-wise in OKLCH.
-    fn mix(self, other: Self, t: f32) -> Self {
+    pub(crate) fn mix(self, other: Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
 
         // A gray has no hue to interpolate, so interpolating one would swing the result through

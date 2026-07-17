@@ -392,10 +392,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::animation::{Easing, TransitionConfig};
+    use crate::animation::{Easing, TransitionConfig, TransitionProperty};
     use crate::document::SelectionPoint;
     use crate::event::EventPhase;
-    use crate::style::{Color, Length, Style};
+    use crate::style::{Color, Length, ResolvedColor, Style};
 
     #[test]
     fn advancing_frozen_time_interpolates_a_transition_exactly() {
@@ -447,6 +447,42 @@ mod tests {
 
         assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.25);
         assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
+    fn a_background_transition_interpolates_in_oklch() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let mut style = Style::new();
+        style.background(Color::red());
+        doc.set_style(node, &style).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::new(
+                TransitionProperty::Background,
+                Duration::from_secs(1),
+                Easing::Linear,
+            ),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+        doc.update_style(node, |style| {
+            style.background(Color::blue());
+        })
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        let expected = ResolvedColor::red().mix(ResolvedColor::blue(), 0.5);
+        assert_eq!(doc.resolved_style(node).unwrap().background, Some(expected));
+
+        runtime.advance_time(Duration::from_secs(1));
+        assert_eq!(
+            doc.resolved_style(node).unwrap().background,
+            Some(ResolvedColor::blue())
+        );
     }
 
     #[test]
