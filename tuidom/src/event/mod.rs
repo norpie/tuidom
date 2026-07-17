@@ -9,6 +9,7 @@ mod key;
 pub(crate) use key::convert_key_event;
 pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
 
+use crate::document::SelectionPoint;
 use crate::id::NodeId;
 use crate::performance::FrameMetrics;
 
@@ -398,6 +399,17 @@ impl ScrollEvent {
     }
 }
 
+/// A document selection change.
+///
+/// Document-level like resize: selection is document state, so the event has no
+/// target node and does not bubble. Fires only on actual change — from drag
+/// movement, clearing, and pruning after DOM mutation alike.
+#[derive(Debug, Clone)]
+pub struct SelectionChangeEvent {
+    /// The new document-ordered selection, or `None` when it was cleared.
+    pub selection: Option<(SelectionPoint, SelectionPoint)>,
+}
+
 /// A terminal resize event.
 #[derive(Debug, Clone)]
 pub struct ResizeEvent {
@@ -497,6 +509,8 @@ pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
+pub(crate) type SelectionChangeEventHandler =
+    Arc<dyn Fn(&mut SelectionChangeEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
 pub(crate) type PostFrameEventHandler = Arc<dyn Fn(&mut PostFrameEvent) + Send + Sync + 'static>;
 
@@ -531,6 +545,8 @@ pub(crate) enum ListenerKind {
     Wheel(WheelEventHandler),
     /// Scroll offset change listener.
     Scroll(ScrollEventHandler),
+    /// Selection change listener.
+    SelectionChange(SelectionChangeEventHandler),
     /// Terminal resize listener.
     Resize(ResizeEventHandler),
     /// Post-frame listener.

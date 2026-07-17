@@ -94,6 +94,7 @@ impl Document {
                 layout_snapshot: RwLock::new(HashMap::new()),
                 scroll_offsets: Mutex::new(HashMap::new()),
                 selection: Mutex::new(None),
+                selection_listeners: Mutex::new(Vec::new()),
                 performance: Mutex::new(PerformanceState::new()),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),

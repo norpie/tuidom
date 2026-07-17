@@ -212,6 +212,9 @@ pub(crate) struct DocumentInner {
     /// Current document text selection, if any.
     pub selection: Mutex<Option<SelectionState>>,
 
+    /// Document-level selection change listeners.
+    pub selection_listeners: Mutex<Vec<Listener>>,
+
     /// Collected runtime performance metrics.
     pub performance: Mutex<PerformanceState>,
 

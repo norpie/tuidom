@@ -6,7 +6,8 @@ use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
     EventPhase, FocusEvent, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent,
-    PostFrameEvent, ResizeEvent, ScrollEvent, TargetedEvent, TargetedEventKind, WheelEvent,
+    PostFrameEvent, ResizeEvent, ScrollEvent, SelectionChangeEvent, TargetedEvent,
+    TargetedEventKind, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -137,6 +138,23 @@ impl Document {
         )
     }
 
+    /// Register a selection change listener.
+    ///
+    /// Selection is document state, so the event is document-level like resize: it
+    /// has no target node and does not bubble. It fires only on actual change —
+    /// from drag movement, clearing, and pruning after DOM mutation alike — and
+    /// carries the new document-ordered selection.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_selection_change<F>(&self, handler: F) -> ListenerHandle
+    where
+        F: Fn(&mut SelectionChangeEvent) + Send + Sync + 'static,
+    {
+        self.register_document_listener(
+            &self.inner.selection_listeners,
+            ListenerKind::SelectionChange(Arc::new(handler)),
+        )
+    }
+
     /// Register a terminal resize listener.
     ///
     /// Resize is document-level and does not target or bubble through nodes.
@@ -235,6 +253,7 @@ impl Document {
         for store in [
             &self.inner.resize_listeners,
             &self.inner.post_frame_listeners,
+            &self.inner.selection_listeners,
         ] {
             let mut listeners = lock::mutex(store);
             let old_len = listeners.len();
@@ -384,6 +403,21 @@ impl Document {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 if let ListenerKind::PostFrame(handler) = &listener.kind {
                     handler(event);
+                }
+            }));
+
+            if result.is_err() {
+                log::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
+    pub(crate) fn dispatch_selection_change(&self, mut event: SelectionChangeEvent) {
+        let listeners = lock::mutex(&self.inner.selection_listeners).clone();
+        for listener in listeners {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                if let ListenerKind::SelectionChange(handler) = &listener.kind {
+                    handler(&mut event);
                 }
             }));
 

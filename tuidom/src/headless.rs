@@ -863,6 +863,81 @@ mod tests {
     }
 
     #[test]
+    fn get_selection_joins_rows_with_newlines() {
+        let doc = Document::new().unwrap();
+        let mut column = Style::new();
+        column.flex_direction(crate::style::FlexDirection::Column);
+        doc.set_style(doc.root(), &column).unwrap();
+
+        let first = doc.create_text("first line").unwrap();
+        let second = doc.create_text("second").unwrap();
+        doc.append_child(doc.root(), first).unwrap();
+        doc.append_child(doc.root(), second).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 4);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((6, 0), (2, 1));
+
+        assert_eq!(
+            runtime.document().get_selection().as_deref(),
+            Some("line\nsec")
+        );
+    }
+
+    #[test]
+    fn get_selection_concatenates_nodes_sharing_a_row() {
+        let doc = Document::new().unwrap();
+        let hello = doc.create_text("hello ").unwrap();
+        let world = doc.create_text("world").unwrap();
+        doc.append_child(doc.root(), hello).unwrap();
+        doc.append_child(doc.root(), world).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (10, 0));
+
+        assert_eq!(
+            runtime.document().get_selection().as_deref(),
+            Some("hello world")
+        );
+    }
+
+    #[test]
+    fn selection_change_event_fires_on_change_and_clear_only() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_for_handler = events.clone();
+        doc.on_selection_change(move |event| {
+            events_for_handler
+                .lock()
+                .unwrap()
+                .push(event.selection.is_some());
+        });
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+
+        // A click with nothing selected clears nothing: no event.
+        runtime.simulate_click(0, 0);
+        assert_eq!(events.lock().unwrap().len(), 0);
+
+        // One drag move → one change event; the release changes nothing.
+        runtime.simulate_mouse_drag((0, 0), (3, 0));
+        assert_eq!(*events.lock().unwrap(), vec![true]);
+
+        // Clearing a non-empty selection fires with `None`.
+        runtime.document().clear_selection();
+        assert_eq!(*events.lock().unwrap(), vec![true, false]);
+
+        // Clearing again is a no-op.
+        runtime.document().clear_selection();
+        assert_eq!(events.lock().unwrap().len(), 2);
+    }
+
+    #[test]
     fn click_clears_the_selection() {
         let doc = Document::new().unwrap();
         let text = doc.create_text("hello").unwrap();

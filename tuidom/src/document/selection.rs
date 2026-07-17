@@ -7,6 +7,7 @@ use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
+use crate::event::SelectionChangeEvent;
 use crate::id::NodeId;
 use crate::lock;
 use crate::node::{NodeKind, NodeKindView};
@@ -65,6 +66,63 @@ impl Document {
         self.set_selection_state(None);
     }
 
+    /// The selected text in reading order, or `None` when nothing is selected.
+    ///
+    /// Reading order is document order: each selected Text node contributes its
+    /// selected slice, and a newline separates two consecutive slices whose glyphs
+    /// do not share a screen row. Slices on one row concatenate directly, so text
+    /// split across sibling nodes on a line copies as one line.
+    pub fn get_selection(&self) -> Option<String> {
+        let ranges = self.selection_ranges();
+        if ranges.is_empty() {
+            return None;
+        }
+
+        let mut out = String::new();
+        let mut previous_end_row: Option<i32> = None;
+        for (node, range) in ranges {
+            let Some((slice, start_line, end_line)) = self.selected_slice(node, &range) else {
+                continue;
+            };
+            let base_row = self.content_base_row(node);
+            let start_row = base_row.map(|base| base + start_line);
+            let end_row = base_row.map(|base| base + end_line);
+
+            // Without layout for either side, the row test is unanswerable; a newline
+            // is the reading-order-safe separator.
+            match (previous_end_row, start_row) {
+                (Some(previous), Some(start)) if previous == start => {}
+                (None, _) => {}
+                _ => out.push('\n'),
+            }
+            out.push_str(&slice);
+            previous_end_row = end_row;
+        }
+        Some(out)
+    }
+
+    /// A selected slice plus the line indices (within the node's content) of its
+    /// first and last character.
+    fn selected_slice(&self, node: NodeId, range: &Range<usize>) -> Option<(String, i32, i32)> {
+        let data = self.inner.nodes.get(&node)?;
+        let NodeKind::Text { content } = &data.kind else {
+            return None;
+        };
+        let slice = content.get(range.clone())?.to_owned();
+        let start_line = content[..range.start].matches('\n').count() as i32;
+        let end_line = content[..range.end].matches('\n').count() as i32;
+        Some((slice, start_line, end_line))
+    }
+
+    /// The screen row of a node's first content line, per the layout snapshot.
+    fn content_base_row(&self, node: NodeId) -> Option<i32> {
+        let rect = lock::rw_read(&self.inner.layout_snapshot)
+            .get(&node)
+            .map(|layout| layout.rect)?;
+        let resolved = self.resolved_style(node).ok()?;
+        Some(rect.content_rect(&resolved).y)
+    }
+
     /// Arm a selection drag from a left mouse down.
     ///
     /// Resolves the boundary from the hit node and snaps the press position to the
@@ -102,6 +160,8 @@ impl Document {
         };
         if changed {
             self.inner.notify.notify_one();
+            let selection = state.and_then(|state| self.ordered_selection(&state));
+            self.dispatch_selection_change(SelectionChangeEvent { selection });
         }
     }
 
