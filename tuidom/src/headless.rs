@@ -948,6 +948,51 @@ mod tests {
     }
 
     #[test]
+    fn drag_in_a_scrolled_container_selects_the_scrolled_content() {
+        let doc = Document::new().unwrap();
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.flex_direction(crate::style::FlexDirection::Column);
+        style.overflow_y(crate::style::Overflow::Scroll);
+        style.scrollbar_show(crate::style::ScrollbarShow::Never);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+
+        let mut lines = Vec::new();
+        for i in 0..8 {
+            let text = doc.create_text(format!("line{i}")).unwrap();
+            doc.append_child(container, text).unwrap();
+            lines.push(text);
+        }
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 4);
+        runtime.render().unwrap();
+        runtime.document().scroll_to(container, 0, 2).unwrap();
+        runtime.render().unwrap();
+        assert_eq!(runtime.get_cell(4, 0).unwrap().text, "2");
+
+        // Screen row 0 now shows "line2": the mapping works on scroll-translated
+        // paint geometry, so the drag lands in the node that scrolled into view.
+        runtime.simulate_mouse_drag((0, 0), (3, 0));
+
+        let (start, end) = runtime.document().selection().unwrap();
+        assert_eq!(
+            start,
+            SelectionPoint {
+                node: lines[2],
+                offset: 0
+            }
+        );
+        assert_eq!(
+            end,
+            SelectionPoint {
+                node: lines[2],
+                offset: 4
+            }
+        );
+    }
+
+    #[test]
     fn removing_a_selected_node_clears_the_selection() {
         let doc = Document::new().unwrap();
         let text = doc.create_text("hello").unwrap();
