@@ -256,8 +256,13 @@ impl Document {
         if !self.inner.nodes.contains_key(&node) {
             return Ok(());
         }
+        // The cache still holds the pre-change merged style; capturing it before
+        // invalidating lets the animation driver diff the focus change like any
+        // other style change.
+        let old_resolved = self.resolved_base_style(node)?;
         self.invalidate_resolved_style(node);
-        self.sync_layout_subtree_styles(node)
+        self.sync_layout_subtree_styles(node)?;
+        self.signal_animation(node, &old_resolved)
     }
 
     fn focus_action_for_key(&self, code: KeyCode) -> Option<FocusAction> {

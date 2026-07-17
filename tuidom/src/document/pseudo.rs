@@ -3,6 +3,7 @@ use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::lock;
 use crate::style::Style;
+use crate::style::resolution::ResolvedStyle;
 
 impl Document {
     /// Set the style merged into a node's resolved style while it is being pressed.
@@ -147,6 +148,12 @@ impl Document {
     pub fn set_disabled(&self, node: NodeId, disabled: bool) -> Result<()> {
         self.ensure_pseudo_node_exists(node)?;
 
+        // Effective disabled state changes for the whole subtree, so any descendant
+        // with transition configs may be about to restyle. Snapshot their merged
+        // styles before the flip, so the diff sees the pre-change values even where
+        // the cache is cold.
+        let snapshots = self.transition_style_snapshots(node);
+
         let changed = {
             let mut disabled_nodes = lock::mutex(&self.inner.disabled_nodes);
             if disabled {
@@ -176,8 +183,30 @@ impl Document {
         // now merge or drop its disabled style.
         self.invalidate_resolved_style(node);
         self.sync_layout_subtree_styles(node)?;
+        for (id, old_resolved) in snapshots {
+            self.signal_animation(id, &old_resolved)?;
+        }
         self.inner.notify.notify_one();
         Ok(())
+    }
+
+    /// Merged resolved styles for every node in the subtree that has transition
+    /// configs — the nodes whose restyle could start a transition.
+    fn transition_style_snapshots(&self, node: NodeId) -> Vec<(NodeId, ResolvedStyle)> {
+        let mut snapshots = Vec::new();
+        let mut stack = vec![node];
+        while let Some(id) = stack.pop() {
+            let Some(data) = self.inner.nodes.get(&id) else {
+                continue;
+            };
+            let has_configs = !data.transition_configs.is_empty();
+            stack.extend(data.children.iter().copied());
+            drop(data);
+            if has_configs && let Ok(resolved) = self.resolved_base_style(id) {
+                snapshots.push((id, resolved));
+            }
+        }
+        snapshots
     }
 
     pub(crate) fn is_effectively_disabled_unlocked(&self, node: NodeId) -> bool {
@@ -215,8 +244,13 @@ impl Document {
         if !self.inner.nodes.contains_key(&node) {
             return Ok(());
         }
+        // The cache still holds the pre-change merged style; capturing it before
+        // invalidating lets the animation driver diff the pseudo-state change like
+        // any other style change.
+        let old_resolved = self.resolved_base_style(node)?;
         self.invalidate_resolved_style(node);
         self.sync_layout_subtree_styles(node)?;
+        self.signal_animation(node, &old_resolved)?;
         self.inner.notify.notify_one();
         Ok(())
     }

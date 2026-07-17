@@ -450,6 +450,111 @@ mod tests {
     }
 
     #[test]
+    fn focus_change_transitions_the_focus_style() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_focusable(node, true).unwrap();
+        let mut focus_style = Style::new();
+        focus_style.opacity(0.5);
+        doc.set_focus_style(node, &focus_style).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+
+        doc.focus(node).unwrap();
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+
+        runtime.advance_time(Duration::from_millis(500));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.75);
+
+        // Blurring reverses from the displayed value — and as a pure reversal it
+        // covers the half already traveled in half the duration.
+        doc.blur();
+        runtime.advance_time(Duration::from_millis(250));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.875);
+
+        runtime.advance_time(Duration::from_millis(250));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
+    fn disabling_a_container_transitions_a_configured_descendant() {
+        let doc = Document::new().unwrap();
+        let container = doc.create_box().unwrap();
+        let child = doc.create_box().unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+        doc.append_child(container, child).unwrap();
+        let mut disabled_style = Style::new();
+        disabled_style.opacity(0.3);
+        doc.set_disabled_style(child, &disabled_style).unwrap();
+        doc.set_transition(
+            child,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+
+        doc.set_disabled(container, true).unwrap();
+        runtime.advance_time(Duration::from_millis(500));
+        assert_eq!(doc.resolved_style(child).unwrap().opacity, 0.65);
+
+        runtime.advance_time(Duration::from_secs(1));
+        assert_eq!(doc.resolved_style(child).unwrap().opacity, 0.3);
+    }
+
+    #[test]
+    fn pressing_a_node_transitions_the_active_style() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let mut active_style = Style::new();
+        active_style.opacity(0.6);
+        doc.set_active_style(node, &active_style).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+
+        doc.set_active(node, true).unwrap();
+        runtime.advance_time(Duration::from_millis(500));
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.8);
+    }
+
+    #[test]
+    fn a_pseudo_style_not_touching_the_property_starts_no_transition() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_focusable(node, true).unwrap();
+        let mut focus_style = Style::new();
+        focus_style.bold(true);
+        doc.set_focus_style(node, &focus_style).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::opacity(Duration::from_secs(1), Easing::Linear),
+        )
+        .unwrap();
+
+        let _runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+        doc.focus(node).unwrap();
+
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+    }
+
+    #[test]
     fn transition_end_fires_once_at_completion_and_bubbles() {
         let doc = Document::new().unwrap();
         let container = doc.create_box().unwrap();

@@ -278,7 +278,10 @@ impl Document {
     }
 
     /// Signal the animation driver about a style change and spawn tick task if needed.
-    fn signal_animation(&self, id: NodeId, old_resolved: &ResolvedStyle) -> Result<()> {
+    ///
+    /// The diff runs on merged resolved styles, so pseudo-state changes (focus,
+    /// active, disabled) transition exactly like explicit style changes.
+    pub(super) fn signal_animation(&self, id: NodeId, old_resolved: &ResolvedStyle) -> Result<()> {
         // Read transition configs before locking the driver
         let configs = {
             let Some(node) = self.inner.nodes.get(&id) else {
@@ -286,6 +289,12 @@ impl Document {
             };
             node.transition_configs.clone()
         };
+
+        // Nothing configured means nothing can start: skip the resolve and the
+        // driver lock, so the hot focus/hover path stays cheap.
+        if configs.is_empty() {
+            return Ok(());
+        }
 
         // Compute the new resolved value BEFORE locking the driver
         let new_resolved = self.resolved_base_style(id)?;
