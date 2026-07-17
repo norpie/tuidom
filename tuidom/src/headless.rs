@@ -948,6 +948,55 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_selected_node_clears_the_selection() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_for_handler = events.clone();
+        doc.on_selection_change(move |event| {
+            events_for_handler
+                .lock()
+                .unwrap()
+                .push(event.selection.is_some());
+        });
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (3, 0));
+        assert!(runtime.document().selection().is_some());
+
+        let doc = runtime.document();
+        doc.remove_child(doc.root(), text).unwrap();
+        assert_eq!(doc.selection(), None);
+        assert_eq!(*events.lock().unwrap(), vec![true, false]);
+    }
+
+    #[test]
+    fn shrinking_selected_text_clamps_or_clears_the_selection() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("hello world").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((2, 0), (8, 0));
+        let doc = runtime.document();
+        assert_eq!(doc.selection().unwrap().1.offset, 9);
+
+        // Shrink but keep part of the range: offsets clamp to the new content.
+        doc.set_text_content(text, "hell").unwrap();
+        let (start, end) = doc.selection().unwrap();
+        assert_eq!(start.offset, 2);
+        assert_eq!(end.offset, 4);
+
+        // Shrink past the whole range: the collapsed selection is cleared.
+        doc.set_text_content(text, "h").unwrap();
+        assert_eq!(doc.selection(), None);
+    }
+
+    #[test]
     fn get_selection_joins_rows_with_newlines() {
         let doc = Document::new().unwrap();
         let mut column = Style::new();

@@ -507,7 +507,7 @@ fn normalize_selection(content: &str, selection: Range<usize>) -> Option<Range<u
     (start != end).then_some(start..end)
 }
 
-fn clamp_to_grapheme_boundary(content: &str, offset: usize) -> usize {
+pub(crate) fn clamp_to_grapheme_boundary(content: &str, offset: usize) -> usize {
     if offset >= content.len() {
         return content.len();
     }

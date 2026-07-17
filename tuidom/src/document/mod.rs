@@ -158,6 +158,8 @@ impl Document {
             *text = content;
         }
 
+        // A shrunk content may have orphaned selection offsets pointing past its end.
+        self.clamp_selection_to_text(node);
         self.register_layout_node(node)?;
         self.inner.notify.notify_one();
         Ok(())

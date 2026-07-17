@@ -7,6 +7,7 @@ use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
+use crate::document::input::clamp_to_grapheme_boundary;
 use crate::event::SelectionChangeEvent;
 use crate::id::NodeId;
 use crate::lock;
@@ -207,6 +208,60 @@ impl Document {
             self.inner.notify.notify_one();
             let selection = state.and_then(|state| self.ordered_selection(&state));
             self.dispatch_selection_change(SelectionChangeEvent { selection });
+        }
+    }
+
+    /// Clear the selection if any part of it no longer exists in the tree.
+    ///
+    /// Called after a tree mutation has released the tree lock — like focus settling —
+    /// so the change event dispatches with no internal lock held and handlers may
+    /// touch the tree freely.
+    pub(crate) fn settle_selection(&self) {
+        let dead = lock::mutex(&self.inner.selection).is_some_and(|state| {
+            !self.inner.nodes.contains_key(&state.boundary)
+                || !self.inner.nodes.contains_key(&state.anchor.node)
+                || !self.inner.nodes.contains_key(&state.focus.node)
+        });
+        if dead {
+            self.set_selection_state(None);
+        }
+    }
+
+    /// Re-clamp selection offsets into `node` after its text content changed.
+    ///
+    /// Offsets snap to grapheme boundaries of the new content. A selection whose
+    /// visible range collapses to nothing is cleared rather than kept as an invisible
+    /// pair of equal points.
+    pub(crate) fn clamp_selection_to_text(&self, node: NodeId) {
+        let Some(mut state) = *lock::mutex(&self.inner.selection) else {
+            return;
+        };
+        if state.anchor.node != node && state.focus.node != node {
+            return;
+        }
+
+        let Some(content) = self.text_content_of(node) else {
+            self.set_selection_state(None);
+            return;
+        };
+        if state.anchor.node == node {
+            state.anchor.offset = clamp_to_grapheme_boundary(&content, state.anchor.offset);
+        }
+        if state.focus.node == node {
+            state.focus.offset = clamp_to_grapheme_boundary(&content, state.focus.offset);
+        }
+
+        let collapsed = self
+            .ordered_selection(&state)
+            .is_none_or(|(start, end)| start == end);
+        self.set_selection_state((!collapsed).then_some(state));
+    }
+
+    fn text_content_of(&self, node: NodeId) -> Option<String> {
+        let data = self.inner.nodes.get(&node)?;
+        match &data.kind {
+            NodeKind::Text { content } => Some(content.clone()),
+            _ => None,
         }
     }
 
