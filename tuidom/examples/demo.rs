@@ -17,6 +17,9 @@
 //! Wheel anywhere       — adjust text opacity via container wheel handler
 //! Wheel over the list  — scroll it; its bar tracks the offset
 //! Wheel over the 10k pane — virtualized: only the visible window exists in the DOM
+//! Drag over text      — select it (drag in an input selects within the input);
+//!                        the two selection columns are separate boundaries, and the
+//!                        status line echoes get_selection()
 //! [ / ] outside input  — scroll the horizontal pane
 //! m outside input      — open the modal: focus is trapped inside it and the
 //!                        content behind it goes inert (no tab, hover, or clicks)
@@ -490,6 +493,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(scroll_row, virtual_container)?;
     doc.append_child(scroll_row, virtual_status)?;
 
+    // --- Text selection ------------------------------------------------
+
+    let selection_label = doc.create_text("Selection (drag to select; boundaries don't bleed)")?;
+    doc.set_style(selection_label, &section_label_style)?;
+
+    let selection_row = doc.create_box()?;
+    doc.set_style(selection_row, &row_style)?;
+
+    // Two columns, each its own selection boundary: a drag started in one cannot
+    // bleed into the other. The left one keeps the reverse-video default; the right
+    // one sets explicit selection colors.
+    let mut boundary_style = Style::new();
+    boundary_style.flex_direction(FlexDirection::Column);
+    boundary_style.selection_boundary(true);
+    boundary_style.padding(EdgeInsets::symmetric(1, 0));
+    boundary_style.background(Color::oklch(0.24, 0.05, 260.0));
+
+    let mut styled_boundary_style = boundary_style.clone();
+    styled_boundary_style.selection_bg(Color::oklch(0.75, 0.15, 145.0));
+    styled_boundary_style.selection_fg(Color::black());
+
+    let left_boundary = doc.create_box()?;
+    doc.set_style(left_boundary, &boundary_style)?;
+    let right_boundary = doc.create_box()?;
+    doc.set_style(right_boundary, &styled_boundary_style)?;
+
+    for line in [
+        "reverse video default",
+        "drag across these",
+        "lines to select",
+    ] {
+        let text = doc.create_text(line)?;
+        doc.set_style(text, &label_style)?;
+        doc.append_child(left_boundary, text)?;
+    }
+    for line in [
+        "explicit colors here",
+        "inherited from the",
+        "boundary via style",
+    ] {
+        let text = doc.create_text(line)?;
+        let mut style = label_style.clone();
+        style.inherit_selection_bg();
+        style.inherit_selection_fg();
+        doc.set_style(text, &style)?;
+        doc.append_child(right_boundary, text)?;
+    }
+
+    let selection_status = doc.create_text("selection: (none)")?;
+    doc.set_style(selection_status, &label_style)?;
+
+    {
+        let doc_for_selection = doc.clone();
+        doc.on_selection_change(move |event| {
+            let summary = match (&event.selection, doc_for_selection.get_selection()) {
+                (Some(_), Some(text)) => {
+                    format!("selection: {:?}", text)
+                }
+                _ => "selection: (none)".to_owned(),
+            };
+            let _ = doc_for_selection.set_text_content(selection_status, summary);
+        });
+    }
+
+    doc.append_child(selection_row, left_boundary)?;
+    doc.append_child(selection_row, right_boundary)?;
+
     let attrs_label = doc.create_text("Text attributes")?;
     doc.set_style(attrs_label, &section_label_style)?;
 
@@ -526,6 +596,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, derived_row)?;
     doc.append_child(stack, scroll_label)?;
     doc.append_child(stack, scroll_row)?;
+    doc.append_child(stack, selection_label)?;
+    doc.append_child(stack, selection_row)?;
+    doc.append_child(stack, selection_status)?;
     doc.append_child(stack, attrs_label)?;
     doc.append_child(stack, attrs_row)?;
 
