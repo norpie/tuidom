@@ -8,12 +8,18 @@
 //! total and scroll clamping, scrollbar geometry, and wheel routing stay correct with
 //! nothing virtual about them.
 //!
+//! Spacers must set `flex_shrink(0.0)`: an empty box has no content floor, so default
+//! flex shrink would collapse it to fit the container — and with it the scroll range
+//! it exists to hold open.
+//!
 //! Everything here is one axis: a vertical list virtualizes its rows, a horizontal
 //! strip its columns, and a 2D grid runs the same math once per axis.
 
 mod measure;
+mod virtualizer;
 
 pub use measure::MeasurementCache;
+pub use virtualizer::{Virtualizer, WindowUpdate};
 
 use std::ops::Range;
 

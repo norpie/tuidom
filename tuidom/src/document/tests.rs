@@ -15,9 +15,10 @@ use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::performance::PerformanceDetail;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
-    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, ResolvedColor, Sides,
-    Style,
+    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, ResolvedColor,
+    ScrollbarShow, Sides, Style,
 };
+use crate::virtualize::Virtualizer;
 
 #[test]
 fn create_nodes() {
@@ -1984,6 +1985,138 @@ fn prevent_default_suppresses_the_wheel_scroll() {
     runtime.simulate_scroll(0, 0, -1);
 
     assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+/// Downstream wiring of the spacer pattern: a scroll container holding a leading
+/// spacer, the materialized window, and a trailing spacer, kept in sync with a
+/// [`Virtualizer`]. This is the shape the `virtualize` module is designed around,
+/// so it doubles as the end-to-end proof the engine primitives compose.
+struct VirtualList {
+    doc: Document,
+    container: NodeId,
+    lead: NodeId,
+    trail: NodeId,
+    virtualizer: Virtualizer,
+    items: std::collections::BTreeMap<usize, NodeId>,
+}
+
+impl VirtualList {
+    fn new(doc: &Document, count: usize) -> Self {
+        let container = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.flex_direction(FlexDirection::Column);
+        style.overflow_y(Overflow::Scroll);
+        style.scrollbar_show(ScrollbarShow::Never);
+        doc.set_style(container, &style).unwrap();
+        doc.append_child(doc.root(), container).unwrap();
+
+        let lead = doc.create_box().unwrap();
+        doc.append_child(container, lead).unwrap();
+        let trail = doc.create_box().unwrap();
+        doc.append_child(container, trail).unwrap();
+
+        Self {
+            doc: doc.clone(),
+            container,
+            lead,
+            trail,
+            virtualizer: Virtualizer::uniform(count, 1, 2),
+            items: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn apply(&mut self, offset: u16, viewport: u16) {
+        let Some(update) = self.virtualizer.update(offset, viewport) else {
+            return;
+        };
+
+        for range in update.remove {
+            for index in range {
+                if let Some(node) = self.items.remove(&index) {
+                    self.doc.remove_child(self.container, node).unwrap();
+                }
+            }
+        }
+        for range in update.add {
+            for index in range {
+                let node = self.doc.create_text(format!("item{index}")).unwrap();
+                // Before the next materialized item, or before the trailing spacer.
+                let before = self
+                    .items
+                    .range(index + 1..)
+                    .next()
+                    .map(|(_, node)| *node)
+                    .unwrap_or(self.trail);
+                self.doc
+                    .insert_before(self.container, node, before)
+                    .unwrap();
+                self.items.insert(index, node);
+            }
+        }
+
+        self.set_spacer(self.lead, update.window.lead);
+        self.set_spacer(self.trail, update.window.trail);
+    }
+
+    fn set_spacer(&self, spacer: NodeId, cells: u64) {
+        let mut style = Style::new();
+        style.height(Length::Pixels(u16::try_from(cells).unwrap_or(u16::MAX)));
+        // An empty Box has no content floor, so default flex shrink would collapse
+        // the spacer to fit the container — and with it the whole scroll range.
+        style.flex_shrink(0.0);
+        self.doc.set_style(spacer, &style).unwrap();
+    }
+}
+
+#[test]
+fn a_virtualized_list_stays_correct_and_bounded_over_large_scrolls() {
+    let doc = Document::new().unwrap();
+    let list = Arc::new(Mutex::new(VirtualList::new(&doc, 10_000)));
+    let container = list.lock().unwrap().container;
+
+    let list_for_handler = list.clone();
+    doc.on_scroll(container, move |event| {
+        list_for_handler.lock().unwrap().apply(event.y, 4);
+    })
+    .unwrap();
+
+    // Initial fill; every later window change flows from on_scroll.
+    list.lock().unwrap().apply(0, 4);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    let row = |runtime: &HeadlessRuntime, y: i32| -> String {
+        (0..10)
+            .map(|x| runtime.get_cell(x, y).unwrap().text)
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    };
+    assert_eq!(row(&runtime, 0), "item0");
+    assert_eq!(row(&runtime, 3), "item3");
+
+    // Spacers make the content its true total: 10k rows minus the 4-row viewport.
+    let layout = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!(layout.max_scroll_y, 9_996);
+
+    // A deep jump: the handler rebuilds the window before the next frame.
+    doc.scroll_to(container, 0, 5_000).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(row(&runtime, 0), "item5000");
+    assert_eq!(row(&runtime, 3), "item5003");
+
+    // The DOM holds the window plus overscan, never the collection: the four visible
+    // items, two overscan on each side, both spacers, the container, and the root.
+    assert_eq!(list.lock().unwrap().items.len(), 8);
+    assert_eq!(doc.layout_node_count(), 12);
+
+    // Clamped at the very end, the last items materialize flush with the bottom.
+    doc.scroll_to(container, 0, u16::MAX).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 9_996);
+    assert_eq!(row(&runtime, 0), "item9996");
+    assert_eq!(row(&runtime, 3), "item9999");
+    assert!(doc.layout_node_count() <= 13);
 }
 
 #[test]
