@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 use crate::document::Document;
 use crate::error::Result;
 use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
-use crate::lock;
 use crate::performance::RenderMetrics;
 use crate::render::grid::{Cell, Grid};
 use crate::render::{RenderCursor, render_to_grid};
@@ -49,8 +48,7 @@ impl HeadlessRuntime {
     /// would look at the advanced instant.
     pub fn advance_time(&mut self, delta: Duration) {
         self.doc.advance_manual_time(delta);
-        let finished = lock::mutex(&self.doc.inner.animation).cleanup(self.doc.now());
-        for transition in finished {
+        for transition in self.doc.run_animation_upkeep() {
             process_runtime_event(
                 &self.doc,
                 RuntimeEvent::TransitionEnd {
@@ -395,7 +393,8 @@ mod tests {
     use crate::animation::{Easing, TransitionConfig, TransitionProperty};
     use crate::document::SelectionPoint;
     use crate::event::EventPhase;
-    use crate::style::{Color, Length, ResolvedColor, Style};
+    use crate::lock;
+    use crate::style::{Color, Length, Position, ResolvedColor, Style};
 
     #[test]
     fn advancing_frozen_time_interpolates_a_transition_exactly() {
@@ -483,6 +482,107 @@ mod tests {
             doc.resolved_style(node).unwrap().background,
             Some(ResolvedColor::blue())
         );
+    }
+
+    #[test]
+    fn a_width_transition_reflows_siblings_per_frame() {
+        let doc = Document::new().unwrap();
+        let a = doc.create_box().unwrap();
+        let b = doc.create_box().unwrap();
+        doc.append_child(doc.root(), a).unwrap();
+        doc.append_child(doc.root(), b).unwrap();
+        let mut a_style = Style::new();
+        a_style.width(Length::Pixels(2));
+        a_style.height(Length::Pixels(1));
+        a_style.flex_shrink(0.0);
+        doc.set_style(a, &a_style).unwrap();
+        let mut b_style = Style::new();
+        b_style.width(Length::Pixels(1));
+        b_style.height(Length::Pixels(1));
+        doc.set_style(b, &b_style).unwrap();
+        doc.set_transition(
+            a,
+            TransitionConfig::new(
+                TransitionProperty::Width,
+                Duration::from_secs(1),
+                Easing::Linear,
+            ),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        let doc = runtime.document().clone();
+        assert_eq!(doc.get_node(b).unwrap().layout.unwrap().rect.x, 2);
+
+        doc.update_style(a, |style| {
+            style.width(Length::Pixels(10));
+        })
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(250));
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(a).unwrap().layout.unwrap().rect.width, 4);
+        assert_eq!(doc.get_node(b).unwrap().layout.unwrap().rect.x, 4);
+
+        // 300ms in, the interpolated width is 4.4 cells — it stays 4 on screen
+        // until the fraction crosses the rounding boundary.
+        runtime.advance_time(Duration::from_millis(50));
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(a).unwrap().layout.unwrap().rect.width, 4);
+
+        runtime.advance_time(Duration::from_secs(1));
+        runtime.render().unwrap();
+        assert_eq!(doc.get_node(a).unwrap().layout.unwrap().rect.width, 10);
+        assert_eq!(doc.get_node(b).unwrap().layout.unwrap().rect.x, 10);
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+        assert!(
+            lock::mutex(&doc.inner.animation)
+                .layout_animating_nodes()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_absolute_position_transition_glides_across_cells() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let mut style = Style::new();
+        style.width(Length::Pixels(1));
+        style.height(Length::Pixels(1));
+        style.background(Color::red());
+        style.position(Position::Absolute { x: 0, y: 0 });
+        doc.set_style(node, &style).unwrap();
+        doc.set_transition(
+            node,
+            TransitionConfig::new(
+                TransitionProperty::Position,
+                Duration::from_secs(1),
+                Easing::Linear,
+            ),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 12, 3);
+        runtime.render().unwrap();
+        let doc = runtime.document().clone();
+        doc.update_style(node, |style| {
+            style.position(Position::Absolute { x: 8, y: 0 });
+        })
+        .unwrap();
+
+        runtime.advance_time(Duration::from_millis(500));
+        runtime.render().unwrap();
+        let midway = runtime.get_cell(4, 0).unwrap().bg.unwrap();
+        assert!(midway.r > midway.g && midway.r > midway.b);
+        assert!(runtime.get_cell(0, 0).unwrap().bg.is_none());
+
+        runtime.advance_time(Duration::from_secs(1));
+        runtime.render().unwrap();
+        let settled = runtime.get_cell(8, 0).unwrap().bg.unwrap();
+        assert!(settled.r > settled.g && settled.r > settled.b);
+        assert!(runtime.get_cell(4, 0).unwrap().bg.is_none());
     }
 
     #[test]

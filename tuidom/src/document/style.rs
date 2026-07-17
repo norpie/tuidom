@@ -3,6 +3,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 
 use crate::animation::TransitionConfig;
+use crate::animation::driver::FinishedTransition;
 use crate::animation::value::apply_animated_value;
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
@@ -305,6 +306,26 @@ impl Document {
         self.inner.anim_config_changed.notify_one();
 
         Ok(())
+    }
+
+    /// Remove finished transitions, settling layout-affecting ones.
+    ///
+    /// The layout engine holds the last interpolated value a tick pushed; a
+    /// finished layout transition pushes the settled style once more so layout
+    /// rests exactly on the target. Returns the finished transitions so the
+    /// caller can dispatch their end events.
+    pub(crate) fn run_animation_upkeep(&self) -> Vec<FinishedTransition> {
+        let finished = lock::mutex(&self.inner.animation).cleanup(self.now());
+        for transition in &finished {
+            if !transition.property.affects_layout() {
+                continue;
+            }
+            let Ok(resolved) = self.resolved_style(transition.node_id) else {
+                continue;
+            };
+            let _ = lock::mutex(&self.inner.layout).set_style(transition.node_id, &resolved);
+        }
+        finished
     }
 
     /// Invalidate the resolved style cache for a node and all descendants.

@@ -348,8 +348,7 @@ fn animations_active(doc: &Document) -> bool {
 /// the runtime queue so handlers run on the event task, ordered with input. A
 /// send failure means the runtime is shutting down and is safe to ignore.
 fn cleanup_animations(doc: &Document) {
-    let finished = lock::mutex(&doc.inner.animation).cleanup(doc.now());
-    for transition in finished {
+    for transition in doc.run_animation_upkeep() {
         let _ = doc.inner.event_tx.send(RuntimeEvent::TransitionEnd {
             node: transition.node_id,
             property: transition.property,

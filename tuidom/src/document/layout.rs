@@ -18,7 +18,25 @@ impl Document {
     /// sizes, and stores the results on each node. Nodes with `display: None`
     /// are skipped.
     pub fn compute_layout(&self, screen_width: u16, screen_height: u16) -> Result<()> {
+        self.sync_animating_layout_styles();
         compute_document_layout(self, screen_width, screen_height)
+    }
+
+    /// Feed the interpolated style of every layout-animating node to the layout
+    /// engine, so this layout pass sees the in-flight values.
+    ///
+    /// The synced base styles only change on explicit style updates; a transition
+    /// on a layout-affecting property moves between them, so each frame's values
+    /// are pushed here. With no such transition active this is a no-op, and
+    /// layout stays as passive as before.
+    fn sync_animating_layout_styles(&self) {
+        let animating = lock::mutex(&self.inner.animation).layout_animating_nodes();
+        for id in animating {
+            let Ok(resolved) = self.resolved_style(id) else {
+                continue;
+            };
+            let _ = lock::mutex(&self.inner.layout).set_style(id, &resolved);
+        }
     }
 
     // ------------------------------------------------------------------
