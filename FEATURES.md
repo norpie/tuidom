@@ -111,6 +111,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 ## Reactivity & Change Propagation
 
 - [x] Channel-based notify — renderer wakes on change, not on timer
+- [x] Unchanged writes are no-ops: `set_text_content` with identical content triggers no relayout or re-render
 - [x] Completely passive while idle — no polling, no fixed tick rate
 - [x] Active rendering only during animations — drives frames until animation completes, then returns to passive
 - [ ] User-facing subscribe API for node/document changes
@@ -233,6 +234,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [ ] Focus: focus, blur
     - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
   - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
+  - [x] Frame: `on_post_frame` — document-level like resize, fires after each rendered frame with its metrics; DOM mutation in the handler schedules another frame, so handlers pace their mutations
   - [ ] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
 - [x] Listener registration returns handle for removal
 - [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults) and wheel (default scroll)

@@ -126,6 +126,8 @@ Terms and concepts used throughout the tuidom codebase.
 
 **Event Loop** — Async runtime that waits for terminal events, document notifications, animation state, and shutdown. It dispatches terminal events to listeners and renders when needed.
 
+**Post-Frame Event** — Document-level notification that a frame just finished, carrying that frame's recorded metrics. Like resize it has no target node and does not bubble. The render task never runs user code: the event goes through the runtime queue so handlers run on the event task, ordered with input handlers. Mutating the DOM from a post-frame handler schedules another frame, whose own post-frame event fires in turn — an unpaced handler keeps the renderer permanently active, so handlers pace their mutations to let it go idle.
+
 ## Focus & Selection
 
 **Focus Context** — A subtree that traps focus, opened on a stacking context with `push_focus_context` and closed with `pop_focus_context`. The active context scopes everything about focus: `focused()` reports the focused node *within* it, tab order and spatial navigation search only inside it, and everything outside it is inert. The document root is a permanent focus context, so with nothing open the whole tree is in scope.

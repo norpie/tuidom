@@ -1,12 +1,12 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
     EventPhase, FocusEvent, KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent,
-    ResizeEvent, ScrollEvent, TargetedEvent, TargetedEventKind, WheelEvent,
+    PostFrameEvent, ResizeEvent, ScrollEvent, TargetedEvent, TargetedEventKind, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -145,7 +145,31 @@ impl Document {
     where
         F: Fn(&mut ResizeEvent) + Send + Sync + 'static,
     {
-        self.register_document_listener(ListenerKind::Resize(Arc::new(handler)))
+        self.register_document_listener(
+            &self.inner.resize_listeners,
+            ListenerKind::Resize(Arc::new(handler)),
+        )
+    }
+
+    /// Register a post-frame listener.
+    ///
+    /// Fires after each frame is rendered, carrying the frame's recorded metrics.
+    /// Post-frame is document-level like resize — a frame has no target node, so
+    /// the event does not target or bubble through nodes.
+    ///
+    /// Mutating the DOM from the handler schedules another frame, whose own
+    /// post-frame event fires in turn. A handler that mutates on every event keeps
+    /// the renderer permanently active; pace the mutations to let it go idle.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_post_frame<F>(&self, handler: F) -> ListenerHandle
+    where
+        F: Fn(&mut PostFrameEvent) + Send + Sync + 'static,
+    {
+        self.register_document_listener(
+            &self.inner.post_frame_listeners,
+            ListenerKind::PostFrame(Arc::new(handler)),
+        )
     }
 
     fn register_targeted_listener(
@@ -169,9 +193,13 @@ impl Document {
         Ok(handle)
     }
 
-    fn register_document_listener(&self, kind: ListenerKind) -> ListenerHandle {
+    fn register_document_listener(
+        &self,
+        store: &Mutex<Vec<Listener>>,
+        kind: ListenerKind,
+    ) -> ListenerHandle {
         let handle = self.next_listener_handle();
-        lock::mutex(&self.inner.resize_listeners).push(Listener {
+        lock::mutex(store).push(Listener {
             id: handle.id,
             kind,
         });
@@ -204,11 +232,14 @@ impl Document {
             targeted.retain(|_, listeners| !listeners.is_empty());
         }
 
-        {
-            let mut resize = lock::mutex(&self.inner.resize_listeners);
-            let old_len = resize.len();
-            resize.retain(|listener| listener.id != handle.id);
-            removed |= resize.len() != old_len;
+        for store in [
+            &self.inner.resize_listeners,
+            &self.inner.post_frame_listeners,
+        ] {
+            let mut listeners = lock::mutex(store);
+            let old_len = listeners.len();
+            listeners.retain(|listener| listener.id != handle.id);
+            removed |= listeners.len() != old_len;
         }
 
         removed
@@ -320,6 +351,38 @@ impl Document {
         for listener in listeners {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 if let ListenerKind::Scroll(handler) = &listener.kind {
+                    handler(event);
+                }
+            }));
+
+            if result.is_err() {
+                log::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
+    /// Build the post-frame event for the frame that was just recorded.
+    ///
+    /// Returns `None` when no post-frame listener is registered or no frame has
+    /// been recorded yet, so frames without an audience skip the event queue
+    /// entirely.
+    pub(crate) fn pending_post_frame_event(&self) -> Option<PostFrameEvent> {
+        if lock::mutex(&self.inner.post_frame_listeners).is_empty() {
+            return None;
+        }
+
+        let snapshot = lock::mutex(&self.inner.performance).snapshot();
+        Some(PostFrameEvent {
+            metrics: snapshot.latest?,
+            fps: snapshot.fps,
+        })
+    }
+
+    pub(crate) fn dispatch_post_frame(&self, event: &mut PostFrameEvent) {
+        let listeners = lock::mutex(&self.inner.post_frame_listeners).clone();
+        for listener in listeners {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                if let ListenerKind::PostFrame(handler) = &listener.kind {
                     handler(event);
                 }
             }));

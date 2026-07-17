@@ -51,6 +51,30 @@ fn text_content_api_sets_text_and_rejects_other_nodes() {
     );
 }
 
+#[tokio::test]
+async fn set_text_content_with_unchanged_content_does_not_notify_render() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hello").unwrap();
+
+    // A real change notifies; awaiting it also drains the stored permit.
+    let notified = doc.inner.notify.notified();
+    doc.set_text_content(text, "updated").unwrap();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_text_content(text, "updated").unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .is_err()
+    );
+
+    let view = doc.get_node(text).unwrap();
+    assert!(matches!(view.kind, NodeKindView::Text { content } if content == "updated"));
+}
+
 #[test]
 fn performance_snapshot_exposes_recorded_metrics_and_detail() {
     let doc = Document::new().unwrap();

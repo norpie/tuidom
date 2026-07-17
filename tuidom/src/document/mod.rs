@@ -93,6 +93,7 @@ impl Document {
                 performance: Mutex::new(PerformanceState::new()),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
+                post_frame_listeners: Mutex::new(Vec::new()),
                 color_vars: Mutex::new(HashMap::new()),
                 terminal_background: Mutex::new(Color::black()),
             }),
@@ -127,6 +128,11 @@ impl Document {
 
     /// Replace a text node's content.
     ///
+    /// Setting the content a node already has is a no-op: no relayout, no
+    /// re-render. This makes it safe to call unconditionally from handlers that
+    /// re-render on mutation — a post-frame handler included — since an unchanged
+    /// write does not schedule another frame.
+    ///
     /// # Errors
     ///
     /// Returns an error if `node` does not exist or is not a text node.
@@ -140,7 +146,11 @@ impl Document {
             let NodeKind::Text { content: text } = &mut data.kind else {
                 return Err(TuidomError::NodeNotText { id: node });
             };
-            *text = content.into();
+            let content = content.into();
+            if *text == content {
+                return Ok(());
+            }
+            *text = content;
         }
 
         self.register_layout_node(node)?;

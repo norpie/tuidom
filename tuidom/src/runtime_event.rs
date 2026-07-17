@@ -1,5 +1,5 @@
 use crate::document::Document;
-use crate::event::{KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
+use crate::event::{KeyEvent, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent};
 use crate::id::NodeId;
 use crate::lock;
 
@@ -21,6 +21,9 @@ pub(crate) enum RuntimeEvent {
     Wheel(WheelEvent),
     /// Runtime resize requiring both public dispatch and renderer resize.
     Resize(ResizeEvent),
+    /// A rendered frame, queued by the render task for post-frame dispatch.
+    /// Boxed so the frame's metrics don't dominate the size of every queued event.
+    PostFrame(Box<PostFrameEvent>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +95,10 @@ pub(crate) fn process_runtime_event(
         RuntimeEvent::Resize(resize) => {
             doc.dispatch_resize(resize.clone());
             set_pending_resize(doc, resize);
+        }
+        // Not input: a frame between a mouse down and up must not suppress the click.
+        RuntimeEvent::PostFrame(mut event) => {
+            doc.dispatch_post_frame(&mut event);
         }
     }
 }

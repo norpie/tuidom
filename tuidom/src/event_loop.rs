@@ -204,6 +204,7 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
+    queue_post_frame(doc);
     Ok(())
 }
 
@@ -219,7 +220,22 @@ fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) 
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
+    queue_post_frame(doc);
     Ok(())
+}
+
+/// Queue the post-frame event for the frame that was just recorded.
+///
+/// The render task never runs user code: the event goes through the runtime queue
+/// so handlers run on the event task, in order with input handlers. A send failure
+/// means the runtime is shutting down and is safe to ignore.
+fn queue_post_frame(doc: &Document) {
+    if let Some(event) = doc.pending_post_frame_event() {
+        let _ = doc
+            .inner
+            .event_tx
+            .send(RuntimeEvent::PostFrame(Box::new(event)));
+    }
 }
 
 async fn render_frame_timed_capped(

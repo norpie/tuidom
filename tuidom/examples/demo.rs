@@ -3,7 +3,7 @@
 //! configurable focus keys, targeted mouse events, bubbling, stop_propagation,
 //! wheel events, borders, half-block edges, color variables and derivations,
 //! scrolling with overlay scrollbars, terminal text attributes, transitions,
-//! and the performance metrics API.
+//! and the performance metrics API surfaced through the post-frame event.
 //!
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Focus the "focus me" panel — its border recolors, charset and sides untouched
@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tuidom::animation::{Easing, TransitionConfig};
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
@@ -592,7 +592,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let container_background_alt = Arc::new(AtomicBool::new(false));
     let text_opacity = Arc::new(Mutex::new(1.0));
 
-    update_perf_counter(&doc, perf_counter);
+    // --- Performance counter -------------------------------------------
+
+    // The counter reflects the frame that just finished — one frame of latency,
+    // honestly labeled. Rewriting its text schedules another frame (whose own
+    // post-frame event fires in turn), so the rewrite is throttled: without it
+    // the counter would keep the renderer permanently active.
+    let d = doc.clone();
+    let last_perf_update = Mutex::new(None::<Instant>);
+    doc.on_post_frame(move |event| {
+        let Ok(mut last) = last_perf_update.lock() else {
+            return;
+        };
+        let now = Instant::now();
+        if last.is_some_and(|at| now.duration_since(at) < Duration::from_millis(250)) {
+            return;
+        }
+        *last = Some(now);
+
+        let text = format!(
+            "FPS: {:.0}  Frame: {:.3}ms",
+            event.fps,
+            event.metrics.frame_time.as_secs_f64() * 1000.0
+        );
+        let _ = d.set_text_content(perf_counter, text);
+    });
 
     // --- Keyboard handler --------------------------------------------
 
@@ -607,7 +631,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match key.code {
             KeyCode::Char(' ') => {
-                update_perf_counter(&d, perf_counter);
                 let was_visible = ov.fetch_not(Ordering::Relaxed);
                 let target = if !was_visible { 1.0 } else { 0.0 };
                 if let Ok(mut opacity) = opacity_for_key.lock() {
@@ -665,7 +688,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let d = doc.clone();
     doc.on_focus(container, move |event| {
-        update_perf_counter(&d, perf_counter);
         if event.relation() == FocusEventRelation::Descendant {
             let _ = d.update_style(container, |s| s.background(Color::oklch(0.38, 0.16, 95.0)));
         }
@@ -674,7 +696,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let container_bg = container_background_alt.clone();
     doc.on_blur(container, move |event| {
-        update_perf_counter(&d, perf_counter);
         if event.relation() == FocusEventRelation::Descendant {
             let color = if container_bg.load(Ordering::Relaxed) {
                 Color::oklch(0.25, 0.12, 260.0)
@@ -690,7 +711,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let text_bg = text_background_alt.clone();
     doc.on_click(text, move |event| {
-        update_perf_counter(&d, perf_counter);
         event.stop_propagation();
         let use_alt = text_bg.fetch_not(Ordering::Relaxed);
         let color = if use_alt {
@@ -704,7 +724,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let container_bg = container_background_alt.clone();
     doc.on_click(container, move |_| {
-        update_perf_counter(&d, perf_counter);
         let use_alt = container_bg.fetch_not(Ordering::Relaxed);
         let color = if use_alt {
             Color::oklch(0.3, 0.1, 50.0)
@@ -717,7 +736,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let opacity_for_wheel = text_opacity.clone();
     doc.on_wheel(container, move |event| {
-        update_perf_counter(&d, perf_counter);
         if let Ok(mut opacity) = opacity_for_wheel.lock() {
             let direction = if event.delta > 0 { 1.0 } else { -1.0 };
             *opacity = (*opacity + direction * 0.1).clamp(0.1, 1.0);
@@ -730,20 +748,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     doc.run().await?;
     Ok(())
-}
-
-fn update_perf_counter(doc: &tuidom::Document, node: tuidom::NodeId) {
-    let snapshot = doc.performance_snapshot();
-    let Some(frame) = snapshot.latest else {
-        return;
-    };
-
-    let text = format!(
-        "FPS: {:.0}  Frame: {:.3}ms",
-        snapshot.fps,
-        frame.frame_time.as_secs_f64() * 1000.0
-    );
-    let _ = doc.set_text_content(node, text);
 }
 
 /// The spacer pattern behind the demo's virtualized pane: a scroll container holding

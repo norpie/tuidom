@@ -1,6 +1,9 @@
+use std::time::Instant;
+
 use crate::document::Document;
 use crate::error::Result;
 use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
+use crate::performance::RenderMetrics;
 use crate::render::grid::{Cell, Grid};
 use crate::render::{RenderCursor, render_to_grid};
 use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
@@ -57,12 +60,38 @@ impl HeadlessRuntime {
     }
 
     /// Compute layout and paint the document into the inspectable screen buffer.
+    ///
+    /// Records frame metrics for the performance API and dispatches the post-frame
+    /// event through the shared runtime path, so both are observable in tests.
+    /// Diff and flush metrics stay zero — headless frames are painted, not flushed.
     pub fn render(&mut self) -> Result<()> {
+        let frame_start = Instant::now();
+
+        let layout_start = Instant::now();
         self.doc.compute_layout(self.width, self.height)?;
+        let layout_time = layout_start.elapsed();
+
         let frame = render_to_grid(&self.doc, self.width, self.height, &mut self.rgb_cache);
-        let _stats = frame.stats;
         self.cursor = frame.cursor;
         self.grid = Some(frame.grid);
+
+        let stats = RenderMetrics {
+            grid_time: frame.stats.grid_time,
+            dom_collect_time: frame.stats.dom_collect_time,
+            dom_paint_time: frame.stats.dom_paint_time,
+            paint_profile: frame.stats.paint_profile,
+            ..RenderMetrics::default()
+        };
+        self.doc
+            .record_frame_metrics(frame_start.elapsed(), layout_time, stats);
+
+        if let Some(event) = self.doc.pending_post_frame_event() {
+            process_runtime_event(
+                &self.doc,
+                RuntimeEvent::PostFrame(Box::new(event)),
+                &mut self.event_state,
+            );
+        }
         Ok(())
     }
 
@@ -397,6 +426,48 @@ mod tests {
         assert_eq!(runtime.width(), 20);
         assert_eq!(runtime.height(), 5);
         assert_eq!(*seen.lock().unwrap(), Some((20, 5)));
+    }
+
+    #[test]
+    fn render_dispatches_post_frame_with_frame_metrics() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("Hi").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let frames_for_handler = frames.clone();
+        doc.on_post_frame(move |event| {
+            frames_for_handler
+                .lock()
+                .unwrap()
+                .push(event.metrics.frame_time);
+        });
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        assert!(frames.lock().unwrap().is_empty());
+
+        runtime.render().unwrap();
+        runtime.render().unwrap();
+
+        assert_eq!(frames.lock().unwrap().len(), 2);
+        assert_eq!(runtime.document().performance_snapshot().frame_count, 2);
+    }
+
+    #[test]
+    fn removed_post_frame_listener_stops_firing() {
+        let doc = Document::new().unwrap();
+        let calls = Arc::new(Mutex::new(0));
+        let calls_for_handler = calls.clone();
+        let handle = doc.on_post_frame(move |_| {
+            *calls_for_handler.lock().unwrap() += 1;
+        });
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        assert!(runtime.document().remove_listener(handle));
+        runtime.render().unwrap();
+
+        assert_eq!(*calls.lock().unwrap(), 1);
     }
 
     #[test]

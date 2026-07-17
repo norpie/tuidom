@@ -217,6 +217,9 @@ pub(crate) struct DocumentInner {
     /// Document-level resize listeners.
     pub resize_listeners: Mutex<Vec<Listener>>,
 
+    /// Document-level post-frame listeners.
+    pub post_frame_listeners: Mutex<Vec<Listener>>,
+
     /// Color variables declared on the document — the root of every node's variable scope.
     pub color_vars: Mutex<HashMap<String, Color>>,
 

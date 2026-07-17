@@ -10,6 +10,7 @@ pub(crate) use key::convert_key_event;
 pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
 
 use crate::id::NodeId;
+use crate::performance::FrameMetrics;
 
 /// Keyboard bindings used by document-level focus default actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -389,6 +390,25 @@ pub struct ResizeEvent {
     pub height: u16,
 }
 
+/// A completed frame, dispatched after it was flushed to the screen.
+///
+/// Post-frame is document-level like resize: a frame has no target node, so the
+/// event does not bubble. It carries the metrics recorded for the frame that just
+/// finished, so a handler reads them without a separate snapshot call.
+///
+/// Mutating the DOM from a post-frame handler schedules another frame, whose own
+/// post-frame event fires in turn — the requestAnimationFrame contract. A handler
+/// that mutates on every event therefore keeps the renderer permanently active;
+/// pace the mutations (skip the write when nothing visible changed, or throttle
+/// on time) to let the renderer go idle again.
+#[derive(Debug, Clone)]
+pub struct PostFrameEvent {
+    /// Metrics recorded for the frame that just finished.
+    pub metrics: FrameMetrics,
+    /// Frames per second as of this frame.
+    pub fps: f64,
+}
+
 pub(crate) trait TargetedEvent {
     fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase);
     fn propagation_stopped(&self) -> bool;
@@ -461,6 +481,7 @@ pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
+pub(crate) type PostFrameEventHandler = Arc<dyn Fn(&mut PostFrameEvent) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TargetedEventKind {
@@ -495,6 +516,8 @@ pub(crate) enum ListenerKind {
     Scroll(ScrollEventHandler),
     /// Terminal resize listener.
     Resize(ResizeEventHandler),
+    /// Post-frame listener.
+    PostFrame(PostFrameEventHandler),
 }
 
 /// Registered event listener.
