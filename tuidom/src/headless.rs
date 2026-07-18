@@ -5,7 +5,7 @@ use crate::error::Result;
 use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
 use crate::performance::RenderMetrics;
 use crate::render::grid::{Cell, Grid};
-use crate::render::{RenderCursor, render_to_grid};
+use crate::render::{RenderCursor, render_into_grid};
 use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
@@ -89,15 +89,23 @@ impl HeadlessRuntime {
         self.doc.compute_layout(self.width, self.height)?;
         let layout_time = layout_start.elapsed();
 
-        let frame = render_to_grid(&self.doc, self.width, self.height, &mut self.rgb_cache);
-        self.cursor = frame.cursor;
-        self.grid = Some(frame.grid);
+        // Painted into the frame the last render left behind, which the paint pass
+        // clears first — the same buffer reuse the terminal renderer does with its two
+        // grids. Allocating a fresh grid per frame is a large share of a headless
+        // frame's cost, and it would be cost no real backend pays.
+        let mut grid = match self.grid.take() {
+            Some(grid) if grid.width == self.width && grid.height == self.height => grid,
+            _ => Grid::new(self.width, self.height),
+        };
+        let output = render_into_grid(&self.doc, &mut grid, &mut self.rgb_cache);
+        self.cursor = output.cursor;
+        self.grid = Some(grid);
 
         let stats = RenderMetrics {
-            grid_time: frame.stats.grid_time,
-            dom_collect_time: frame.stats.dom_collect_time,
-            dom_paint_time: frame.stats.dom_paint_time,
-            paint_profile: frame.stats.paint_profile,
+            grid_time: output.stats.grid_time,
+            dom_collect_time: output.stats.dom_collect_time,
+            dom_paint_time: output.stats.dom_paint_time,
+            paint_profile: output.stats.paint_profile,
             ..RenderMetrics::default()
         };
         self.doc

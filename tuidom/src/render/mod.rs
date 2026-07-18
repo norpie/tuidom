@@ -45,17 +45,6 @@ pub(crate) struct RenderCursor {
     pub visible: bool,
 }
 
-/// Backend-neutral render output for one frame.
-#[derive(Debug)]
-pub(crate) struct RenderFrame {
-    /// Painted terminal cell grid.
-    pub grid: grid::Grid,
-    /// Optional cursor metadata for the frame.
-    pub cursor: Option<RenderCursor>,
-    /// Timings for backend-neutral grid rendering.
-    pub stats: GridRenderStats,
-}
-
 /// Backend-neutral render metadata for an existing frame grid.
 #[derive(Debug)]
 pub(crate) struct RenderGridOutput {
@@ -65,26 +54,6 @@ pub(crate) struct RenderGridOutput {
     pub clear_base: FrameClearBase,
     /// Timings for backend-neutral grid rendering.
     pub stats: GridRenderStats,
-}
-
-/// Paint a laid-out document into a fresh frame without flushing to a terminal.
-pub(crate) fn render_to_grid(
-    doc: &Document,
-    width: u16,
-    height: u16,
-    rgb_cache: &mut RgbCache,
-) -> RenderFrame {
-    let grid_start = std::time::Instant::now();
-    let mut grid = grid::Grid::new(width, height);
-    let grid_time = grid_start.elapsed();
-    let mut output = render_grid(doc, &mut grid, rgb_cache, false);
-    output.stats.grid_time += grid_time;
-
-    RenderFrame {
-        grid,
-        cursor: output.cursor,
-        stats: output.stats,
-    }
 }
 
 /// Paint a laid-out document into an existing grid without flushing to a terminal.
