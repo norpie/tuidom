@@ -50,6 +50,36 @@ pub(crate) fn paint_order(doc: &Document) -> Vec<PaintEntry> {
     entries
 }
 
+/// The topmost paint entry at a screen coordinate, scrollbar strips included.
+///
+/// This is the paint-order ground truth behind hit-testing: whatever entry would
+/// have painted the cell last is the one the coordinate resolves to.
+pub(crate) fn entry_at(doc: &Document, x: i32, y: i32) -> Option<PaintEntry> {
+    paint_order(doc).into_iter().rev().find(|entry| {
+        entry_contains(&entry.layout, x, y) && entry.clip.contains(i64::from(x), i64::from(y))
+    })
+}
+
+/// The strip entry of one of a container's scrollbars, if that bar is shown.
+///
+/// Looked up fresh from paint order so a drag always works against the strip
+/// geometry the user currently sees, even across relayouts.
+pub(crate) fn scrollbar_strip_of(doc: &Document, container: NodeId, vertical: bool) -> Option<PaintEntry> {
+    paint_order(doc).into_iter().find(|entry| {
+        entry.id == container
+            && entry
+                .scrollbar
+                .is_some_and(|bar| bar.vertical == vertical)
+    })
+}
+
+pub(crate) fn entry_contains(layout: &LayoutRect, x: i32, y: i32) -> bool {
+    let right = layout.x.saturating_add(i32::from(layout.width));
+    let bottom = layout.y.saturating_add(i32::from(layout.height));
+
+    x >= layout.x && x < right && y >= layout.y && y < bottom
+}
+
 /// The focused node and its ancestors, for `ScrollbarShow::WhenFocused`.
 fn focused_path(doc: &Document) -> HashSet<NodeId> {
     let mut path = HashSet::new();
@@ -264,8 +294,88 @@ fn thumb_geometry(span: u16, viewport: u16, max_scroll: u16, offset: u16) -> (u1
     (start, len)
 }
 
+/// The scroll offset that puts the thumb at `thumb_start` — the inverse of
+/// [`thumb_geometry`].
+///
+/// Both ends are exact in both directions: thumb at the strip start means offset
+/// zero, thumb at the end of its range means the maximum offset. Between them the
+/// two mappings agree up to rounding, which is what makes a grabbed thumb track
+/// the cursor without drifting.
+pub(crate) fn offset_for_thumb(span: u16, viewport: u16, max_scroll: u16, thumb_start: u16) -> u16 {
+    let content = u32::from(viewport) + u32::from(max_scroll);
+    if span == 0 || content == 0 || max_scroll == 0 {
+        return 0;
+    }
+
+    let len = rounded_div(u32::from(span) * u32::from(viewport), content).clamp(1, u32::from(span))
+        as u16;
+    let range = u32::from(span - len);
+    if range == 0 {
+        return 0;
+    }
+    let start = u32::from(thumb_start).min(range);
+    rounded_div(start * u32::from(max_scroll), range) as u16
+}
+
 fn rounded_div(numerator: u32, denominator: u32) -> u32 {
     (numerator + denominator / 2) / denominator
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{offset_for_thumb, thumb_geometry};
+
+    #[test]
+    fn thumb_mapping_is_exact_at_both_ends() {
+        for (span, viewport, max_scroll) in [(10u16, 10u16, 40u16), (5, 8, 3), (24, 24, 100)] {
+            let (start_at_zero, len) = thumb_geometry(span, viewport, max_scroll, 0);
+            assert_eq!(start_at_zero, 0);
+            assert_eq!(offset_for_thumb(span, viewport, max_scroll, 0), 0);
+
+            let (start_at_max, _) = thumb_geometry(span, viewport, max_scroll, max_scroll);
+            assert_eq!(start_at_max, span - len);
+            assert_eq!(
+                offset_for_thumb(span, viewport, max_scroll, span - len),
+                max_scroll
+            );
+        }
+    }
+
+    #[test]
+    fn offset_for_thumb_clamps_past_the_range() {
+        // Thumb positions beyond the strip clamp to the maximum offset.
+        assert_eq!(offset_for_thumb(10, 10, 40, u16::MAX), 40);
+    }
+
+    #[test]
+    fn offset_for_thumb_is_monotonic() {
+        let (span, viewport, max_scroll) = (12u16, 12u16, 30u16);
+        let mut last = 0;
+        for start in 0..span {
+            let offset = offset_for_thumb(span, viewport, max_scroll, start);
+            assert!(offset >= last);
+            last = offset;
+        }
+    }
+
+    #[test]
+    fn thumb_round_trips_when_range_covers_the_offsets() {
+        // With at least as many thumb positions as offsets, no information is lost:
+        // forward then inverse returns the original offset.
+        let (span, viewport, max_scroll) = (30u16, 20u16, 10u16);
+        for offset in 0..=max_scroll {
+            let (start, _) = thumb_geometry(span, viewport, max_scroll, offset);
+            assert_eq!(offset_for_thumb(span, viewport, max_scroll, start), offset);
+        }
+    }
+
+    #[test]
+    fn degenerate_strips_map_to_zero() {
+        assert_eq!(offset_for_thumb(0, 10, 40, 3), 0);
+        assert_eq!(offset_for_thumb(10, 0, 0, 3), 0);
+        // No scroll range at all: the thumb fills the strip and cannot move.
+        assert_eq!(offset_for_thumb(10, 10, 0, 3), 0);
+    }
 }
 
 fn collect_entry(doc: &Document, node_id: NodeId) -> Option<PaintEntry> {

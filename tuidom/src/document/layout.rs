@@ -4,8 +4,8 @@ use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::layout::compute_layout as compute_document_layout;
 use crate::lock;
-use crate::node::{LayoutRect, LayoutView, NodeLayout, NodeView};
-use crate::paint_order::paint_order;
+use crate::node::{LayoutView, NodeLayout, NodeView};
+use crate::paint_order::entry_at;
 use crate::style::resolution::ResolvedStyle;
 
 #[cfg(test)]
@@ -57,14 +57,7 @@ impl Document {
     /// computed yet, or no visible node contains the coordinate, returns
     /// `None`.
     pub fn node_at(&self, x: i32, y: i32) -> Option<NodeId> {
-        paint_order(self)
-            .into_iter()
-            .rev()
-            .find(|entry| {
-                layout_contains(entry.layout, x, y)
-                    && entry.clip.contains(i64::from(x), i64::from(y))
-            })
-            .map(|entry| entry.id)
+        entry_at(self, x, y).map(|entry| entry.id)
     }
 
     fn get_node_unlocked(&self, id: NodeId) -> Option<NodeView> {
@@ -174,9 +167,3 @@ impl Document {
     }
 }
 
-fn layout_contains(layout: LayoutRect, x: i32, y: i32) -> bool {
-    let right = layout.x.saturating_add(i32::from(layout.width));
-    let bottom = layout.y.saturating_add(i32::from(layout.height));
-
-    x >= layout.x && x < right && y >= layout.y && y < bottom
-}
