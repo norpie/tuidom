@@ -34,7 +34,22 @@ fn modal() -> HeadlessRuntime {
     build_scene(true)
 }
 
+/// The baseline scene with its whole background sweeping through colors, so
+/// nearly every cell differs from the previous frame.
+///
+/// The other scenarios change only the few cells under the pulse, which leaves
+/// the diff finding almost nothing and the flush encoding almost nothing. This
+/// one drives the full-redraw path and the per-cell encoding that goes with it —
+/// without it, a change that made flushing slower would not show up anywhere.
+fn churn() -> HeadlessRuntime {
+    build_scene_with(false, true)
+}
+
 fn build_scene(with_modal: bool) -> HeadlessRuntime {
+    build_scene_with(with_modal, false)
+}
+
+fn build_scene_with(with_modal: bool, with_churn: bool) -> HeadlessRuntime {
     let doc = Document::new().unwrap();
 
     let mut container_style = Style::new();
@@ -48,6 +63,26 @@ fn build_scene(with_modal: bool) -> HeadlessRuntime {
     let container = doc.create_box().unwrap();
     doc.set_style(container, &container_style).unwrap();
     doc.append_child(doc.root(), container).unwrap();
+
+    if with_churn {
+        // Linear over a wide lightness range at 1ms steps, so consecutive frames
+        // land on different 8-bit channel values instead of rounding together.
+        doc.animate(
+            container,
+            KeyframeAnimation::from_to(
+                Duration::from_millis(255),
+                [AnimatableProperty::Background(Color::oklch(
+                    0.15, 0.03, 260.0,
+                ))],
+                [AnimatableProperty::Background(Color::oklch(
+                    0.85, 0.03, 260.0,
+                ))],
+            )
+            .direction(AnimationDirection::Alternate)
+            .infinite(),
+        )
+        .unwrap();
+    }
 
     let mut header_style = Style::new();
     header_style.flex_direction(FlexDirection::Row);
@@ -177,9 +212,15 @@ fn build_scene(with_modal: bool) -> HeadlessRuntime {
     HeadlessRuntime::new(doc, WIDTH, HEIGHT)
 }
 
+const SCENARIOS: [(&str, ScenarioBuilder); 3] = [
+    ("baseline", baseline as ScenarioBuilder),
+    ("modal", modal),
+    ("churn", churn),
+];
+
 fn bench_frame(c: &mut Criterion) {
     let mut group = c.benchmark_group("frame");
-    for (name, build) in [("baseline", baseline as ScenarioBuilder), ("modal", modal)] {
+    for (name, build) in SCENARIOS {
         let mut runtime = build();
         runtime.render().unwrap();
         group.bench_function(name, |b| {
@@ -192,5 +233,30 @@ fn bench_frame(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_frame);
+/// The same scenes through the full frame the terminal renderer runs: paint,
+/// diff against the previous frame, and encode the changes as terminal output.
+///
+/// `frame/*` stops after painting, so the diff and flush stages are invisible to
+/// it. Anything touching the cell representation shows up on both sides — a
+/// paint win that costs more to encode is a wash, and only running both makes
+/// that visible.
+fn bench_flushed_frame(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flushed_frame");
+    for (name, build) in SCENARIOS {
+        let mut runtime = build();
+        // Two renders first: the second is the one with a previous frame to diff
+        // against, which is the steady state every measured iteration is in.
+        runtime.render_flushed().unwrap();
+        runtime.render_flushed().unwrap();
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                runtime.advance_time(Duration::from_millis(1));
+                runtime.render_flushed().unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_frame, bench_flushed_frame);
 criterion_main!(benches);
