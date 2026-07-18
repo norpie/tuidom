@@ -67,12 +67,13 @@ pub(crate) fn entry_at(doc: &Document, x: i32, y: i32) -> Option<PaintEntry> {
 ///
 /// Looked up fresh from paint order so a drag always works against the strip
 /// geometry the user currently sees, even across relayouts.
-pub(crate) fn scrollbar_strip_of(doc: &Document, container: NodeId, vertical: bool) -> Option<PaintEntry> {
+pub(crate) fn scrollbar_strip_of(
+    doc: &Document,
+    container: NodeId,
+    vertical: bool,
+) -> Option<PaintEntry> {
     paint_order(doc).into_iter().find(|entry| {
-        entry.id == container
-            && entry
-                .scrollbar
-                .is_some_and(|bar| bar.vertical == vertical)
+        entry.id == container && entry.scrollbar.is_some_and(|bar| bar.vertical == vertical)
     })
 }
 
@@ -355,6 +356,24 @@ fn rounded_div(numerator: u32, denominator: u32) -> u32 {
     (numerator + denominator / 2) / denominator
 }
 
+fn collect_entry(doc: &Document, node_id: NodeId) -> Option<PaintEntry> {
+    let view = doc.get_node(node_id)?;
+    let resolved = doc.resolved_style(node_id).ok()?;
+    if resolved.display == Display::None || resolved.opacity <= 0.0 {
+        return None;
+    }
+    let layout = view.layout?.rect;
+
+    Some(PaintEntry {
+        id: node_id,
+        kind: view.kind,
+        layout,
+        resolved,
+        clip: ClipRect::UNBOUNDED,
+        scrollbar: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{offset_for_thumb, thumb_geometry};
@@ -410,22 +429,4 @@ mod tests {
         // No scroll range at all: the thumb fills the strip and cannot move.
         assert_eq!(offset_for_thumb(10, 10, 0, 3), 0);
     }
-}
-
-fn collect_entry(doc: &Document, node_id: NodeId) -> Option<PaintEntry> {
-    let view = doc.get_node(node_id)?;
-    let resolved = doc.resolved_style(node_id).ok()?;
-    if resolved.display == Display::None || resolved.opacity <= 0.0 {
-        return None;
-    }
-    let layout = view.layout?.rect;
-
-    Some(PaintEntry {
-        id: node_id,
-        kind: view.kind,
-        layout,
-        resolved,
-        clip: ClipRect::UNBOUNDED,
-        scrollbar: None,
-    })
 }

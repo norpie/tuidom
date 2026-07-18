@@ -173,4 +173,3 @@ impl Document {
         lock::mutex(&self.inner.layout).remove_node(id).unwrap();
     }
 }
-

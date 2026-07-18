@@ -91,7 +91,9 @@ pub(crate) fn process_runtime_event(
         }
         RuntimeEvent::MouseDown(mut mouse) => {
             let hit_entry = entry_at(doc, mouse.x, mouse.y);
-            let target = hit_entry.as_ref().map_or_else(|| doc.root(), |entry| entry.id);
+            let target = hit_entry
+                .as_ref()
+                .map_or_else(|| doc.root(), |entry| entry.id);
             // The pressed node is the node that would take focus from this hit, so
             // "being pressed" and "would be focused" never disagree.
             set_active_node(doc, doc.focus_target_from_hit(target));
@@ -207,7 +209,12 @@ fn mouse_target(doc: &Document, x: i32, y: i32) -> NodeId {
 /// A press on the thumb grabs it in place without scrolling, so an unmoved press
 /// never perturbs the offset through rounding. A press on the track jumps the
 /// thumb's center under the cursor and continues grabbed there.
-fn begin_scrollbar_grab(doc: &Document, entry: &PaintEntry, x: i32, y: i32) -> Option<ScrollbarDrag> {
+fn begin_scrollbar_grab(
+    doc: &Document,
+    entry: &PaintEntry,
+    x: i32,
+    y: i32,
+) -> Option<ScrollbarDrag> {
     let bar = entry.scrollbar?;
     let pos = strip_position(&entry.layout, bar.vertical, x, y);
     let span = strip_span(&entry.layout, bar.vertical);
@@ -277,7 +284,11 @@ fn strip_position(layout: &LayoutRect, vertical: bool, x: i32, y: i32) -> i32 {
 }
 
 fn strip_span(layout: &LayoutRect, vertical: bool) -> u16 {
-    if vertical { layout.height } else { layout.width }
+    if vertical {
+        layout.height
+    } else {
+        layout.width
+    }
 }
 
 fn set_active_node(doc: &Document, node: Option<NodeId>) {
