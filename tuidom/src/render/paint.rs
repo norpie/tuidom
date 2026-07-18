@@ -600,7 +600,8 @@ fn paint_scrollbar(
         entry.resolved.scrollbar_thumb_color.unwrap_or(fg),
         profile,
     );
-    let alpha = entry.resolved.opacity;
+    // A fading `WhenScrolling` bar rides its own alpha on top of the container's opacity.
+    let alpha = entry.resolved.opacity * bar.alpha;
 
     let span = if bar.vertical {
         entry.layout.height

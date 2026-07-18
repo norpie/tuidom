@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::node::NodeData;
 use crate::style::color::ColorContext;
@@ -46,6 +47,10 @@ pub struct ResolvedStyle {
     pub overflow_y: Overflow,
     /// Resolved scrollbar visibility.
     pub scrollbar_show: ScrollbarShow,
+    /// Resolved hold time before a [`ScrollbarShow::WhenScrolling`] bar starts fading.
+    pub scrollbar_hide_delay: Duration,
+    /// Resolved fade-out time of a [`ScrollbarShow::WhenScrolling`] bar after its delay.
+    pub scrollbar_fade_duration: Duration,
     /// Resolved scrollbar drawing characters.
     pub scrollbar_charset: ScrollbarCharset,
     /// Resolved scrollbar track color. `None` follows this node's resolved `color`.
@@ -151,6 +156,8 @@ pub(crate) struct StyleDefaults {
     overflow_x: Overflow,
     overflow_y: Overflow,
     scrollbar_show: ScrollbarShow,
+    scrollbar_hide_delay: Duration,
+    scrollbar_fade_duration: Duration,
     scrollbar_charset: ScrollbarCharset,
     scrollbar_track_color: Option<ResolvedColor>,
     scrollbar_thumb_color: Option<ResolvedColor>,
@@ -201,6 +208,8 @@ impl Default for StyleDefaults {
             overflow_x: Overflow::Visible,
             overflow_y: Overflow::Visible,
             scrollbar_show: ScrollbarShow::Always,
+            scrollbar_hide_delay: Duration::from_secs(1),
+            scrollbar_fade_duration: Duration::from_millis(250),
             scrollbar_charset: ScrollbarCharset::block(),
             scrollbar_track_color: None,
             scrollbar_thumb_color: None,
@@ -263,6 +272,8 @@ impl StyleDefaults {
             overflow_x: self.overflow_x,
             overflow_y: self.overflow_y,
             scrollbar_show: self.scrollbar_show,
+            scrollbar_hide_delay: self.scrollbar_hide_delay,
+            scrollbar_fade_duration: self.scrollbar_fade_duration,
             scrollbar_charset: self.scrollbar_charset,
             scrollbar_track_color: self.scrollbar_track_color,
             scrollbar_thumb_color: self.scrollbar_thumb_color,
@@ -418,6 +429,16 @@ impl ResolvedStyle {
                 &data.style.scrollbar_show,
                 parent.map(|p| &p.scrollbar_show),
                 &defaults.scrollbar_show,
+            ),
+            scrollbar_hide_delay: resolve(
+                &data.style.scrollbar_hide_delay,
+                parent.map(|p| &p.scrollbar_hide_delay),
+                &defaults.scrollbar_hide_delay,
+            ),
+            scrollbar_fade_duration: resolve(
+                &data.style.scrollbar_fade_duration,
+                parent.map(|p| &p.scrollbar_fade_duration),
+                &defaults.scrollbar_fade_duration,
             ),
             scrollbar_charset: resolve(
                 &data.style.scrollbar_charset,
@@ -667,6 +688,18 @@ impl ResolvedStyle {
             &style.scrollbar_show,
             parent.map(|p| &p.scrollbar_show),
             &defaults.scrollbar_show,
+        );
+        apply_override(
+            &mut self.scrollbar_hide_delay,
+            &style.scrollbar_hide_delay,
+            parent.map(|p| &p.scrollbar_hide_delay),
+            &defaults.scrollbar_hide_delay,
+        );
+        apply_override(
+            &mut self.scrollbar_fade_duration,
+            &style.scrollbar_fade_duration,
+            parent.map(|p| &p.scrollbar_fade_duration),
+            &defaults.scrollbar_fade_duration,
         );
         apply_override(
             &mut self.scrollbar_charset,

@@ -10,7 +10,7 @@ use crate::event::{
     EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, MouseButton, MouseEvent,
     ResizeEvent, WheelEvent,
 };
-use crate::headless::{HeadlessRuntime, ScreenColor};
+use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::performance::PerformanceDetail;
 use crate::style::{
@@ -4757,4 +4757,102 @@ fn horizontal_scrollbar_drag_scrolls_x() {
 
     runtime.simulate_mouse_drag_move(0, 1, MouseButton::Left);
     assert_eq!(doc.scroll_offset(container).x, 0);
+}
+
+// -- WhenScrolling scrollbars -------------------------------------------------
+
+/// The scrollbar-drag fixture with `WhenScrolling` bars and fast timings: fully
+/// visible for 100ms after activity, fading over the next 100ms.
+fn when_scrolling_setup() -> (Document, HeadlessRuntime, NodeId) {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.scrollbar_show(ScrollbarShow::WhenScrolling);
+    style.scrollbar_hide_delay(Duration::from_millis(100));
+    style.scrollbar_fade_duration(Duration::from_millis(100));
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+    for i in 0..8 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(container, text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+    (doc, runtime, container)
+}
+
+/// The bar column's top cell: `░`/`█` while the bar shows, content otherwise.
+fn bar_top_cell(runtime: &HeadlessRuntime) -> ScreenCell {
+    runtime.get_cell(4, 0).unwrap()
+}
+
+#[test]
+fn when_scrolling_bar_appears_on_scroll_and_fades_away() {
+    let (doc, mut runtime, container) = when_scrolling_setup();
+
+    // Never scrolled: no bar, the content shows through.
+    assert_eq!(bar_top_cell(&runtime).text, "0");
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "░");
+    let opaque_fg = bar_top_cell(&runtime).fg;
+
+    // Still opaque just before the hide delay elapses.
+    runtime.advance_time(Duration::from_millis(90));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "░");
+    assert_eq!(bar_top_cell(&runtime).fg, opaque_fg);
+
+    // Mid-fade the glyph is still there but its color has faded toward the background.
+    runtime.advance_time(Duration::from_millis(60));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "░");
+    assert_ne!(bar_top_cell(&runtime).fg, opaque_fg);
+
+    // Past delay + fade the bar is gone and the scrolled content shows again.
+    runtime.advance_time(Duration::from_millis(60));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "1");
+}
+
+#[test]
+fn renewed_scrolling_restarts_the_hide_countdown() {
+    let (doc, mut runtime, container) = when_scrolling_setup();
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.advance_time(Duration::from_millis(150));
+    doc.scroll_to(container, 0, 2).unwrap();
+
+    // The second scroll landed mid-fade; the bar is opaque and held again.
+    runtime.advance_time(Duration::from_millis(90));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "░");
+}
+
+#[test]
+fn grabbed_when_scrolling_bar_stays_visible() {
+    let (doc, mut runtime, container) = when_scrolling_setup();
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+
+    // Offset 1 puts the 2-cell thumb on rows 1-2; grab it there.
+    runtime.simulate_mouse_down(4, 1, MouseButton::Left);
+    runtime.advance_time(Duration::from_secs(5));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "░");
+
+    // Release restarts the countdown rather than hiding instantly.
+    runtime.simulate_mouse_up(4, 1, MouseButton::Left);
+    runtime.advance_time(Duration::from_millis(90));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "░");
+
+    runtime.advance_time(Duration::from_millis(200));
+    runtime.render().unwrap();
+    assert_eq!(bar_top_cell(&runtime).text, "1");
 }

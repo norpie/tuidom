@@ -113,6 +113,13 @@ impl Document {
         lock::mutex(&self.inner.targeted_listeners).retain(|(node, _), _| *node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
         lock::mutex(&self.inner.scroll_offsets).remove(&id);
+        lock::mutex(&self.inner.scroll_activity).remove(&id);
+        {
+            let mut grab = lock::mutex(&self.inner.scrollbar_grab);
+            if *grab == Some(id) {
+                *grab = None;
+            }
+        }
         Ok(())
     }
 

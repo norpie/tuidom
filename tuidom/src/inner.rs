@@ -219,6 +219,19 @@ pub(crate) struct DocumentInner {
     /// Current scroll offset per scroll container. Absent means `(0, 0)`.
     pub scroll_offsets: Mutex<HashMap<NodeId, ScrollOffset>>,
 
+    /// Last scroll activity per `WhenScrolling` container, for auto-hide timing.
+    ///
+    /// Recorded only for containers whose resolved `scrollbar_show` is
+    /// `WhenScrolling`, and pruned once their bars have fully faded, so the map
+    /// holds only bars that are visible or on their way out.
+    pub scroll_activity: Mutex<HashMap<NodeId, std::time::Instant>>,
+
+    /// The container whose scrollbar is currently grabbed, if any.
+    ///
+    /// A grabbed `WhenScrolling` bar stays fully visible however long the grip is
+    /// held; its fade countdown restarts on release.
+    pub scrollbar_grab: Mutex<Option<NodeId>>,
+
     /// Current document text selection, if any.
     pub selection: Mutex<Option<SelectionState>>,
 

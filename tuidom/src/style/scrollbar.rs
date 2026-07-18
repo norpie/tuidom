@@ -13,6 +13,12 @@ pub enum ScrollbarShow {
     ///
     /// Hover focuses under the hover-as-focus policy, so this is also "when hovered".
     WhenFocused,
+    /// Show the bar while the container is scrolling.
+    ///
+    /// The bar appears when the scroll offset actually changes and stays while its
+    /// bar is grabbed; afterwards it holds for the container's `scrollbar_hide_delay`,
+    /// then fades out over its `scrollbar_fade_duration`.
+    WhenScrolling,
     /// Never show a bar.
     Never,
 }

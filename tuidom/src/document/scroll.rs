@@ -4,7 +4,7 @@ use crate::event::{ScrollEvent, WheelAxis, WheelEvent};
 use crate::id::NodeId;
 use crate::lock;
 use crate::node::ScrollOffset;
-use crate::style::Overflow;
+use crate::style::{Overflow, ScrollbarShow};
 
 impl Document {
     /// Get a node's current scroll offset.
@@ -52,6 +52,9 @@ impl Document {
         }
         drop(offsets);
 
+        if resolved.scrollbar_show == ScrollbarShow::WhenScrolling {
+            self.record_scroll_activity(node);
+        }
         self.inner.notify.notify_one();
         let mut event = ScrollEvent::new(clamped.x, clamped.y);
         self.dispatch_scroll_to(node, &mut event);
@@ -85,6 +88,36 @@ impl Document {
         if let Err(err) = self.scroll_by(container, dx, dy) {
             log::error!("wheel default scroll failed: {err}");
         }
+    }
+
+    /// Restart a `WhenScrolling` container's auto-hide countdown from now.
+    pub(crate) fn record_scroll_activity(&self, node: NodeId) {
+        lock::mutex(&self.inner.scroll_activity).insert(node, self.now());
+    }
+
+    /// Mark a container's scrollbar as grabbed, or release it with `None`.
+    ///
+    /// Grab and release both restart the released container's fade countdown and wake
+    /// the renderer: a grabbed `WhenScrolling` bar must stay visible past its delay,
+    /// and a released one must get its fade scheduled even when the release itself
+    /// changed no offset.
+    pub(crate) fn set_scrollbar_grab(&self, grab: Option<NodeId>) {
+        let previous = {
+            let mut grabbed = lock::mutex(&self.inner.scrollbar_grab);
+            std::mem::replace(&mut *grabbed, grab)
+        };
+        if previous == grab {
+            return;
+        }
+        for node in [previous, grab].into_iter().flatten() {
+            if self
+                .resolved_style(node)
+                .is_ok_and(|resolved| resolved.scrollbar_show == ScrollbarShow::WhenScrolling)
+            {
+                self.record_scroll_activity(node);
+            }
+        }
+        self.inner.notify.notify_one();
     }
 
     /// The nearest ancestor (or the target itself) the wheel can actually move.

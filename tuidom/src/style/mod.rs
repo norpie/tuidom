@@ -8,6 +8,7 @@ pub(crate) mod resolution;
 pub mod scrollbar;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 pub use border::{Border, BorderCharset, Sides};
 pub use color::{Color, ColorOp, ResolvedColor};
@@ -337,6 +338,10 @@ pub struct Style {
     pub(crate) overflow_y: StyleValue<Overflow>,
     /// When this scroll container draws its scrollbars.
     pub(crate) scrollbar_show: StyleValue<ScrollbarShow>,
+    /// How long a [`ScrollbarShow::WhenScrolling`] bar stays fully visible after activity.
+    pub(crate) scrollbar_hide_delay: StyleValue<Duration>,
+    /// How long a [`ScrollbarShow::WhenScrolling`] bar takes to fade out after its delay.
+    pub(crate) scrollbar_fade_duration: StyleValue<Duration>,
     /// The characters this scroll container's bars are drawn with.
     pub(crate) scrollbar_charset: StyleValue<ScrollbarCharset>,
     /// Scrollbar track color. Unset follows the node's foreground color.
@@ -420,6 +425,8 @@ impl Style {
             overflow_x: StyleValue::Unset,
             overflow_y: StyleValue::Unset,
             scrollbar_show: StyleValue::Unset,
+            scrollbar_hide_delay: StyleValue::Unset,
+            scrollbar_fade_duration: StyleValue::Unset,
             scrollbar_charset: StyleValue::Unset,
             scrollbar_track_color: StyleValue::Unset,
             scrollbar_thumb_color: StyleValue::Unset,
@@ -740,6 +747,38 @@ impl Style {
     /// Reset scrollbar visibility to the document/default style.
     pub fn unset_scrollbar_show(&mut self) {
         self.scrollbar_show = StyleValue::Unset;
+    }
+
+    /// Set how long a [`ScrollbarShow::WhenScrolling`] bar stays fully visible after
+    /// scroll activity before it starts fading.
+    pub fn scrollbar_hide_delay(&mut self, value: Duration) {
+        self.scrollbar_hide_delay = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the scrollbar hide delay from the parent node.
+    pub fn inherit_scrollbar_hide_delay(&mut self) {
+        self.scrollbar_hide_delay = StyleValue::Inherit;
+    }
+
+    /// Reset the scrollbar hide delay to the document/default style.
+    pub fn unset_scrollbar_hide_delay(&mut self) {
+        self.scrollbar_hide_delay = StyleValue::Unset;
+    }
+
+    /// Set how long a [`ScrollbarShow::WhenScrolling`] bar takes to fade out once its
+    /// hide delay has passed.
+    pub fn scrollbar_fade_duration(&mut self, value: Duration) {
+        self.scrollbar_fade_duration = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit the scrollbar fade duration from the parent node.
+    pub fn inherit_scrollbar_fade_duration(&mut self) {
+        self.scrollbar_fade_duration = StyleValue::Inherit;
+    }
+
+    /// Reset the scrollbar fade duration to the document/default style.
+    pub fn unset_scrollbar_fade_duration(&mut self) {
+        self.scrollbar_fade_duration = StyleValue::Unset;
     }
 
     /// Set the characters this container's scrollbars are drawn with.

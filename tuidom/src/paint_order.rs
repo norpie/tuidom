@@ -34,6 +34,9 @@ pub(crate) struct ScrollbarPaint {
     pub thumb_start: u16,
     /// Thumb length in cells, at least one.
     pub thumb_len: u16,
+    /// The bar's own visibility (0–1), multiplied into the container's opacity when
+    /// painting. Below 1 only while a `WhenScrolling` bar is fading out.
+    pub alpha: f64,
 }
 
 pub(crate) fn paint_order(doc: &Document) -> Vec<PaintEntry> {
@@ -200,11 +203,15 @@ fn scrollbar_entries(
         return Vec::new();
     }
     let shown = match entry.resolved.scrollbar_show {
-        ScrollbarShow::Always => true,
-        ScrollbarShow::WhenFocused => focus_path.contains(&entry.id),
-        ScrollbarShow::Never => false,
+        ScrollbarShow::Always => Some(1.0),
+        ScrollbarShow::WhenFocused => focus_path.contains(&entry.id).then_some(1.0),
+        ScrollbarShow::WhenScrolling => when_scrolling_alpha(doc, entry),
+        ScrollbarShow::Never => None,
     };
-    if !shown || viewport.width == 0 || viewport.height == 0 {
+    let Some(alpha) = shown else {
+        return Vec::new();
+    };
+    if viewport.width == 0 || viewport.height == 0 {
         return Vec::new();
     }
 
@@ -235,6 +242,7 @@ fn scrollbar_entries(
                 vertical: true,
                 thumb_start,
                 thumb_len,
+                alpha,
             },
         ));
     }
@@ -254,10 +262,36 @@ fn scrollbar_entries(
                 vertical: false,
                 thumb_start,
                 thumb_len,
+                alpha,
             },
         ));
     }
     strips
+}
+
+/// The visibility of a `WhenScrolling` bar right now: opaque within the hide delay
+/// after the container's last scroll activity, ramping to transparent over the fade
+/// duration, absent after — and pinned opaque while the bar is grabbed, however
+/// long the grip is held.
+fn when_scrolling_alpha(doc: &Document, entry: &PaintEntry) -> Option<f64> {
+    if *lock::mutex(&doc.inner.scrollbar_grab) == Some(entry.id) {
+        return Some(1.0);
+    }
+    let activity = lock::mutex(&doc.inner.scroll_activity)
+        .get(&entry.id)
+        .copied()?;
+    let elapsed = doc.now().saturating_duration_since(activity);
+
+    let delay = entry.resolved.scrollbar_hide_delay;
+    if elapsed <= delay {
+        return Some(1.0);
+    }
+    let fade = entry.resolved.scrollbar_fade_duration;
+    let fading = elapsed - delay;
+    if fading >= fade {
+        return None;
+    }
+    Some(1.0 - fading.as_secs_f64() / fade.as_secs_f64())
 }
 
 fn strip_entry(entry: &PaintEntry, layout: LayoutRect, bar: ScrollbarPaint) -> PaintEntry {

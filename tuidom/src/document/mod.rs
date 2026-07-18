@@ -100,6 +100,8 @@ impl Document {
                 layout: Mutex::new(LayoutEngine::new()),
                 layout_snapshot: RwLock::new(HashMap::new()),
                 scroll_offsets: Mutex::new(HashMap::new()),
+                scroll_activity: Mutex::new(HashMap::new()),
+                scrollbar_grab: Mutex::new(None),
                 selection: Mutex::new(None),
                 selection_listeners: Mutex::new(Vec::new()),
                 performance: Mutex::new(PerformanceState::new()),

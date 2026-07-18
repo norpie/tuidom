@@ -109,7 +109,8 @@ pub(crate) fn process_runtime_event(
                     .filter(|entry| entry.scrollbar.is_some())
                     .and_then(|entry| begin_scrollbar_grab(doc, &entry, mouse.x, mouse.y));
             }
-            if state.scrollbar_drag.is_some() {
+            if let Some(drag) = state.scrollbar_drag {
+                doc.set_scrollbar_grab(Some(drag.container));
                 state.pending_click = None;
             } else {
                 state.pending_click = Some(ClickCandidate {
@@ -148,6 +149,7 @@ pub(crate) fn process_runtime_event(
             set_active_node(doc, None);
             state.pending_selection = None;
             state.scrollbar_drag = None;
+            doc.set_scrollbar_grab(None);
             doc.dispatch_mouse_up_to(target, &mut mouse);
 
             if state.pending_click.is_some_and(|down| {
