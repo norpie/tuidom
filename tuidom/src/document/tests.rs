@@ -4856,3 +4856,61 @@ fn grabbed_when_scrolling_bar_stays_visible() {
     runtime.render().unwrap();
     assert_eq!(bar_top_cell(&runtime).text, "1");
 }
+
+#[test]
+fn scrollbar_fade_schedule_tracks_phases_and_prunes() {
+    let (doc, mut runtime, container) = when_scrolling_setup();
+
+    // Nothing scrolled yet: nothing scheduled, nothing recorded.
+    assert!(!doc.scrollbar_fade_schedule(doc.now()).is_active());
+
+    // Fully visible: one deadline wake at fade start, no smooth ticking.
+    doc.scroll_to(container, 0, 1).unwrap();
+    let schedule = doc.scrollbar_fade_schedule(doc.now());
+    assert!(!schedule.fading);
+    assert_eq!(
+        schedule.next_deadline,
+        Some(doc.now() + Duration::from_millis(100))
+    );
+
+    // Mid-fade: smooth ticking, no further deadline.
+    runtime.advance_time(Duration::from_millis(150));
+    let schedule = doc.scrollbar_fade_schedule(doc.now());
+    assert!(schedule.fading);
+    assert_eq!(schedule.next_deadline, None);
+
+    // Fully faded: inactive, and the activity entry is pruned.
+    runtime.advance_time(Duration::from_millis(100));
+    assert!(!doc.scrollbar_fade_schedule(doc.now()).is_active());
+    assert!(lock::mutex(&doc.inner.scroll_activity).is_empty());
+}
+
+#[test]
+fn always_shown_scrollbars_schedule_nothing() {
+    let (doc, mut runtime, container) = scrollbar_drag_setup();
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    runtime.render().unwrap();
+
+    // An `Always` bar records no activity and asks for no frames.
+    assert!(lock::mutex(&doc.inner.scroll_activity).is_empty());
+    assert!(!doc.scrollbar_fade_schedule(doc.now()).is_active());
+}
+
+#[test]
+fn grabbed_bar_schedules_nothing_until_release() {
+    let (doc, mut runtime, container) = when_scrolling_setup();
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+    runtime.simulate_mouse_down(4, 1, MouseButton::Left);
+
+    // Pinned visible while held: no deadline, no ticking, however stale the activity.
+    runtime.advance_time(Duration::from_secs(5));
+    assert!(!doc.scrollbar_fade_schedule(doc.now()).is_active());
+
+    // Release restarts the countdown, so scheduling resumes.
+    runtime.simulate_mouse_up(4, 1, MouseButton::Left);
+    let schedule = doc.scrollbar_fade_schedule(doc.now());
+    assert!(schedule.next_deadline.is_some());
+}

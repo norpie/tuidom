@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::document::Document;
 use crate::error::Result;
 use crate::event::{ScrollEvent, WheelAxis, WheelEvent};
@@ -5,6 +7,26 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::ScrollOffset;
 use crate::style::{Overflow, ScrollbarShow};
+
+/// What `WhenScrolling` bars need from the render loop right now.
+///
+/// `fading` asks for smooth animation ticks; `next_deadline` asks for one wake at
+/// the instant the earliest fully visible bar starts fading. Both absent means the
+/// bars need no frames at all.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScrollbarFadeSchedule {
+    /// Whether any bar is mid-fade and needs smooth repainting.
+    pub fading: bool,
+    /// When the earliest fully visible bar starts to fade, if any is waiting.
+    pub next_deadline: Option<Instant>,
+}
+
+impl ScrollbarFadeSchedule {
+    /// Whether the render loop has any scrollbar-driven frame to schedule.
+    pub fn is_active(&self) -> bool {
+        self.fading || self.next_deadline.is_some()
+    }
+}
 
 impl Document {
     /// Get a node's current scroll offset.
@@ -93,6 +115,62 @@ impl Document {
     /// Restart a `WhenScrolling` container's auto-hide countdown from now.
     pub(crate) fn record_scroll_activity(&self, node: NodeId) {
         lock::mutex(&self.inner.scroll_activity).insert(node, self.now());
+    }
+
+    /// The frame-scheduling needs of `WhenScrolling` bars at `now`, pruning as it goes.
+    ///
+    /// Activity entries whose bars have fully faded, or whose containers no longer
+    /// resolve to `WhenScrolling`, are removed here — this runs on every render-loop
+    /// turn, so the map only ever holds bars that are visible or on their way out.
+    /// A grabbed bar is pinned visible and schedules nothing; releasing it records
+    /// fresh activity and wakes the renderer, which re-enters this query.
+    pub(crate) fn scrollbar_fade_schedule(&self, now: Instant) -> ScrollbarFadeSchedule {
+        let grabbed = *lock::mutex(&self.inner.scrollbar_grab);
+        let entries: Vec<(NodeId, Instant)> = lock::mutex(&self.inner.scroll_activity)
+            .iter()
+            .map(|(node, at)| (*node, *at))
+            .collect();
+
+        let mut fading = false;
+        let mut next_deadline: Option<Instant> = None;
+        let mut stale = Vec::new();
+        for (node, activity) in entries {
+            if grabbed == Some(node) {
+                continue;
+            }
+            let keep = self
+                .resolved_style(node)
+                .ok()
+                .filter(|resolved| resolved.scrollbar_show == ScrollbarShow::WhenScrolling)
+                .map(|resolved| {
+                    let fade_start = activity + resolved.scrollbar_hide_delay;
+                    if now < fade_start {
+                        next_deadline =
+                            Some(next_deadline.map_or(fade_start, |d| d.min(fade_start)));
+                        true
+                    } else if now < fade_start + resolved.scrollbar_fade_duration {
+                        fading = true;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if !keep {
+                stale.push(node);
+            }
+        }
+
+        if !stale.is_empty() {
+            let mut activity = lock::mutex(&self.inner.scroll_activity);
+            for node in stale {
+                activity.remove(&node);
+            }
+        }
+        ScrollbarFadeSchedule {
+            fading,
+            next_deadline,
+        }
     }
 
     /// Mark a container's scrollbar as grabbed, or release it with `None`.

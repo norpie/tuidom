@@ -127,8 +127,8 @@ async fn render_task(doc: Document) -> io::Result<()> {
             break;
         }
 
-        let animation_frame_needed = animations_active(&doc);
-        if !animation_frame_needed {
+        let anim_frame_needed = animation_frame_needed(&doc);
+        if !anim_frame_needed {
             next_anim_frame_at = None;
         }
 
@@ -160,13 +160,13 @@ async fn render_task(doc: Document) -> io::Result<()> {
                 if is_shutdown(&doc) {
                     break;
                 }
-                if animations_active(&doc) {
+                if animation_frame_needed(&doc) {
                     render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
                         .await?;
                 }
             }
 
-            _ = wait_for_anim_tick(&doc, &mut next_anim_frame_at), if animation_frame_needed => {
+            _ = wait_for_anim_tick(&doc, &mut next_anim_frame_at), if anim_frame_needed => {
                 cleanup_animations(&doc);
                 render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
                     .await?;
@@ -186,22 +186,28 @@ async fn render_task(doc: Document) -> io::Result<()> {
 /// reset when animations go idle, so a fresh animation never inherits a stale
 /// deadline.
 ///
-/// With only frames nodes active, the wait is the next frame flip instead: a
-/// 100ms spinner repaints ten times a second, not at the tick rate.
+/// With only frames nodes or waiting `WhenScrolling` bars active, the wait is a
+/// plain deadline instead: the next frame flip, or the instant a bar starts its
+/// fade. A mid-fade bar ticks smoothly like a transition.
 async fn wait_for_anim_tick(doc: &Document, next_anim_frame_at: &mut Option<TokioInstant>) {
+    let schedule = doc.scrollbar_fade_schedule(doc.now());
     let (smooth, next_flip) = {
         let driver = lock::mutex(&doc.inner.animation);
         (
-            driver.has_smooth_active(),
+            driver.has_smooth_active() || schedule.fading,
             driver.next_frames_flip(doc.now()),
         )
     };
 
     if !smooth {
         *next_anim_frame_at = None;
-        match next_flip {
-            Some(flip) => sleep_until(TokioInstant::from_std(flip)).await,
-            // Guarded by animations_active, so something exists; a schedule
+        let deadline = [next_flip, schedule.next_deadline]
+            .into_iter()
+            .flatten()
+            .min();
+        match deadline {
+            Some(at) => sleep_until(TokioInstant::from_std(at)).await,
+            // Guarded by animation_frame_needed, so something exists; a schedule
             // that stopped cycling between checks just yields once.
             None => tokio::task::yield_now().await,
         }
@@ -362,6 +368,13 @@ fn advance_frame_slot(
 
 fn animations_active(doc: &Document) -> bool {
     lock::mutex(&doc.inner.animation).has_active()
+}
+
+/// Whether the render task has any animation-driven frame to schedule: an active
+/// transition, keyframe animation, or frames node — or a `WhenScrolling` bar that
+/// is waiting to fade or mid-fade.
+fn animation_frame_needed(doc: &Document) -> bool {
+    animations_active(doc) || doc.scrollbar_fade_schedule(doc.now()).is_active()
 }
 
 /// Remove finished transitions and animations and queue their events.
