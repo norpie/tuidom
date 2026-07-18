@@ -296,8 +296,23 @@ fn effective_alpha(color: Rgb, opacity: f64) -> f64 {
     clamp_alpha(opacity) * (color.a as f64 / 255.0)
 }
 
+/// Interpolate between two channel values, rounding half away from zero.
+///
+/// Spelled out rather than `f64::round`, which is an out-of-line software float call
+/// (it has to handle exponents and NaN this domain cannot produce) and runs once per
+/// color channel of every blended cell — a large share of the cost of a translucent
+/// fill. `t` is clamped to 0..=1 between two `u8`s, so the value is in 0..=255: the
+/// cast truncates to the floor, and the remainder is exact, so comparing it against
+/// 0.5 reproduces `round` bit for bit. Note that the shorter `(v + 0.5) as u8` does
+/// *not*: one ULP below a .5 boundary that addition rounds up to the boundary itself.
 fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {
-    (a as f64 + (b as f64 - a as f64) * t).round() as u8
+    let value = a as f64 + (b as f64 - a as f64) * t;
+    let floored = value as u8;
+    if value - floored as f64 >= 0.5 {
+        floored.saturating_add(1)
+    } else {
+        floored
+    }
 }
 
 fn clamp_alpha(alpha: f64) -> f64 {
@@ -1016,6 +1031,42 @@ mod tests {
 
     fn rgb(r: u8, g: u8, b: u8) -> Rgb {
         Rgb { r, g, b, a: 255 }
+    }
+
+    /// `lerp_u8` hand-rolls the rounding `f64::round` would do, to keep a software
+    /// float call out of the per-cell blend. Pin it to `round` across the domain,
+    /// including the alphas one ULP off a .5 boundary where the tempting shorthand
+    /// `(value + 0.5) as u8` silently disagrees.
+    #[test]
+    fn lerp_u8_matches_float_round_over_its_domain() {
+        let rounded = |a: u8, b: u8, t: f64| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+
+        for a in 0..=255u8 {
+            for b in 0..=255u8 {
+                for step in 0..=16 {
+                    let t = f64::from(step) / 16.0;
+                    assert_eq!(lerp_u8(a, b, t), rounded(a, b, t), "a={a} b={b} t={t}");
+                }
+            }
+        }
+
+        // Alphas landing just below each half-way point between two channel values.
+        for (a, b) in [(0u8, 1u8), (0, 255), (127, 128), (200, 201), (254, 255)] {
+            let (low, high) = (f64::from(a), f64::from(b));
+            for k in a..b {
+                let boundary = (f64::from(k) + 0.5 - low) / (high - low);
+                let mut t = boundary;
+                for _ in 0..4 {
+                    t = f64::from_bits(t.to_bits().wrapping_sub(1));
+                }
+                for _ in 0..8 {
+                    if (0.0..=1.0).contains(&t) {
+                        assert_eq!(lerp_u8(a, b, t), rounded(a, b, t), "a={a} b={b} t={t:?}");
+                    }
+                    t = f64::from_bits(t.to_bits().wrapping_add(1));
+                }
+            }
+        }
     }
 
     fn row_text(grid: &Grid, row: usize) -> String {
