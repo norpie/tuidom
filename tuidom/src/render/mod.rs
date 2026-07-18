@@ -2,13 +2,14 @@
 
 pub(crate) mod diff;
 pub(crate) mod grid;
-mod paint;
+pub(crate) mod paint;
 mod terminal;
 
 use std::io;
 use std::time::Duration;
 
 use terminal::Terminal;
+pub(crate) use terminal::{flush_changes_into, flush_full_into};
 
 use crate::document::Document;
 use crate::lock;
@@ -89,7 +90,7 @@ fn render_grid(
 const FULL_REDRAW_CHANGE_THRESHOLD_NUMERATOR: usize = 1;
 const FULL_REDRAW_CHANGE_THRESHOLD_DENOMINATOR: usize = 3;
 
-fn should_flush_full(changed_cells: usize, total_cells: usize) -> bool {
+pub(crate) fn should_flush_full(changed_cells: usize, total_cells: usize) -> bool {
     total_cells > 0
         && changed_cells.saturating_mul(FULL_REDRAW_CHANGE_THRESHOLD_DENOMINATOR)
             > total_cells.saturating_mul(FULL_REDRAW_CHANGE_THRESHOLD_NUMERATOR)

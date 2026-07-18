@@ -1,11 +1,17 @@
+use std::io;
 use std::time::{Duration, Instant};
 
 use crate::document::Document;
 use crate::error::Result;
 use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
-use crate::performance::RenderMetrics;
+use crate::lock;
+use crate::performance::{FlushMode, RenderMetrics};
+use crate::render::diff::diff_profiled_with_hints;
 use crate::render::grid::{Cell, Grid};
-use crate::render::{RenderCursor, render_into_grid};
+use crate::render::paint::FrameClearBase;
+use crate::render::{
+    RenderCursor, flush_changes_into, flush_full_into, render_into_grid, should_flush_full,
+};
 use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
@@ -16,6 +22,12 @@ pub struct HeadlessRuntime {
     width: u16,
     height: u16,
     grid: Option<Grid>,
+    /// The buffer [`render_flushed`](HeadlessRuntime::render_flushed) paints the
+    /// next frame into, so the frame being diffed against stays intact. Only
+    /// allocated once that path is used.
+    spare_grid: Option<Grid>,
+    flush_clear_base: Option<FrameClearBase>,
+    flush_output: Vec<u8>,
     cursor: Option<RenderCursor>,
     rgb_cache: RgbCache,
     event_state: RuntimeEventState,
@@ -34,6 +46,9 @@ impl HeadlessRuntime {
             width,
             height,
             grid: None,
+            spare_grid: None,
+            flush_clear_base: None,
+            flush_output: Vec::new(),
             cursor: None,
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
@@ -73,6 +88,8 @@ impl HeadlessRuntime {
         self.width = width;
         self.height = height;
         self.grid = None;
+        self.spare_grid = None;
+        self.flush_clear_base = None;
         self.cursor = None;
         self.doc.dispatch_resize(ResizeEvent { width, height });
     }
@@ -119,6 +136,128 @@ impl HeadlessRuntime {
             );
         }
         Ok(())
+    }
+
+    /// Render a frame the way the terminal renderer does: paint, diff against the
+    /// previous frame, and encode the result as terminal output into an in-memory
+    /// buffer readable with [`flush_output`](Self::flush_output).
+    ///
+    /// [`render`](Self::render) stops after painting, which leaves the diff and
+    /// flush stages — a large share of a real frame — unexercised and
+    /// unassertable. This runs them against a byte sink instead of a tty, so the
+    /// escape output a terminal would receive can be measured and inspected
+    /// without one. Cell inspection works the same as after `render`.
+    ///
+    /// Returns `io::Result` rather than [`Result`] because it drives the same
+    /// writer-facing code a real terminal does; layout errors are wrapped the
+    /// way the event loop wraps them.
+    pub fn render_flushed(&mut self) -> io::Result<()> {
+        let frame_start = Instant::now();
+
+        let layout_start = Instant::now();
+        self.doc
+            .compute_layout(self.width, self.height)
+            .map_err(io::Error::other)?;
+        let layout_time = layout_start.elapsed();
+
+        // Two grids alternating, like the renderer's: the frame being painted
+        // cannot be the frame being diffed against.
+        let mut new_grid = match self.spare_grid.take() {
+            Some(grid) if grid.width == self.width && grid.height == self.height => grid,
+            _ => Grid::new(self.width, self.height),
+        };
+        let output = render_into_grid(&self.doc, &mut new_grid, &mut self.rgb_cache);
+        self.cursor = output.cursor;
+
+        let previous = self
+            .grid
+            .take()
+            .filter(|grid| grid.width == self.width && grid.height == self.height);
+        // A changed clear base invalidates the dirty-span hints, and no previous
+        // frame means nothing to diff against — both force a full redraw.
+        let diffable = previous
+            .as_ref()
+            .filter(|_| self.flush_clear_base == Some(output.clear_base));
+
+        let instrument = lock::mutex(&self.doc.inner.performance)
+            .detail()
+            .is_detailed();
+        let total_cells = (new_grid.width as usize) * (new_grid.height as usize);
+
+        let mut metrics = RenderMetrics {
+            grid_time: output.stats.grid_time,
+            dom_collect_time: output.stats.dom_collect_time,
+            dom_paint_time: output.stats.dom_paint_time,
+            paint_profile: output.stats.paint_profile,
+            ..RenderMetrics::default()
+        };
+
+        self.flush_output.clear();
+        let changes = match diffable {
+            Some(old) => {
+                let diff_start = Instant::now();
+                let diff_output = diff_profiled_with_hints(
+                    old,
+                    &new_grid,
+                    instrument,
+                    Some((old.touched_spans(), new_grid.touched_spans())),
+                );
+                metrics.diff_time = diff_start.elapsed();
+                metrics.diff_profile = diff_output.profile;
+                Some(diff_output.changes)
+            }
+            None => None,
+        };
+
+        let full_redraw = match &changes {
+            Some(changes) => should_flush_full(changes.len(), total_cells),
+            None => true,
+        };
+
+        let flush_start = Instant::now();
+        match (&changes, full_redraw) {
+            (Some(changes), false) => {
+                flush_changes_into(&mut self.flush_output, changes, self.cursor)?
+            }
+            _ => flush_full_into(&mut self.flush_output, &new_grid, self.cursor)?,
+        }
+        metrics.flush_time = flush_start.elapsed();
+
+        metrics.diff_dirty_cells = changes.as_ref().map_or(total_cells, Vec::len);
+        metrics.cells_flushed = if full_redraw {
+            total_cells
+        } else {
+            metrics.diff_dirty_cells
+        };
+        metrics.flush_mode = if full_redraw {
+            FlushMode::FullRedraw
+        } else {
+            FlushMode::Changes
+        };
+
+        self.spare_grid = previous;
+        self.grid = Some(new_grid);
+        self.flush_clear_base = Some(output.clear_base);
+
+        self.doc
+            .record_frame_metrics(frame_start.elapsed(), layout_time, metrics);
+
+        if let Some(event) = self.doc.pending_post_frame_event() {
+            process_runtime_event(
+                &self.doc,
+                RuntimeEvent::PostFrame(Box::new(event)),
+                &mut self.event_state,
+            );
+        }
+        Ok(())
+    }
+
+    /// Return the terminal output the last [`render_flushed`](Self::render_flushed)
+    /// produced — the exact bytes a terminal would have received.
+    ///
+    /// Empty before the first flushed render.
+    pub fn flush_output(&self) -> &[u8] {
+        &self.flush_output
     }
 
     /// Return cursor metadata from the last rendered frame.
@@ -1179,6 +1318,54 @@ mod tests {
         assert_eq!(runtime.get_cell(0, 0).unwrap().text, "H");
         assert_eq!(runtime.get_cell(1, 0).unwrap().text, "i");
         assert_eq!(runtime.get_cell(10, 0), None);
+    }
+
+    #[test]
+    fn a_flushed_render_emits_the_frame_then_diffs_the_next_one_away() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("Hi").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 5);
+        runtime.render_flushed().unwrap();
+
+        let first = runtime.flush_output().len();
+        assert!(String::from_utf8_lossy(runtime.flush_output()).contains("Hi"));
+        // Cell inspection reads the frame that was just flushed, like `render`.
+        assert_eq!(runtime.get_cell(0, 0).unwrap().text, "H");
+
+        // Nothing changed, so the diff finds no cells and the flush carries only
+        // the frame's cursor bookkeeping — a fraction of a full redraw.
+        runtime.render_flushed().unwrap();
+        assert!(
+            runtime.flush_output().len() * 10 < first,
+            "unchanged frame flushed {} bytes against a {first}-byte redraw",
+            runtime.flush_output().len()
+        );
+    }
+
+    #[test]
+    fn a_flushed_render_patches_only_the_changed_cells() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("ab").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 40, 10);
+        runtime.render_flushed().unwrap();
+        let full = runtime.flush_output().len();
+
+        runtime.document().set_text_content(text, "aZ").unwrap();
+        runtime.render_flushed().unwrap();
+
+        let patch = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+        assert!(patch.contains('Z'));
+        // Only the second cell changed: the patch must not redraw the whole grid.
+        assert!(
+            runtime.flush_output().len() * 10 < full,
+            "one-cell patch flushed {} bytes against a {full}-byte redraw",
+            runtime.flush_output().len()
+        );
+        assert_eq!(runtime.get_cell(1, 0).unwrap().text, "Z");
     }
 
     #[test]

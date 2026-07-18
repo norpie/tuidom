@@ -43,82 +43,98 @@ impl Terminal {
         changes: &[CellChange],
         cursor: Option<RenderCursor>,
     ) -> io::Result<()> {
-        // Attributes are sticky, so each flush starts from a known state and then emits only
-        // transitions. `Attribute::Reset` also resets colors, which is harmless here because
-        // every cell write re-specifies its own fg and bg.
-        queue!(self.stdout, Hide, SetAttribute(Attribute::Reset))?;
-        let mut attrs = CellAttrs::default();
-        for change in changes {
-            queue_cell(
-                &mut self.stdout,
-                change.x,
-                change.y,
-                &change.cell,
-                &mut attrs,
-            )?;
-        }
-        queue_cursor(&mut self.stdout, cursor)?;
-        self.stdout.flush()
+        flush_changes_into(&mut self.stdout, changes, cursor)
     }
 
     /// Flush the entire grid — used on resize.
-    ///
-    /// Batches all commands with `queue!` then flushes once.
     pub fn flush_full(&mut self, grid: &Grid, cursor: Option<RenderCursor>) -> io::Result<()> {
-        use crossterm::terminal::{Clear, ClearType};
-        queue!(
-            self.stdout,
-            Hide,
-            Clear(ClearType::All),
-            SetAttribute(Attribute::Reset)
-        )?;
-        let mut current_attrs = CellAttrs::default();
+        flush_full_into(&mut self.stdout, grid, cursor)
+    }
+}
 
-        for (y, row) in grid.cells.iter().enumerate() {
-            let y = y as u16;
-            let mut x = 0u16;
+/// Encode a set of cell changes as terminal output into `out`.
+///
+/// Split from [`Terminal`] so the flush path can be driven against any writer —
+/// a headless byte sink runs exactly the code a real terminal gets, which is
+/// what makes the flush side measurable and assertable without a tty.
+pub(crate) fn flush_changes_into<W: Write>(
+    out: &mut W,
+    changes: &[CellChange],
+    cursor: Option<RenderCursor>,
+) -> io::Result<()> {
+    // Attributes are sticky, so each flush starts from a known state and then emits only
+    // transitions. `Attribute::Reset` also resets colors, which is harmless here because
+    // every cell write re-specifies its own fg and bg.
+    queue!(out, Hide, SetAttribute(Attribute::Reset))?;
+    let mut attrs = CellAttrs::default();
+    for change in changes {
+        queue_cell(out, change.x, change.y, &change.cell, &mut attrs)?;
+    }
+    queue_cursor(out, cursor)?;
+    out.flush()
+}
+
+/// Encode an entire grid as terminal output into `out`.
+///
+/// Batches all commands with `queue!` then flushes once.
+pub(crate) fn flush_full_into<W: Write>(
+    out: &mut W,
+    grid: &Grid,
+    cursor: Option<RenderCursor>,
+) -> io::Result<()> {
+    use crossterm::terminal::{Clear, ClearType};
+    queue!(
+        out,
+        Hide,
+        Clear(ClearType::All),
+        SetAttribute(Attribute::Reset)
+    )?;
+    let mut current_attrs = CellAttrs::default();
+
+    for (y, row) in grid.cells.iter().enumerate() {
+        let y = y as u16;
+        let mut x = 0u16;
+        while x < grid.width {
+            let cell = &row[x as usize];
+            if cell.is_wide_continuation() {
+                x += 1;
+                continue;
+            }
+
+            queue!(
+                out,
+                MoveTo(x, y),
+                SetForegroundColor(to_crossterm_color(cell.fg)),
+                SetBackgroundColor(to_crossterm_color(cell.bg)),
+            )?;
+
+            let fg = cell.fg;
+            let bg = cell.bg;
+            let attrs = cell.attrs;
+            queue_attr_transitions(out, &mut current_attrs, attrs)?;
+
+            let mut run_text = String::new();
             while x < grid.width {
                 let cell = &row[x as usize];
                 if cell.is_wide_continuation() {
                     x += 1;
                     continue;
                 }
-
-                queue!(
-                    self.stdout,
-                    MoveTo(x, y),
-                    SetForegroundColor(to_crossterm_color(cell.fg)),
-                    SetBackgroundColor(to_crossterm_color(cell.bg)),
-                )?;
-
-                let fg = cell.fg;
-                let bg = cell.bg;
-                let attrs = cell.attrs;
-                queue_attr_transitions(&mut self.stdout, &mut current_attrs, attrs)?;
-
-                let mut run_text = String::new();
-                while x < grid.width {
-                    let cell = &row[x as usize];
-                    if cell.is_wide_continuation() {
-                        x += 1;
-                        continue;
-                    }
-                    // A run is one span of identical colors *and* attributes — attributes stay
-                    // on until turned off, so a change has to break the run.
-                    if cell.fg != fg || cell.bg != bg || cell.attrs != attrs {
-                        break;
-                    }
-
-                    run_text.push_str(cell.terminal_text());
-                    x = x.saturating_add(cell.content_width() as u16);
+                // A run is one span of identical colors *and* attributes — attributes stay
+                // on until turned off, so a change has to break the run.
+                if cell.fg != fg || cell.bg != bg || cell.attrs != attrs {
+                    break;
                 }
 
-                queue!(self.stdout, Print(run_text))?;
+                run_text.push_str(cell.terminal_text());
+                x = x.saturating_add(cell.content_width() as u16);
             }
+
+            queue!(out, Print(run_text))?;
         }
-        queue_cursor(&mut self.stdout, cursor)?;
-        self.stdout.flush()
     }
+    queue_cursor(out, cursor)?;
+    out.flush()
 }
 
 impl Drop for Terminal {
@@ -230,7 +246,7 @@ fn restore_terminal(
     }
 }
 
-fn queue_cursor(stdout: &mut Stdout, cursor: Option<RenderCursor>) -> io::Result<()> {
+fn queue_cursor<W: Write>(stdout: &mut W, cursor: Option<RenderCursor>) -> io::Result<()> {
     let Some(cursor) = cursor else {
         queue!(stdout, Hide)?;
         return Ok(());
@@ -279,8 +295,8 @@ fn cursor_style(cursor: RenderCursor) -> SetCursorStyle {
 ///
 /// `current` is the attribute state the terminal is already in, and is updated as
 /// transitions are emitted.
-fn queue_cell(
-    stdout: &mut Stdout,
+fn queue_cell<W: Write>(
+    stdout: &mut W,
     x: u16,
     y: u16,
     cell: &Cell,
@@ -304,8 +320,8 @@ fn queue_cell(
 ///
 /// A blanket `Attribute::Reset` per cell is not an option: SGR 0 also resets colors, so it
 /// would fight the color writes.
-fn queue_attr_transitions(
-    stdout: &mut Stdout,
+fn queue_attr_transitions<W: Write>(
+    stdout: &mut W,
     current: &mut CellAttrs,
     target: CellAttrs,
 ) -> io::Result<()> {
