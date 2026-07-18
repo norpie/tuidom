@@ -4,6 +4,8 @@ use crate::document::selection::PendingSelection;
 use crate::event::{KeyEvent, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent};
 use crate::id::NodeId;
 use crate::lock;
+use crate::node::LayoutRect;
+use crate::paint_order::{PaintEntry, entry_at, offset_for_thumb, scrollbar_strip_of};
 
 /// Internal runtime event used by runtime event queues and simulated input.
 ///
@@ -57,11 +59,24 @@ struct ClickCandidate {
     button: MouseButton,
 }
 
+/// An in-flight scrollbar drag: which bar is grabbed and where within the thumb.
+///
+/// Strip geometry is deliberately not stored — every update reads it fresh from
+/// paint order, so a relayout mid-drag cannot desync the thumb from the cursor.
+#[derive(Debug, Clone, Copy)]
+struct ScrollbarDrag {
+    container: NodeId,
+    vertical: bool,
+    /// Cells from the thumb's start to where the press grabbed it.
+    grab: u16,
+}
+
 /// Stateful runtime-event processing data shared by terminal and headless runtimes.
 #[derive(Debug, Default)]
 pub(crate) struct RuntimeEventState {
     pending_click: Option<ClickCandidate>,
     pending_selection: Option<PendingSelection>,
+    scrollbar_drag: Option<ScrollbarDrag>,
 }
 
 /// Process one queued or simulated runtime event.
@@ -75,25 +90,42 @@ pub(crate) fn process_runtime_event(
             doc.dispatch_key_press(key);
         }
         RuntimeEvent::MouseDown(mut mouse) => {
-            let target = mouse_target(doc, mouse.x, mouse.y);
+            let hit_entry = entry_at(doc, mouse.x, mouse.y);
+            let target = hit_entry.as_ref().map_or_else(|| doc.root(), |entry| entry.id);
             // The pressed node is the node that would take focus from this hit, so
             // "being pressed" and "would be focused" never disagree.
             set_active_node(doc, doc.focus_target_from_hit(target));
             doc.dispatch_mouse_down_to(target, &mut mouse);
-            state.pending_click = Some(ClickCandidate {
-                target,
-                x: mouse.x,
-                y: mouse.y,
-                button: mouse.button,
-            });
 
-            // The mouse default action: a left press clears the selection and arms a
-            // new drag from this point. Preventing it keeps the selection too — the
-            // press was claimed for something other than selecting.
             state.pending_selection = None;
+            state.scrollbar_drag = None;
+
+            // A left press on a scrollbar strip has grabbing the bar as its default
+            // action, in place of selection and click: a track press jumps the thumb
+            // under the cursor, a thumb press grabs it where it is. Preventing the
+            // default keeps the press an ordinary container press.
             if mouse.button == MouseButton::Left && !mouse.default_prevented() {
-                doc.clear_selection();
-                state.pending_selection = doc.begin_selection_drag(mouse.x, mouse.y, target);
+                state.scrollbar_drag = hit_entry
+                    .filter(|entry| entry.scrollbar.is_some())
+                    .and_then(|entry| begin_scrollbar_grab(doc, &entry, mouse.x, mouse.y));
+            }
+            if state.scrollbar_drag.is_some() {
+                state.pending_click = None;
+            } else {
+                state.pending_click = Some(ClickCandidate {
+                    target,
+                    x: mouse.x,
+                    y: mouse.y,
+                    button: mouse.button,
+                });
+
+                // The mouse default action: a left press clears the selection and arms a
+                // new drag from this point. Preventing it keeps the selection too — the
+                // press was claimed for something other than selecting.
+                if mouse.button == MouseButton::Left && !mouse.default_prevented() {
+                    doc.clear_selection();
+                    state.pending_selection = doc.begin_selection_drag(mouse.x, mouse.y, target);
+                }
             }
         }
         RuntimeEvent::MouseMove { x, y, held } => {
@@ -101,10 +133,12 @@ pub(crate) fn process_runtime_event(
             // hover-to-focus applies only to unpressed movement.
             if held.is_none() {
                 focus_hover_target(doc, x, y);
-            } else if held == Some(MouseButton::Left)
-                && let Some(pending) = &state.pending_selection
-            {
-                doc.update_selection_drag(pending, x, y);
+            } else if held == Some(MouseButton::Left) {
+                if let Some(drag) = state.scrollbar_drag {
+                    update_scrollbar_drag(doc, drag, x, y);
+                } else if let Some(pending) = &state.pending_selection {
+                    doc.update_selection_drag(pending, x, y);
+                }
             }
         }
         RuntimeEvent::MouseUp(mut mouse) => {
@@ -113,6 +147,7 @@ pub(crate) fn process_runtime_event(
             // off a node before releasing leaves nothing stuck active.
             set_active_node(doc, None);
             state.pending_selection = None;
+            state.scrollbar_drag = None;
             doc.dispatch_mouse_up_to(target, &mut mouse);
 
             if state.pending_click.is_some_and(|down| {
@@ -163,6 +198,84 @@ pub(crate) fn process_runtime_event(
 
 fn mouse_target(doc: &Document, x: i32, y: i32) -> NodeId {
     doc.node_at(x, y).unwrap_or_else(|| doc.root())
+}
+
+/// Start a scrollbar drag from a press on a strip.
+///
+/// A press on the thumb grabs it in place without scrolling, so an unmoved press
+/// never perturbs the offset through rounding. A press on the track jumps the
+/// thumb's center under the cursor and continues grabbed there.
+fn begin_scrollbar_grab(doc: &Document, entry: &PaintEntry, x: i32, y: i32) -> Option<ScrollbarDrag> {
+    let bar = entry.scrollbar?;
+    let pos = strip_position(&entry.layout, bar.vertical, x, y);
+    let span = strip_span(&entry.layout, bar.vertical);
+    let range = i32::from(span.saturating_sub(bar.thumb_len));
+
+    let thumb_start = i32::from(bar.thumb_start);
+    let on_thumb = pos >= thumb_start && pos < thumb_start + i32::from(bar.thumb_len);
+    let (grab, jump) = if on_thumb {
+        (pos - thumb_start, false)
+    } else {
+        let new_start = (pos - i32::from(bar.thumb_len / 2)).clamp(0, range);
+        (pos - new_start, true)
+    };
+
+    let drag = ScrollbarDrag {
+        container: entry.id,
+        vertical: bar.vertical,
+        grab: u16::try_from(grab).ok()?,
+    };
+    if jump {
+        update_scrollbar_drag(doc, drag, x, y);
+    }
+    Some(drag)
+}
+
+/// Move a grabbed scrollbar to follow the cursor.
+///
+/// Geometry is read fresh from paint order and the layout snapshot each time, so
+/// the drag stays true to what is on screen across relayouts. Only the cursor's
+/// position along the strip axis matters; cross-axis movement is ignored. A bar
+/// that is no longer shown leaves the offset where it was.
+fn update_scrollbar_drag(doc: &Document, drag: ScrollbarDrag, x: i32, y: i32) {
+    let Some(entry) = scrollbar_strip_of(doc, drag.container, drag.vertical) else {
+        return;
+    };
+    let Some(bar) = entry.scrollbar else {
+        return;
+    };
+    let span = strip_span(&entry.layout, drag.vertical);
+    let range = i32::from(span.saturating_sub(bar.thumb_len));
+    let pos = strip_position(&entry.layout, drag.vertical, x, y);
+    let new_start = (pos - i32::from(drag.grab)).clamp(0, range) as u16;
+
+    let Some(view) = doc.get_node(drag.container).and_then(|view| view.layout) else {
+        return;
+    };
+    let (viewport, max_scroll) = if drag.vertical {
+        (view.scrollport.height, view.max_scroll_y)
+    } else {
+        (view.scrollport.width, view.max_scroll_x)
+    };
+
+    let offset = offset_for_thumb(span, viewport, max_scroll, new_start);
+    let current = doc.scroll_offset(drag.container);
+    let (to_x, to_y) = if drag.vertical {
+        (current.x, offset)
+    } else {
+        (offset, current.y)
+    };
+    if let Err(err) = doc.scroll_to(drag.container, to_x, to_y) {
+        log::error!("scrollbar drag scroll failed: {err}");
+    }
+}
+
+fn strip_position(layout: &LayoutRect, vertical: bool, x: i32, y: i32) -> i32 {
+    if vertical { y - layout.y } else { x - layout.x }
+}
+
+fn strip_span(layout: &LayoutRect, vertical: bool) -> u16 {
+    if vertical { layout.height } else { layout.width }
 }
 
 fn set_active_node(doc: &Document, node: Option<NodeId>) {

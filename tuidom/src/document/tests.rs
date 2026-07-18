@@ -4614,3 +4614,147 @@ fn effective_background_is_reported_on_the_resolved_style() {
         ResolvedColor::blue()
     );
 }
+
+// -- Scrollbar drag -----------------------------------------------------------
+
+/// A 10×4 screen with a 5-cell-wide scroll column holding 8 rows of content: the
+/// vertical bar sits in column 4 with a 2-cell thumb over a 4-cell strip, so thumb
+/// starts 0/1/2 map to offsets 0/2/4.
+fn scrollbar_drag_setup() -> (Document, HeadlessRuntime, NodeId) {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+    for i in 0..8 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(container, text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+    (doc, runtime, container)
+}
+
+#[test]
+fn scrollbar_thumb_drag_scrolls_the_container() {
+    let (doc, mut runtime, container) = scrollbar_drag_setup();
+
+    // Grabbing the thumb in place does not perturb the offset.
+    runtime.simulate_mouse_down(4, 0, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+
+    runtime.simulate_mouse_drag_move(4, 1, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 2);
+
+    // Dragging past the strip end clamps to the maximum offset.
+    runtime.simulate_mouse_drag_move(4, 3, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 4);
+
+    runtime.simulate_mouse_drag_move(4, 0, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+
+    runtime.simulate_mouse_up(4, 0, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
+fn scrollbar_track_press_jumps_the_thumb_and_keeps_dragging() {
+    let (doc, mut runtime, container) = scrollbar_drag_setup();
+
+    // A press on the track's far end jumps the thumb under the cursor.
+    runtime.simulate_mouse_down(4, 3, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 4);
+
+    // The same press continues as a drag, grabbed where the thumb landed.
+    runtime.simulate_mouse_drag_move(4, 1, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+#[test]
+fn scrollbar_press_starts_no_selection_and_fires_no_click() {
+    let (doc, mut runtime, container) = scrollbar_drag_setup();
+    let clicks = Arc::new(AtomicUsize::new(0));
+    let clicks_for_handler = clicks.clone();
+    doc.on_click(container, move |_| {
+        clicks_for_handler.fetch_add(1, Ordering::Relaxed);
+    })
+    .unwrap();
+
+    runtime.simulate_mouse_down(4, 0, MouseButton::Left);
+    // Dragging across the text content selects nothing — the drag belongs to the bar.
+    runtime.simulate_mouse_drag_move(1, 2, MouseButton::Left);
+    assert_eq!(doc.get_selection(), None);
+    runtime.simulate_mouse_up(4, 0, MouseButton::Left);
+
+    // Down and up on the same strip cell still produces no click.
+    assert_eq!(clicks.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn scrollbar_drag_does_not_move_focus() {
+    let (doc, mut runtime, _container) = scrollbar_drag_setup();
+    let other = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.width(Length::Pixels(2));
+    style.height(Length::Pixels(2));
+    doc.set_style(other, &style).unwrap();
+    doc.append_child(doc.root(), other).unwrap();
+    doc.set_focusable(other, true).unwrap();
+    runtime.render().unwrap();
+
+    runtime.simulate_mouse_down(4, 0, MouseButton::Left);
+    // The drag crosses a focusable node; hover-to-focus must not fire mid-drag.
+    runtime.simulate_mouse_drag_move(6, 1, MouseButton::Left);
+    assert_ne!(doc.focused(), Some(other));
+}
+
+#[test]
+fn prevent_default_keeps_a_scrollbar_press_ordinary() {
+    let (doc, mut runtime, container) = scrollbar_drag_setup();
+    doc.on_mouse_down(container, |event| event.prevent_default())
+        .unwrap();
+    let clicks = Arc::new(AtomicUsize::new(0));
+    let clicks_for_handler = clicks.clone();
+    doc.on_click(container, move |_| {
+        clicks_for_handler.fetch_add(1, Ordering::Relaxed);
+    })
+    .unwrap();
+
+    runtime.simulate_mouse_down(4, 3, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(4, 1, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+
+    // With the grab suppressed the press behaves like any container press,
+    // click candidacy included.
+    runtime.simulate_mouse_up(4, 3, MouseButton::Left);
+    assert_eq!(clicks.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn horizontal_scrollbar_drag_scrolls_x() {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.width(Length::Pixels(5));
+    style.overflow_x(Overflow::Scroll);
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+    for content in ["abcde", "fghij"] {
+        let text = doc.create_text(content).unwrap();
+        doc.append_child(container, text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 2);
+    runtime.render().unwrap();
+
+    // A 3-cell thumb on a 5-cell strip along the bottom row.
+    runtime.simulate_mouse_down(0, 1, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(4, 1, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).x, 5);
+
+    runtime.simulate_mouse_drag_move(0, 1, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).x, 0);
+}
