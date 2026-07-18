@@ -2,6 +2,11 @@
 members = ["tuidom", "tuidom-derive"]
 resolver = "2"
 
+# Benchmarks are profiled with perf/flamegraph, which needs symbols to attribute
+# samples to functions. Release builds are unaffected.
+[profile.bench]
+debug = true
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
