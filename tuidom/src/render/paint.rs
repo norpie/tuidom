@@ -725,13 +725,13 @@ fn node_kind_label(kind: &NodeKindView) -> &'static str {
 }
 
 fn resolve_rgb(rgb_cache: &mut RgbCache, color: ResolvedColor, profile: &mut PaintProfile) -> Rgb {
-    let resolve_start = profile.enabled.then(Instant::now);
-    let rgb = rgb_cache.resolve(color);
-    if let Some(start) = resolve_start {
-        profile.rgb_resolve_time += start.elapsed();
+    // Counted but not timed: a cache lookup costs about what reading the clock
+    // twice does, so a duration here would report its own overhead. See
+    // `PaintProfile::rgb_resolves`.
+    if profile.enabled {
         profile.rgb_resolves += 1;
     }
-    rgb
+    rgb_cache.resolve(color)
 }
 
 struct InputCursorPaint<'a> {

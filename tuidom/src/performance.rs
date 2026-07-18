@@ -147,11 +147,21 @@ pub struct LargestFillProfile {
 pub struct PaintProfile {
     /// Whether detailed paint instrumentation was enabled for this frame.
     pub enabled: bool,
-    /// Time spent converting resolved colors to terminal RGB.
-    pub rgb_resolve_time: Duration,
     /// Number of resolved colors converted or read from the RGB cache.
+    ///
+    /// Deliberately a count with no matching duration. A resolve is a cache
+    /// lookup costing about as much as reading the clock twice, so timing each
+    /// one measured the instrumentation rather than the work — the duration this
+    /// replaced reported 5.1µs for 150 resolves whose own clock reads accounted
+    /// for 5.5µs. Time a region only when its work outweighs a clock pair.
     pub rgb_resolves: usize,
     /// Time spent filling node backgrounds into the grid.
+    ///
+    /// Timed per call around the fill itself, so a frame of many small fills
+    /// carries proportionally more measurement overhead than one of few large
+    /// ones — at ~36 calls this reads roughly 15% high, at ~250ns per fill.
+    /// Compare against [`background_fill_calls`](Self::background_fill_calls)
+    /// before drawing conclusions from a small value.
     pub background_fill_time: Duration,
     /// Number of background fill calls.
     pub background_fill_calls: usize,
