@@ -109,7 +109,15 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Configurable characters/styling (track, thumb colors)
   - [x] Full block default (█), half-block style option (▐▌) for thinner look
   - [x] Show behavior: always, when_focused (hover focuses, so also hover), never
-  - [ ] Show behavior: when_scrolling (deferred — needs a timed fade and an active-render tick)
+  - [x] Show behavior: when_scrolling — appears on offset change, holds for `scrollbar_hide_delay`,
+        fades out over `scrollbar_fade_duration` (both style properties); a grabbed bar stays visible
+  - [x] Fade frames are scheduled, not polled: one deadline wake at fade start, smooth ticks only
+        mid-fade, fully passive once faded
+  - [x] Click/drag on the bar: a left press grabs it as the mouse-down default action
+        (`prevent_default()` keeps an ordinary press; no selection, no click)
+    - [x] Thumb press drags from where it is; track press jumps the thumb under the cursor and
+          keeps dragging
+    - [x] Drags map through the inverse thumb math against live geometry, exact at both ends
 
 ## Reactivity & Change Propagation
 

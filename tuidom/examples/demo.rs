@@ -17,6 +17,8 @@
 //! Wheel anywhere       — scroll the page (the center area is a scroll container)
 //! Wheel over 1st button — adjust its opacity; prevent_default keeps the page still
 //! Wheel over the list  — scroll it; its bar tracks the offset
+//! Drag a scrollbar     — thumb follows the cursor; pressing the track jumps it
+//! Wheel the auto-hide pane — its bar appears while scrolling, then fades away
 //! Wheel over the 10k pane — virtualized: only the visible window exists in the DOM
 //! Drag over text      — select it (drag in an input selects within the input);
 //!                        the two selection columns are separate boundaries, and the
@@ -42,7 +44,8 @@ use tuidom::animation::{
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
 use tuidom::style::{
     AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, JustifyContent, Length, Overflow, Position, ScrollbarCharset, Sides, Style,
+    FlexGap, JustifyContent, Length, Overflow, Position, ScrollbarCharset, ScrollbarShow, Sides,
+    Style,
 };
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId};
@@ -473,6 +476,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(wide, wide_text)?;
     doc.on_wheel(wide, |event| event.stop_propagation())?;
 
+    // An auto-hiding pane: the bar exists only around scroll activity — it appears on
+    // offset changes (and while grabbed), holds briefly, then fades out by alpha. While
+    // hidden the pane repaints nothing and the document is as passive as ever.
+    let auto_hide = doc.create_box()?;
+    let mut auto_hide_style = Style::new();
+    auto_hide_style.flex_direction(FlexDirection::Column);
+    auto_hide_style.height(Length::Pixels(5));
+    auto_hide_style.overflow_y(Overflow::Scroll);
+    auto_hide_style.scrollbar_show(ScrollbarShow::WhenScrolling);
+    auto_hide_style.scrollbar_hide_delay(Duration::from_millis(800));
+    auto_hide_style.scrollbar_fade_duration(Duration::from_millis(300));
+    auto_hide_style.border(Border::new(BorderCharset::single()));
+    auto_hide_style.border_color(Color::oklch(0.55, 0.02, 260.0));
+    auto_hide_style.padding(EdgeInsets::new(0, 1, 0, 1));
+    doc.set_style(auto_hide, &auto_hide_style)?;
+
+    for index in 1..=12 {
+        let item = doc.create_text(format!("auto-hide item {index:02}"))?;
+        doc.set_style(item, &label_style)?;
+        doc.append_child(auto_hide, item)?;
+    }
+    doc.on_wheel(auto_hide, |event| event.stop_propagation())?;
+
     // A virtualized pane: 10,000 rows, but the DOM only ever holds the visible window
     // plus overscan between two spacers. The spacers keep the container's content size
     // at the true total, so the scrollbar and wheel routing need nothing special.
@@ -502,6 +528,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(scroll_row, list)?;
     doc.append_child(scroll_row, scroll_status)?;
     doc.append_child(scroll_row, wide)?;
+    doc.append_child(scroll_row, auto_hide)?;
     doc.append_child(scroll_row, virtual_container)?;
     doc.append_child(scroll_row, virtual_status)?;
 
