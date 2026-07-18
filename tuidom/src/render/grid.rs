@@ -198,33 +198,6 @@ impl Cell {
     }
 }
 
-/// Blend `src` over `dst` using node opacity combined with source color alpha.
-fn blend_cell(
-    dst: &Cell,
-    src: &Cell,
-    opacity: f64,
-    replace_content: bool,
-    default_bg: Rgb,
-) -> Cell {
-    let bg = blend_color(dst.bg, src.bg, opacity, default_bg);
-    Cell {
-        content: if replace_content {
-            src.content.clone()
-        } else {
-            dst.content.clone()
-        },
-        fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg), default_bg),
-        bg,
-        // Attributes travel with the glyph: a translucent fill that preserves the destination
-        // text preserves its attributes, and one that replaces the text takes the source's.
-        attrs: if replace_content {
-            src.attrs
-        } else {
-            dst.attrs
-        },
-    }
-}
-
 /// Blend a source foreground color over a destination foreground color.
 ///
 /// When the destination is transparent (None), fades toward the cell's background color — or, if
@@ -239,26 +212,13 @@ fn blend_fg(
     match (dst, src) {
         (None, None) => None,
         (_, Some(s)) if effective_alpha(s, opacity) <= 0.0 => dst,
-        (None, Some(s)) => {
-            let alpha = effective_alpha(s, opacity);
-            let target = cell_bg.unwrap_or(default_bg);
-            Some(Rgb {
-                r: lerp_u8(target.r, s.r, alpha),
-                g: lerp_u8(target.g, s.g, alpha),
-                b: lerp_u8(target.b, s.b, alpha),
-                a: 255,
-            })
-        }
+        (None, Some(s)) => Some(lerp_rgb(
+            cell_bg.unwrap_or(default_bg),
+            s,
+            effective_alpha(s, opacity),
+        )),
         (Some(d), None) => Some(d),
-        (Some(d), Some(s)) => {
-            let alpha = effective_alpha(s, opacity);
-            Some(Rgb {
-                r: lerp_u8(d.r, s.r, alpha),
-                g: lerp_u8(d.g, s.g, alpha),
-                b: lerp_u8(d.b, s.b, alpha),
-                a: 255,
-            })
-        }
+        (Some(d), Some(s)) => Some(lerp_rgb(d, s, effective_alpha(s, opacity))),
     }
 }
 
@@ -270,30 +230,24 @@ fn blend_color(dst: Option<Rgb>, src: Option<Rgb>, opacity: f64, default_bg: Rgb
     match (dst, src) {
         (None, None) => None,
         (_, Some(s)) if effective_alpha(s, opacity) <= 0.0 => dst,
-        (None, Some(s)) => {
-            let alpha = effective_alpha(s, opacity);
-            Some(Rgb {
-                r: lerp_u8(default_bg.r, s.r, alpha),
-                g: lerp_u8(default_bg.g, s.g, alpha),
-                b: lerp_u8(default_bg.b, s.b, alpha),
-                a: 255,
-            })
-        }
+        (None, Some(s)) => Some(lerp_rgb(default_bg, s, effective_alpha(s, opacity))),
         (Some(d), None) => Some(d),
-        (Some(d), Some(s)) => {
-            let alpha = effective_alpha(s, opacity);
-            Some(Rgb {
-                r: lerp_u8(d.r, s.r, alpha),
-                g: lerp_u8(d.g, s.g, alpha),
-                b: lerp_u8(d.b, s.b, alpha),
-                a: 255,
-            })
-        }
+        (Some(d), Some(s)) => Some(lerp_rgb(d, s, effective_alpha(s, opacity))),
     }
 }
 
 fn effective_alpha(color: Rgb, opacity: f64) -> f64 {
     clamp_alpha(opacity) * (color.a as f64 / 255.0)
+}
+
+/// Interpolate every channel of `src` over `dst`, producing an opaque color.
+fn lerp_rgb(dst: Rgb, src: Rgb, t: f64) -> Rgb {
+    Rgb {
+        r: lerp_u8(dst.r, src.r, t),
+        g: lerp_u8(dst.g, src.g, t),
+        b: lerp_u8(dst.b, src.b, t),
+        a: 255,
+    }
 }
 
 /// Interpolate between two channel values, rounding half away from zero.
@@ -485,14 +439,52 @@ impl Grid {
 
         let replaces_content = !matches!(cell.content, CellContent::Empty)
             || cell.bg.is_some_and(|bg| effective_alpha(bg, alpha) >= 1.0);
+
+        // Everything about the source is the same for every cell in the rect, so it is
+        // decided once here and the loop does only the part that depends on the
+        // destination. A source channel that is absent or fully transparent leaves its
+        // destination untouched, which is what `None` means below — not a zero blend.
+        let default_bg = self.default_bg;
+        let bg_src = cell
+            .bg
+            .map(|src| (src, effective_alpha(src, alpha)))
+            .filter(|(_, src_alpha)| *src_alpha > 0.0);
+        let fg_src = cell
+            .fg
+            .map(|src| (src, effective_alpha(src, alpha)))
+            .filter(|(_, src_alpha)| *src_alpha > 0.0);
+        // Over an unpainted cell there is nothing to vary: the result is one color.
+        let bg_over_unpainted = bg_src.map(|(src, src_alpha)| lerp_rgb(default_bg, src, src_alpha));
+
         for row in y_start..y_end {
             for col in x_start..x_end {
                 if replaces_content {
                     self.clear_text_span_at(row, col);
                 }
-                let dst = &self.cells[row][col];
-                self.cells[row][col] =
-                    blend_cell(dst, &cell, alpha, replaces_content, self.default_bg);
+
+                let dst = &mut self.cells[row][col];
+                let under = dst.bg;
+                let bg = match (under, bg_src) {
+                    (_, None) => under,
+                    (None, Some(_)) => bg_over_unpainted,
+                    (Some(d), Some((src, src_alpha))) => Some(lerp_rgb(d, src, src_alpha)),
+                };
+
+                if let Some((src, src_alpha)) = fg_src {
+                    dst.fg = Some(match dst.fg {
+                        Some(d) => lerp_rgb(d, src, src_alpha),
+                        // Transparent text fades toward what the cell now sits on.
+                        None => lerp_rgb(bg.or(under).unwrap_or(default_bg), src, src_alpha),
+                    });
+                }
+                dst.bg = bg;
+
+                // Preserved content keeps its attributes, so both are left alone
+                // together — the common case for a translucent fill over text.
+                if replaces_content {
+                    dst.content = cell.content.clone();
+                    dst.attrs = cell.attrs;
+                }
             }
         }
 
@@ -1064,6 +1056,135 @@ mod tests {
                         assert_eq!(lerp_u8(a, b, t), rounded(a, b, t), "a={a} b={b} t={t:?}");
                     }
                     t = f64::from_bits(t.to_bits().wrapping_add(1));
+                }
+            }
+        }
+    }
+
+    /// The in-place fill loop is an optimization of the straightforward composition
+    /// "blend the background, then the foreground, then take content and attributes
+    /// from whichever side owns them". Pin the two together: every combination of
+    /// destination and source cell must land on the same result either way, so a
+    /// future change to `blend_color` / `blend_fg` cannot silently diverge from what
+    /// `fill_rect` does per cell.
+    #[test]
+    fn fill_rect_matches_composed_blend() {
+        fn composed(dst: &Cell, src: &Cell, opacity: f64, replaces: bool, default_bg: Rgb) -> Cell {
+            let bg = blend_color(dst.bg, src.bg, opacity, default_bg);
+            Cell {
+                content: if replaces {
+                    src.content.clone()
+                } else {
+                    dst.content.clone()
+                },
+                fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg), default_bg),
+                bg,
+                attrs: if replaces { src.attrs } else { dst.attrs },
+            }
+        }
+
+        // Transparent, opaque, translucent and zero-alpha, on both sides.
+        let colors = [
+            None,
+            Some(Rgb {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
+            Some(Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            }),
+            Some(Rgb {
+                r: 10,
+                g: 200,
+                b: 30,
+                a: 128,
+            }),
+            Some(Rgb {
+                r: 90,
+                g: 20,
+                b: 250,
+                a: 0,
+            }),
+        ];
+        let contents = [
+            CellContent::Empty,
+            CellContent::Glyph {
+                text: "x".into(),
+                width: 1,
+            },
+        ];
+        let attrs = [
+            CellAttrs::default(),
+            CellAttrs {
+                bold: true,
+                italic: false,
+                underline: true,
+            },
+        ];
+
+        let destinations: Vec<Cell> = colors
+            .iter()
+            .flat_map(|bg| colors.iter().map(move |fg| (bg, fg)))
+            .flat_map(|pair| contents.iter().map(move |content| (pair, content)))
+            .flat_map(|pair| attrs.iter().map(move |attr| (pair, attr)))
+            .map(|(((bg, fg), content), attrs)| Cell {
+                content: content.clone(),
+                fg: *fg,
+                bg: *bg,
+                attrs: *attrs,
+            })
+            .collect();
+        let sources: Vec<Cell> = colors
+            .iter()
+            .flat_map(|bg| colors.iter().map(move |fg| (bg, fg)))
+            .flat_map(|pair| contents.iter().map(move |content| (pair, content)))
+            .map(|((bg, fg), content)| Cell {
+                content: content.clone(),
+                fg: *fg,
+                bg: *bg,
+                attrs: CellAttrs {
+                    bold: true,
+                    italic: true,
+                    underline: false,
+                },
+            })
+            .collect();
+
+        for dst in &destinations {
+            for src in &sources {
+                for alpha in [0.05, 0.25, 0.5, 0.6, 0.75, 1.0] {
+                    let mut actual = Grid::new(1, 1);
+                    actual.cells[0][0] = dst.clone();
+                    actual.fill_rect(0, 0, 1, 1, src.clone(), alpha);
+
+                    let mut expected = Grid::new(1, 1);
+                    expected.cells[0][0] = dst.clone();
+                    let opacity = clamp_alpha(alpha);
+                    let opaque_shortcut = opacity >= 1.0
+                        && matches!(src.content, CellContent::Empty)
+                        && src.bg.is_some_and(|bg| bg.a == 255);
+                    if let (true, Some(bg)) = (opaque_shortcut, src.bg) {
+                        expected.fill_opaque_empty_bg_rect(0, 0, 1, 1, bg);
+                    } else if opacity > 0.0 {
+                        let replaces = !matches!(src.content, CellContent::Empty)
+                            || src.bg.is_some_and(|bg| effective_alpha(bg, opacity) >= 1.0);
+                        if replaces {
+                            expected.clear_text_span_at(0, 0);
+                        }
+                        let default_bg = expected.default_bg;
+                        let before = &expected.cells[0][0];
+                        expected.cells[0][0] = composed(before, src, opacity, replaces, default_bg);
+                    }
+
+                    assert_eq!(
+                        actual.cells[0][0], expected.cells[0][0],
+                        "dst={dst:?} src={src:?} alpha={alpha}"
+                    );
                 }
             }
         }
