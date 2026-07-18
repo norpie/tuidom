@@ -173,11 +173,12 @@ impl HeadlessRuntime {
             .grid
             .take()
             .filter(|grid| grid.width == self.width && grid.height == self.height);
-        // A changed clear base invalidates the dirty-span hints, and no previous
-        // frame means nothing to diff against — both force a full redraw.
-        let diffable = previous
-            .as_ref()
-            .filter(|_| self.flush_clear_base == Some(output.clear_base));
+        // No previous frame means nothing to diff against. A changed clear base
+        // does *not* skip the diff — it only invalidates the dirty-span hints, so
+        // the scan still runs, just over every row. Conflating the two would hide
+        // the diff's cost on exactly the frames where it does the most work.
+        let diffable = previous.as_ref();
+        let hints_valid = self.flush_clear_base == Some(output.clear_base);
 
         let instrument = lock::mutex(&self.doc.inner.performance)
             .detail()
@@ -200,7 +201,7 @@ impl HeadlessRuntime {
                     old,
                     &new_grid,
                     instrument,
-                    Some((old.touched_spans(), new_grid.touched_spans())),
+                    hints_valid.then(|| (old.touched_spans(), new_grid.touched_spans())),
                 );
                 metrics.diff_time = diff_start.elapsed();
                 metrics.diff_profile = diff_output.profile;
