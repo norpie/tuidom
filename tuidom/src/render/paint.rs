@@ -1,6 +1,5 @@
 //! Tree → grid painting using z-index sorted sibling subtrees.
 
-use std::collections::HashMap;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
@@ -9,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
-use crate::id::NodeId;
+use crate::id::{NodeId, NodeMap};
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
 };
@@ -67,7 +66,7 @@ pub(crate) fn paint(
     let collect_time = collect_start.elapsed();
 
     let focused = doc.focused();
-    let selection: HashMap<NodeId, Range<usize>> = doc.selection_ranges().into_iter().collect();
+    let selection: NodeMap<Range<usize>> = doc.selection_ranges().into_iter().collect();
     let mut profile = PaintProfile {
         enabled: instrument,
         ..PaintProfile::default()

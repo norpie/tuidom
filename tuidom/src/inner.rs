@@ -1,16 +1,17 @@
 //! Internal document state behind `Arc`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
+use rustc_hash::FxBuildHasher;
 use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
 use crate::document::selection::SelectionState;
 use crate::event::{FocusKeys, Listener, TargetedEventKind};
-use crate::id::NodeId;
+use crate::id::{NodeId, NodeMap, NodeSet};
 use crate::layout::LayoutEngine;
 use crate::node::{NodeData, NodeLayout, ScrollOffset};
 use crate::performance::PerformanceState;
@@ -134,7 +135,7 @@ impl FocusStack {
 /// All fields use interior mutability — no `&mut self` needed.
 pub(crate) struct DocumentInner {
     /// Arena mapping [`NodeId`] to [`NodeData`].
-    pub nodes: DashMap<NodeId, NodeData>,
+    pub nodes: DashMap<NodeId, NodeData, FxBuildHasher>,
 
     /// Unique identity encoded into handles created by this document.
     pub document_id: u64,
@@ -155,20 +156,20 @@ pub(crate) struct DocumentInner {
     pub focus_contexts: Mutex<FocusStack>,
 
     /// Nodes that are allowed to receive focus.
-    pub focusable_nodes: Mutex<HashSet<NodeId>>,
+    pub focusable_nodes: Mutex<NodeSet>,
 
     /// Keyboard bindings for document-level focus default actions.
     pub focus_keys: Mutex<FocusKeys>,
 
     /// Per-node styles merged when the node enters a pseudo-state.
-    pub pseudo_styles: Mutex<HashMap<NodeId, PseudoStyles>>,
+    pub pseudo_styles: Mutex<NodeMap<PseudoStyles>>,
 
     /// The node currently being pressed, if any.
     pub active_node: Mutex<Option<NodeId>>,
 
     /// Nodes explicitly marked disabled. A node is *effectively* disabled when it or
     /// any ancestor appears here.
-    pub disabled_nodes: Mutex<HashSet<NodeId>>,
+    pub disabled_nodes: Mutex<NodeSet>,
 
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,
@@ -214,17 +215,17 @@ pub(crate) struct DocumentInner {
     pub layout: Mutex<LayoutEngine>,
 
     /// Latest published layout snapshot, updated atomically after layout computation.
-    pub layout_snapshot: RwLock<HashMap<NodeId, NodeLayout>>,
+    pub layout_snapshot: RwLock<NodeMap<NodeLayout>>,
 
     /// Current scroll offset per scroll container. Absent means `(0, 0)`.
-    pub scroll_offsets: Mutex<HashMap<NodeId, ScrollOffset>>,
+    pub scroll_offsets: Mutex<NodeMap<ScrollOffset>>,
 
     /// Last scroll activity per `WhenScrolling` container, for auto-hide timing.
     ///
     /// Recorded only for containers whose resolved `scrollbar_show` is
     /// `WhenScrolling`, and pruned once their bars have fully faded, so the map
     /// holds only bars that are visible or on their way out.
-    pub scroll_activity: Mutex<HashMap<NodeId, std::time::Instant>>,
+    pub scroll_activity: Mutex<NodeMap<std::time::Instant>>,
 
     /// The container whose scrollbar is currently grabbed, if any.
     ///

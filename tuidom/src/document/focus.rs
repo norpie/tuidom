@@ -1,9 +1,7 @@
-use std::collections::HashSet;
-
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{FocusKeys, KeyCode};
-use crate::id::NodeId;
+use crate::id::{NodeId, NodeSet};
 use crate::inner::PseudoStyles;
 use crate::lock;
 use crate::node::LayoutRect;
@@ -320,7 +318,7 @@ impl Document {
     fn collect_focusable_in_dom_order(
         &self,
         node: NodeId,
-        focusable: &HashSet<NodeId>,
+        focusable: &NodeSet,
         nodes: &mut Vec<NodeId>,
     ) {
         // A disabled node disables its whole subtree, so prune instead of descending.

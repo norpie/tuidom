@@ -1,6 +1,20 @@
 //! Node handle types.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use rustc_hash::FxBuildHasher;
+
+/// A map keyed by [`NodeId`].
+///
+/// The default hasher is SipHash, built to resist collision attacks on
+/// adversarial keys. A `NodeId` is two integers this crate allocates itself, so
+/// none of that applies, and hashing it showed up as a real share of a frame —
+/// the render walk looks up every node in several of these maps.
+pub(crate) type NodeMap<V> = HashMap<NodeId, V, FxBuildHasher>;
+
+/// A set of [`NodeId`]s, hashed like [`NodeMap`].
+pub(crate) type NodeSet = HashSet<NodeId, FxBuildHasher>;
 
 static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
 

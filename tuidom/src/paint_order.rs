@@ -1,8 +1,7 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::document::Document;
-use crate::id::NodeId;
+use crate::id::{NodeId, NodeSet};
 use crate::lock;
 use crate::node::{LayoutRect, NodeKindView};
 use crate::render::grid::ClipRect;
@@ -90,8 +89,8 @@ pub(crate) fn entry_contains(layout: &LayoutRect, x: i32, y: i32) -> bool {
 }
 
 /// The focused node and its ancestors, for `ScrollbarShow::WhenFocused`.
-fn focused_path(doc: &Document) -> HashSet<NodeId> {
-    let mut path = HashSet::new();
+fn focused_path(doc: &Document) -> NodeSet {
+    let mut path = NodeSet::default();
     let Some(focused) = doc.focused() else {
         return path;
     };
@@ -116,7 +115,7 @@ fn collect_ordered_entries(
     resolved: Option<Arc<ResolvedStyle>>,
     translation: (i32, i32),
     clip: ClipRect,
-    focus_path: &HashSet<NodeId>,
+    focus_path: &NodeSet,
     entries: &mut Vec<PaintEntry>,
 ) {
     let Some(mut entry) = collect_entry(doc, node_id, resolved) else {
@@ -209,7 +208,7 @@ fn scrollbar_entries(
     doc: &Document,
     entry: &PaintEntry,
     viewport: LayoutRect,
-    focus_path: &HashSet<NodeId>,
+    focus_path: &NodeSet,
 ) -> Vec<PaintEntry> {
     let scrolls_x = entry.resolved.overflow_x == Overflow::Scroll;
     let scrolls_y = entry.resolved.overflow_y == Overflow::Scroll;

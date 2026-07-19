@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
@@ -11,7 +11,9 @@ use crate::animation::driver::AnimationDriver;
 use crate::error::{Result, TuidomError};
 use crate::event::FocusKeys;
 use crate::event_loop;
-use crate::id::{NodeId, next_document_id};
+use rustc_hash::FxBuildHasher;
+
+use crate::id::{NodeId, NodeMap, NodeSet, next_document_id};
 use crate::inner::{DocumentInner, FocusStack};
 use crate::layout::LayoutEngine;
 use crate::lock;
@@ -67,7 +69,7 @@ impl Document {
         let (event_tx, event_rx) = unbounded_channel();
         let document_id = next_document_id();
         let root = NodeId::scoped(document_id, 0);
-        let nodes = dashmap::DashMap::new();
+        let nodes: dashmap::DashMap<NodeId, NodeData, FxBuildHasher> = dashmap::DashMap::default();
         nodes.insert(root, NodeData::box_node());
 
         let document = Self {
@@ -79,11 +81,11 @@ impl Document {
                 next_animation_id: AtomicU64::new(0),
                 root,
                 focus_contexts: Mutex::new(FocusStack::new(root)),
-                focusable_nodes: Mutex::new(HashSet::new()),
+                focusable_nodes: Mutex::new(NodeSet::default()),
                 focus_keys: Mutex::new(FocusKeys::default()),
-                pseudo_styles: Mutex::new(HashMap::new()),
+                pseudo_styles: Mutex::new(NodeMap::default()),
                 active_node: Mutex::new(None),
-                disabled_nodes: Mutex::new(HashSet::new()),
+                disabled_nodes: Mutex::new(NodeSet::default()),
                 tree_mutation: RwLock::new(()),
                 notify: Notify::new(),
                 shutdown: RwLock::new(false),
@@ -98,9 +100,9 @@ impl Document {
                 animation_frame_interval: RwLock::new(Some(DEFAULT_ANIMATION_FRAME_INTERVAL)),
                 manual_now: Mutex::new(None),
                 layout: Mutex::new(LayoutEngine::new()),
-                layout_snapshot: RwLock::new(HashMap::new()),
-                scroll_offsets: Mutex::new(HashMap::new()),
-                scroll_activity: Mutex::new(HashMap::new()),
+                layout_snapshot: RwLock::new(NodeMap::default()),
+                scroll_offsets: Mutex::new(NodeMap::default()),
+                scroll_activity: Mutex::new(NodeMap::default()),
                 scrollbar_grab: Mutex::new(None),
                 selection: Mutex::new(None),
                 selection_listeners: Mutex::new(Vec::new()),
