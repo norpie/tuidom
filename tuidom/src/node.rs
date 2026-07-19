@@ -18,7 +18,7 @@ use crate::style::{EdgeInsets, Style};
 // ---------------------------------------------------------------------------
 
 /// Computed layout for a node — position and size in terminal cells.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LayoutRect {
     /// X position in terminal cells. May be negative when content is offscreen.
     pub x: i32,

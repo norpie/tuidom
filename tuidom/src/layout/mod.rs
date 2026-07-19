@@ -32,6 +32,18 @@ pub(crate) struct LayoutEngine {
     taffy: TaffyTree<MeasureContext>,
     mapping: HashMap<NodeId, taffy::prelude::NodeId>,
     reverse_mapping: HashMap<taffy::prelude::NodeId, NodeId>,
+    /// Whether a layout input has changed since the last successful compute.
+    ///
+    /// Every layout input reaches taffy through one of this type's mutating
+    /// methods, so marking there covers every DOM path by construction: a path
+    /// that failed to mark would be one that failed to tell taffy, and would
+    /// already be broken. Marking is deliberately unconditional rather than
+    /// compared against the previous value — a spurious mark costs one
+    /// redundant pass, a missed one renders a stale frame.
+    dirty: bool,
+    /// Screen size at the last compute. It arrives as a `compute` argument
+    /// rather than a mutation, so it is the one input `dirty` cannot see.
+    last_dimensions: Option<(u16, u16)>,
 }
 
 // Taffy stores compact length values in tagged raw pointers, which prevents
@@ -53,7 +65,19 @@ impl LayoutEngine {
             taffy,
             mapping: HashMap::new(),
             reverse_mapping: HashMap::new(),
+            // Nothing has been computed yet, so the first pass must run.
+            dirty: true,
+            last_dimensions: None,
         }
+    }
+
+    /// Whether a layout pass would produce anything the snapshot does not
+    /// already hold.
+    ///
+    /// A clean engine at unchanged dimensions recomputes a bit-identical
+    /// snapshot, so the caller can keep the one it has.
+    pub fn needs_compute(&self, screen_width: u16, screen_height: u16) -> bool {
+        self.dirty || self.last_dimensions != Some((screen_width, screen_height))
     }
 
     /// Insert the persistent taffy node for a newly allocated DOM node.
@@ -67,6 +91,7 @@ impl LayoutEngine {
             return self.update_node(node_id, kind, resolved);
         }
 
+        self.dirty = true;
         let style = to_taffy_style(resolved);
         let taffy_id = match measure_context_for(kind) {
             Some(context) => self.taffy.new_leaf_with_context(style, context)?,
@@ -83,6 +108,7 @@ impl LayoutEngine {
         let Some(taffy_id) = self.mapping.remove(&node_id) else {
             return Ok(());
         };
+        self.dirty = true;
         self.reverse_mapping.remove(&taffy_id);
         self.taffy.remove(taffy_id)?;
         Ok(())
@@ -105,6 +131,7 @@ impl LayoutEngine {
             return Err(TuidomError::LayoutMappingMissing { id: node_id });
         };
 
+        self.dirty = true;
         self.taffy.set_style(taffy_id, to_taffy_style(resolved))?;
         Ok(())
     }
@@ -115,6 +142,7 @@ impl LayoutEngine {
             return Err(TuidomError::LayoutMappingMissing { id: node_id });
         };
 
+        self.dirty = true;
         self.taffy
             .set_node_context(taffy_id, measure_context_for(kind))?;
         Ok(())
@@ -136,6 +164,7 @@ impl LayoutEngine {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        self.dirty = true;
         self.taffy.set_children(parent_taffy, &taffy_children)?;
         Ok(())
     }
@@ -161,6 +190,11 @@ impl LayoutEngine {
 
         let mut layouts = Vec::new();
         self.collect_absolute_layouts(root, visible_children, 0.0, 0.0, &mut layouts)?;
+
+        // Cleared only here: an error above leaves the engine dirty, so the next
+        // frame retries rather than trusting a snapshot that was never produced.
+        self.dirty = false;
+        self.last_dimensions = Some((screen_width, screen_height));
         Ok(layouts)
     }
 
@@ -278,6 +312,20 @@ fn measure_context_for(kind: &NodeKind) -> Option<MeasureContext> {
 
 /// Compute layout for the permanent document root using persistent taffy state.
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> Result<()> {
+    // A clean engine at unchanged dimensions would rebuild a bit-identical
+    // snapshot, so the whole pass is skipped — including the visible-tree walk,
+    // which resolves every node, and the snapshot rebuild, which clears and
+    // refills the map. Both are unconditional otherwise, and at a few thousand
+    // nodes they are the single largest cost in a frame that changes nothing.
+    //
+    // The scroll re-clamp below is skipped with them, and safely: `scroll_to`
+    // clamps against the snapshot on every call, so the re-clamp exists only to
+    // catch a relayout shrinking content out from under a stored offset. No
+    // relayout, nothing to catch.
+    if !lock::mutex(&doc.inner.layout).needs_compute(screen_width, screen_height) {
+        return Ok(());
+    }
+
     let reclamped = {
         let _tree_guard = lock::rw_read(&doc.inner.tree_mutation);
         let root = doc.root();
