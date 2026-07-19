@@ -49,6 +49,7 @@ pub(crate) fn paint_order(doc: &Document) -> Vec<PaintEntry> {
     collect_ordered_entries(
         doc,
         doc.root(),
+        None,
         (0, 0),
         ClipRect::UNBOUNDED,
         &focus_path,
@@ -103,15 +104,22 @@ fn focused_path(doc: &Document) -> HashSet<NodeId> {
     path
 }
 
+/// `resolved` is this node's already-resolved style when the caller has one.
+///
+/// The parent resolves each child to read its `z_index` for the sort, so the
+/// value is in hand by the time the child is walked — resolving it a second time
+/// here would double the resolve count for the whole tree, and style resolution
+/// is the largest single cost in this walk.
 fn collect_ordered_entries(
     doc: &Document,
     node_id: NodeId,
+    resolved: Option<Arc<ResolvedStyle>>,
     translation: (i32, i32),
     clip: ClipRect,
     focus_path: &HashSet<NodeId>,
     entries: &mut Vec<PaintEntry>,
 ) {
-    let Some(mut entry) = collect_entry(doc, node_id) else {
+    let Some(mut entry) = collect_entry(doc, node_id, resolved) else {
         return;
     };
     entry.layout.x -= translation.0;
@@ -175,15 +183,16 @@ fn collect_ordered_entries(
             .enumerate()
             .filter_map(|(sequence, child)| {
                 let resolved = doc.resolved_style_arc(child).ok()?;
-                Some((resolved.z_index, sequence, child))
+                Some((resolved.z_index, sequence, child, resolved))
             })
             .collect::<Vec<_>>();
-        children.sort_by_key(|(z_index, sequence, _)| (*z_index, *sequence));
+        children.sort_by_key(|(z_index, sequence, _, _)| (*z_index, *sequence));
 
-        for (_, _, child) in children {
+        for (_, _, child, resolved) in children {
             collect_ordered_entries(
                 doc,
                 child,
+                Some(resolved),
                 child_translation,
                 child_clip,
                 focus_path,
@@ -360,9 +369,16 @@ fn rounded_div(numerator: u32, denominator: u32) -> u32 {
     (numerator + denominator / 2) / denominator
 }
 
-fn collect_entry(doc: &Document, node_id: NodeId) -> Option<PaintEntry> {
+fn collect_entry(
+    doc: &Document,
+    node_id: NodeId,
+    resolved: Option<Arc<ResolvedStyle>>,
+) -> Option<PaintEntry> {
     let view = doc.get_node(node_id)?;
-    let resolved = doc.resolved_style_arc(node_id).ok()?;
+    let resolved = match resolved {
+        Some(resolved) => resolved,
+        None => doc.resolved_style_arc(node_id).ok()?,
+    };
     if resolved.display == Display::None || resolved.opacity <= 0.0 {
         return None;
     }
