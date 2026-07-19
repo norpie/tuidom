@@ -212,6 +212,13 @@ impl Document {
         // underlying value it will hand back to.
         let (overrides, keyframe_overrides) = {
             let driver = lock::mutex(&self.inner.animation);
+            // Reading the clock is a lock of its own, and it was paid on every
+            // resolve — thousands a frame — to serve the handful of nodes that
+            // animate. A node in neither animation list cannot produce an
+            // override, so this returns exactly what the full path would.
+            if !driver.animates(id) {
+                return Ok(base);
+            }
             let now = self.now();
             let overrides = driver.overrides_for(id, now);
             let keyframe_overrides = driver.keyframe_overrides_for(id, now, &base);

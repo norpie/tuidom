@@ -311,6 +311,17 @@ impl AnimationDriver {
     }
 
     /// Get overrides that should be applied to resolved style for a node.
+    /// Whether this node has any transition or keyframe animation running.
+    ///
+    /// Both override lookups filter on `node_id`, so a node absent from these
+    /// lists is guaranteed to produce no overrides. Style resolution asks this
+    /// first to skip reading the clock — every resolve paid for that read, on a
+    /// tree where typically one node in thousands animates.
+    pub fn animates(&self, node_id: NodeId) -> bool {
+        self.active.iter().any(|t| t.node_id == node_id)
+            || self.keyframes.iter().any(|state| state.node_id == node_id)
+    }
+
     pub fn overrides_for(
         &self,
         node_id: NodeId,
