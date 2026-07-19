@@ -456,11 +456,91 @@ impl Grid {
         // Over an unpainted cell there is nothing to vary: the result is one color.
         let bg_over_unpainted = bg_src.map(|(src, src_alpha)| lerp_rgb(default_bg, src, src_alpha));
 
+        if replaces_content {
+            self.fill_rect_replacing(
+                x_start,
+                y_start,
+                x_end,
+                y_end,
+                &cell,
+                bg_src,
+                fg_src,
+                bg_over_unpainted,
+            );
+        } else {
+            // The content-preserving fill: a translucent layer over what is
+            // already painted, which is what a modal overlay is. Nothing here
+            // touches cell content, so the row is borrowed once instead of
+            // re-indexed per cell, and the blend depends only on the
+            // destination color — the source is invariant across the whole
+            // rect. Fills run over long spans of one background, so memoizing
+            // the last destination answers most cells with a comparison
+            // instead of six floating-point interpolations. The memo returns
+            // what the arithmetic would have: only the recomputation is
+            // skipped, never a different result.
+            let mut bg_memo: Option<(Rgb, Option<Rgb>)> = None;
+            let mut fg_memo: Option<(Rgb, Rgb)> = None;
+
+            for row in y_start..y_end {
+                let row_cells = &mut self.cells[row];
+                for dst in &mut row_cells[x_start..x_end] {
+                    let under = dst.bg;
+                    let bg = match (under, bg_src) {
+                        (_, None) => under,
+                        (None, Some(_)) => bg_over_unpainted,
+                        (Some(d), Some((src, src_alpha))) => match bg_memo {
+                            Some((seen, blended)) if seen == d => blended,
+                            _ => {
+                                let blended = Some(lerp_rgb(d, src, src_alpha));
+                                bg_memo = Some((d, blended));
+                                blended
+                            }
+                        },
+                    };
+
+                    if let Some((src, src_alpha)) = fg_src {
+                        dst.fg = Some(match dst.fg {
+                            Some(d) => match fg_memo {
+                                Some((seen, blended)) if seen == d => blended,
+                                _ => {
+                                    let blended = lerp_rgb(d, src, src_alpha);
+                                    fg_memo = Some((d, blended));
+                                    blended
+                                }
+                            },
+                            // Transparent text fades toward what the cell now sits on.
+                            None => lerp_rgb(bg.or(under).unwrap_or(default_bg), src, src_alpha),
+                        });
+                    }
+                    dst.bg = bg;
+                }
+            }
+        }
+
+        (x_end - x_start) * (y_end - y_start)
+    }
+
+    /// The fill that replaces cell content, kept out of line so it does not
+    /// enlarge [`fill_rect`] itself: the common fill is opaque and returns
+    /// before either loop, and paying for this body's code size on that path
+    /// measured as a regression across every non-translucent scenario.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn fill_rect_replacing(
+        &mut self,
+        x_start: usize,
+        y_start: usize,
+        x_end: usize,
+        y_end: usize,
+        cell: &Cell,
+        bg_src: Option<(Rgb, f64)>,
+        fg_src: Option<(Rgb, f64)>,
+        bg_over_unpainted: Option<Rgb>,
+    ) {
+        let default_bg = self.default_bg;
         for row in y_start..y_end {
             for col in x_start..x_end {
-                if replaces_content {
-                    self.clear_text_span_at(row, col);
-                }
+                self.clear_text_span_at(row, col);
 
                 let dst = &mut self.cells[row][col];
                 let under = dst.bg;
@@ -479,16 +559,12 @@ impl Grid {
                 }
                 dst.bg = bg;
 
-                // Preserved content keeps its attributes, so both are left alone
-                // together — the common case for a translucent fill over text.
-                if replaces_content {
-                    dst.content = cell.content.clone();
-                    dst.attrs = cell.attrs;
-                }
+                // Preserved content keeps its attributes, so both are left
+                // alone together.
+                dst.content = cell.content.clone();
+                dst.attrs = cell.attrs;
             }
         }
-
-        (x_end - x_start) * (y_end - y_start)
     }
 
     fn touch_rect(&mut self, x_start: usize, x_end: usize, y_start: usize, y_end: usize) {
