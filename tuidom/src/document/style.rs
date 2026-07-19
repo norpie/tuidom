@@ -191,26 +191,38 @@ impl Document {
     /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
     pub fn resolved_style(&self, id: NodeId) -> Result<ResolvedStyle> {
         let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
-        self.resolved_style_unlocked(id)
+        self.resolved_style_unlocked(id).map(|r| (*r).clone())
     }
 
-    pub(crate) fn resolved_style_unlocked(&self, id: NodeId) -> Result<ResolvedStyle> {
-        let mut resolved = self.resolved_base_style_unlocked(id)?;
+    pub(crate) fn resolved_style_unlocked(&self, id: NodeId) -> Result<Arc<ResolvedStyle>> {
+        let base = self.resolved_base_style_unlocked(id)?;
 
         // Apply animation overrides: transitions first, then keyframe values on
         // top — animations win on conflict, as in CSS. Keyframes sample against
         // the transition-adjusted style, so an implicit endpoint tracks the
         // underlying value it will hand back to.
-        {
+        let (overrides, keyframe_overrides) = {
             let driver = lock::mutex(&self.inner.animation);
             let now = self.now();
-            for (prop, val) in driver.overrides_for(id, now) {
-                apply_animated_value(&mut resolved, prop, val);
-            }
-            let keyframe_overrides = driver.keyframe_overrides_for(id, now, &resolved);
-            for (prop, val) in keyframe_overrides {
-                apply_animated_value(&mut resolved, prop, val);
-            }
+            let overrides = driver.overrides_for(id, now);
+            let keyframe_overrides = driver.keyframe_overrides_for(id, now, &base);
+            (overrides, keyframe_overrides)
+        };
+
+        // Nothing animating means the cached value *is* the answer, so the
+        // common node hands back its `Arc` untouched. Only a node with a live
+        // override pays the copy `make_mut` does to detach it from the cache.
+        if overrides.is_empty() && keyframe_overrides.is_empty() {
+            return Ok(base);
+        }
+
+        let mut resolved = base;
+        let target = Arc::make_mut(&mut resolved);
+        for (prop, val) in overrides {
+            apply_animated_value(target, prop, val);
+        }
+        for (prop, val) in keyframe_overrides {
+            apply_animated_value(target, prop, val);
         }
 
         Ok(resolved)
@@ -219,19 +231,19 @@ impl Document {
     /// Get the base resolved style without animation overrides.
     ///
     /// Used internally by the animation driver to read target values.
-    pub(crate) fn resolved_base_style(&self, id: NodeId) -> Result<ResolvedStyle> {
+    pub(crate) fn resolved_base_style(&self, id: NodeId) -> Result<Arc<ResolvedStyle>> {
         let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
         self.resolved_base_style_unlocked(id)
     }
 
-    pub(crate) fn resolved_base_style_unlocked(&self, id: NodeId) -> Result<ResolvedStyle> {
+    pub(crate) fn resolved_base_style_unlocked(&self, id: NodeId) -> Result<Arc<ResolvedStyle>> {
         // Check cache
         {
             let Some(node) = self.inner.nodes.get(&id) else {
                 return Err(TuidomError::NodeNotFound { id });
             };
             if let Some(resolved) = &*lock::rw_read(&node.resolved_style) {
-                return Ok(resolved.clone());
+                return Ok(Arc::clone(resolved));
             }
         }
 
@@ -251,9 +263,9 @@ impl Document {
                 return Err(TuidomError::NodeNotFound { id });
             };
             if id == self.root() {
-                ResolvedStyle::compute_with_defaults(&node, parent_resolved.as_ref(), &defaults)
+                ResolvedStyle::compute_with_defaults(&node, parent_resolved.as_deref(), &defaults)
             } else {
-                ResolvedStyle::compute(&node, parent_resolved.as_ref())
+                ResolvedStyle::compute(&node, parent_resolved.as_deref())
             }
         };
 
@@ -265,24 +277,25 @@ impl Document {
             if self.focused() == Some(id)
                 && let Some(focus_style) = &pseudo.focus
             {
-                resolved.apply_overrides(focus_style, parent_resolved.as_ref(), &defaults);
+                resolved.apply_overrides(focus_style, parent_resolved.as_deref(), &defaults);
             }
             if self.active() == Some(id)
                 && let Some(active_style) = &pseudo.active
             {
-                resolved.apply_overrides(active_style, parent_resolved.as_ref(), &defaults);
+                resolved.apply_overrides(active_style, parent_resolved.as_deref(), &defaults);
             }
             if let Some(disabled_style) = &pseudo.disabled
                 && self.is_effectively_disabled_unlocked(id)
             {
-                resolved.apply_overrides(disabled_style, parent_resolved.as_ref(), &defaults);
+                resolved.apply_overrides(disabled_style, parent_resolved.as_deref(), &defaults);
             }
         }
 
         let Some(node) = self.inner.nodes.get(&id) else {
             return Err(TuidomError::NodeNotFound { id });
         };
-        *lock::rw_write(&node.resolved_style) = Some(resolved.clone());
+        let resolved = Arc::new(resolved);
+        *lock::rw_write(&node.resolved_style) = Some(Arc::clone(&resolved));
         Ok(resolved)
     }
 

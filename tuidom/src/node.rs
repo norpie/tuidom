@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -281,7 +281,13 @@ pub(crate) struct NodeData {
     /// Inline style.
     pub style: Style,
     /// Cached resolved style. Set to `None` to mark as dirty.
-    pub resolved_style: RwLock<Option<ResolvedStyle>>,
+    ///
+    /// Behind an `Arc` because the cache is read far more than it is filled: a
+    /// frame resolves every node several times over, and `ResolvedStyle` is 408
+    /// bytes, so handing out copies made the hit path a memcpy over payloads
+    /// too large to stay in L1. A hit is now a pointer copy and one atomic, and
+    /// never touches the payload at all.
+    pub resolved_style: RwLock<Option<Arc<ResolvedStyle>>>,
     /// Transition configs for animatable properties.
     pub transition_configs: HashMap<TransitionProperty, TransitionConfig>,
     /// Arbitrary string attributes.

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::document::Document;
 use crate::document::scroll::scrollable_max;
 use crate::error::{Result, TuidomError};
@@ -142,7 +144,7 @@ impl Document {
     fn collect_layout_style_updates(
         &self,
         id: NodeId,
-        updates: &mut Vec<(NodeId, ResolvedStyle)>,
+        updates: &mut Vec<(NodeId, Arc<ResolvedStyle>)>,
     ) -> Result<()> {
         let resolved = self.resolved_base_style(id)?;
         updates.push((id, resolved));

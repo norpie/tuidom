@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
@@ -192,7 +194,7 @@ impl Document {
 
     /// Merged resolved styles for every node in the subtree that has transition
     /// configs — the nodes whose restyle could start a transition.
-    fn transition_style_snapshots(&self, node: NodeId) -> Vec<(NodeId, ResolvedStyle)> {
+    fn transition_style_snapshots(&self, node: NodeId) -> Vec<(NodeId, Arc<ResolvedStyle>)> {
         let mut snapshots = Vec::new();
         let mut stack = vec![node];
         while let Some(id) = stack.pop() {
