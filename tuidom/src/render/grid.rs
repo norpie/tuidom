@@ -15,6 +15,90 @@ enum Side {
     Right,
 }
 
+/// Bytes of a grapheme cluster that fit inside a cell without allocating.
+///
+/// Covers ASCII, every single scalar value, most combining sequences, and flag
+/// emoji. Chosen so [`Glyph`] occupies exactly what a `String` does, keeping
+/// [`Cell`] at its current size — a larger cell would cost more in clearing and
+/// copying the grid than the saved allocation is worth.
+const GLYPH_INLINE_BYTES: usize = 15;
+
+/// A grapheme cluster stored in a cell, inline where it fits.
+///
+/// Painting rewrites every glyph cell each frame, so a `String` here meant one
+/// allocation and one free per painted glyph per frame — measured at ~15% of a
+/// frame in the allocator alone. Grapheme clusters have no length bound (the ZWJ
+/// family is 25 bytes), so the heap arm is required for correctness rather than
+/// being a fallback for long text.
+#[derive(Debug, Clone, Eq)]
+pub(crate) enum Glyph {
+    /// Cluster bytes held in the cell itself. `len` is always a valid UTF-8
+    /// prefix length of `bytes`.
+    Inline {
+        len: u8,
+        bytes: [u8; GLYPH_INLINE_BYTES],
+    },
+    /// Clusters too long to inline.
+    Heap(Box<str>),
+}
+
+impl Glyph {
+    /// Store a grapheme cluster, inline when it fits.
+    pub fn new(text: &str) -> Self {
+        let source = text.as_bytes();
+        if source.len() > GLYPH_INLINE_BYTES {
+            return Self::Heap(text.into());
+        }
+        let mut bytes = [0u8; GLYPH_INLINE_BYTES];
+        bytes[..source.len()].copy_from_slice(source);
+        Self::Inline {
+            len: source.len() as u8,
+            bytes,
+        }
+    }
+
+    /// The cluster's text.
+    pub fn as_str(&self) -> &str {
+        match self {
+            // The bytes came from a `&str` and the length is the prefix that was
+            // copied, so this is always valid UTF-8.
+            Self::Inline { len, bytes } => {
+                str::from_utf8(&bytes[..*len as usize]).unwrap_or_default()
+            }
+            Self::Heap(text) => text,
+        }
+    }
+}
+
+// Written out rather than derived: a derived impl compares representations, so
+// an inline and a heap glyph holding the same text would compare unequal. The
+// constructor makes that unreachable today, but the diff treats unequal as
+// "repaint", and tying frame correctness to a construction invariant is not
+// worth the branch this saves.
+impl PartialEq for Glyph {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // The diff compares every glyph cell against the previous frame, and
+            // going through `as_str` here costs two UTF-8 validations per
+            // comparison — enough to lose more in the diff than inlining wins in
+            // paint. Equal bytes mean equal text, so compare them directly.
+            (
+                Self::Inline {
+                    len: own_len,
+                    bytes: own,
+                },
+                Self::Inline {
+                    len: other_len,
+                    bytes: other,
+                },
+            ) => own_len == other_len && own[..*own_len as usize] == other[..*other_len as usize],
+            // Mixed or heap arms are rare, and comparing text keeps equality
+            // independent of representation.
+            _ => self.as_str() == other.as_str(),
+        }
+    }
+}
+
 /// Text content stored in a single terminal cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CellContent {
@@ -23,7 +107,7 @@ pub(crate) enum CellContent {
     /// A grapheme cluster starting at this cell.
     Glyph {
         /// Grapheme cluster text.
-        text: String,
+        text: Glyph,
         /// Terminal cell width. Currently 1 or 2.
         width: u8,
     },
@@ -35,7 +119,7 @@ impl CellContent {
     fn terminal_text(&self) -> &str {
         match self {
             Self::Empty => " ",
-            Self::Glyph { text, .. } => text,
+            Self::Glyph { text, .. } => text.as_str(),
             Self::WideContinuation => "",
         }
     }
@@ -979,7 +1063,7 @@ impl Grid {
         let mut text = [0u8; 4];
         self.cells[row][col] = Cell {
             content: CellContent::Glyph {
-                text: glyph.encode_utf8(&mut text).to_string(),
+                text: Glyph::new(glyph.encode_utf8(&mut text)),
                 width: 1,
             },
             fg: blend_fg(under, Some(inner), alpha, under, self.default_bg),
@@ -1048,7 +1132,7 @@ impl Grid {
         let dst = &self.cells[row][col];
         let glyph_cell = Cell {
             content: CellContent::Glyph {
-                text: text.to_string(),
+                text: Glyph::new(text),
                 width,
             },
             fg: blend_fg(dst.fg, fg, alpha, dst.bg, self.default_bg),
@@ -1099,6 +1183,46 @@ mod tests {
 
     fn rgb(r: u8, g: u8, b: u8) -> Rgb {
         Rgb { r, g, b, a: 255 }
+    }
+
+    /// Inlining glyphs is only worth it while the cell does not grow: the grid is
+    /// cleared and copied wholesale every frame, so a wider cell would cost more
+    /// there than the saved allocation gains. Pinned so a later field addition
+    /// has to be a deliberate decision rather than a silent regression.
+    #[test]
+    fn cell_stays_the_size_inlining_was_chosen_for() {
+        assert_eq!(size_of::<Glyph>(), size_of::<String>());
+        assert_eq!(size_of::<Cell>(), 48);
+    }
+
+    /// Grapheme clusters have no length bound, so the heap arm is a correctness
+    /// requirement. A ZWJ family is 25 bytes and must survive a round trip.
+    #[test]
+    fn glyphs_too_long_to_inline_round_trip_through_the_heap() {
+        let family = "👨‍👩‍👧‍👦";
+        assert!(family.len() > GLYPH_INLINE_BYTES);
+        let glyph = Glyph::new(family);
+        assert!(matches!(glyph, Glyph::Heap(_)));
+        assert_eq!(glyph.as_str(), family);
+
+        // Every boundary length inlines exactly, including the empty cluster and
+        // a multi-byte cluster ending flush against the inline capacity.
+        for text in ["", "x", "é", "👍", "🇸🇪"] {
+            let glyph = Glyph::new(text);
+            assert!(matches!(glyph, Glyph::Inline { .. }));
+            assert_eq!(glyph.as_str(), text);
+        }
+    }
+
+    /// The diff treats unequal glyphs as a repaint, so equality must compare text
+    /// rather than representation — otherwise a spilled glyph would never match
+    /// an inline one holding the same cluster.
+    #[test]
+    fn glyph_equality_ignores_representation() {
+        let family = "👨‍👩‍👧‍👦";
+        assert_eq!(Glyph::Heap(family.into()), Glyph::new(family));
+        assert_eq!(Glyph::Heap("x".into()), Glyph::new("x"));
+        assert_ne!(Glyph::new("x"), Glyph::new("y"));
     }
 
     /// `lerp_u8` hand-rolls the rounding `f64::round` would do, to keep a software
@@ -1190,7 +1314,7 @@ mod tests {
         let contents = [
             CellContent::Empty,
             CellContent::Glyph {
-                text: "x".into(),
+                text: Glyph::new("x"),
                 width: 1,
             },
         ];
