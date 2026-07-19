@@ -19,6 +19,16 @@ use tuidom::style::{
 const WIDTH: u16 = 200;
 const HEIGHT: u16 = 50;
 
+/// The card count every scenario outside the `tree_size` group uses.
+///
+/// Held fixed so those scenarios stay comparable with every measurement taken
+/// before the group existed.
+const CARDS: usize = 24;
+
+/// Nodes a scene has before any cards: root, container, header, title, pulse,
+/// ten chips, grid. Each card adds three more.
+const BASE_NODES: usize = 16;
+
 type ScenarioBuilder = fn() -> HeadlessRuntime;
 
 /// A busy but ordinary scene: header with a pulsing chip row, then a wrapped
@@ -42,14 +52,14 @@ fn modal() -> HeadlessRuntime {
 /// one drives the full-redraw path and the per-cell encoding that goes with it —
 /// without it, a change that made flushing slower would not show up anywhere.
 fn churn() -> HeadlessRuntime {
-    build_scene_with(false, true)
+    build_scene_with(false, true, CARDS)
 }
 
 fn build_scene(with_modal: bool) -> HeadlessRuntime {
-    build_scene_with(with_modal, false)
+    build_scene_with(with_modal, false, CARDS)
 }
 
-fn build_scene_with(with_modal: bool, with_churn: bool) -> HeadlessRuntime {
+fn build_scene_with(with_modal: bool, with_churn: bool, cards: usize) -> HeadlessRuntime {
     let doc = Document::new().unwrap();
 
     let mut container_style = Style::new();
@@ -143,7 +153,7 @@ fn build_scene_with(with_modal: bool, with_churn: bool) -> HeadlessRuntime {
     doc.set_style(grid, &grid_style).unwrap();
     doc.append_child(container, grid).unwrap();
 
-    for card in 0..24 {
+    for card in 0..cards {
         let mut card_style = Style::new();
         card_style.flex_direction(FlexDirection::Column);
         card_style.padding(EdgeInsets::symmetric(0, 1));
@@ -258,5 +268,36 @@ fn bench_flushed_frame(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_frame, bench_flushed_frame);
+/// The baseline scene at growing tree sizes, viewport and damage held fixed.
+///
+/// Every other scenario is 88 nodes, so the whole plan-17 measurement series was
+/// taken at one point on the size curve — which is the one variable that tells
+/// the candidate optimizations apart. Per-cell costs (grid clear, diff, flush)
+/// scale with the 200×50 viewport and are constant across this group; per-node
+/// costs (layout, style resolution, the paint-order walk) scale with the tree.
+/// Whatever grows here is per-node by construction.
+///
+/// Cards past the viewport still lay out and still resolve their styles, but are
+/// culled before painting — so paint stays roughly flat while the walk does not.
+/// That is not an artifact to correct for: a large tree against a small terminal
+/// is the real workload, and it is exactly the case where the engine's cost stops
+/// tracking what the user can see.
+fn bench_tree_size(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tree_size");
+    for cards in [CARDS, 200, 600] {
+        let name = format!("{}n", BASE_NODES + cards * 3);
+        let mut runtime = build_scene_with(false, false, cards);
+        runtime.render_flushed().unwrap();
+        runtime.render_flushed().unwrap();
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                runtime.advance_time(Duration::from_millis(1));
+                runtime.render_flushed().unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_frame, bench_flushed_frame, bench_tree_size);
 criterion_main!(benches);
