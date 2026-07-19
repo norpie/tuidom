@@ -190,8 +190,17 @@ impl Document {
     ///
     /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
     pub fn resolved_style(&self, id: NodeId) -> Result<ResolvedStyle> {
+        self.resolved_style_arc(id).map(|r| (*r).clone())
+    }
+
+    /// The same value as [`Document::resolved_style`], shared rather than copied.
+    ///
+    /// `ResolvedStyle` is several hundred bytes, so a caller that only reads it —
+    /// the paint-order walk resolves every node and again every child — should
+    /// take the `Arc` and leave the payload where it is.
+    pub(crate) fn resolved_style_arc(&self, id: NodeId) -> Result<Arc<ResolvedStyle>> {
         let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
-        self.resolved_style_unlocked(id).map(|r| (*r).clone())
+        self.resolved_style_unlocked(id)
     }
 
     pub(crate) fn resolved_style_unlocked(&self, id: NodeId) -> Result<Arc<ResolvedStyle>> {

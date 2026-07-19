@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::document::Document;
 use crate::id::NodeId;
@@ -14,7 +15,10 @@ pub(crate) struct PaintEntry {
     pub kind: NodeKindView,
     /// The node's screen rectangle, translated by every scrollable ancestor's offset.
     pub layout: LayoutRect,
-    pub resolved: ResolvedStyle,
+    /// Shared with the style cache rather than copied: the walk resolves every node
+    /// and again every child, and `ResolvedStyle` is large enough that copying it
+    /// per entry was a measurable share of the frame.
+    pub resolved: Arc<ResolvedStyle>,
     /// The intersection of every scrolling/clipping ancestor's viewport. Painting and
     /// hit-testing outside it are dropped.
     pub clip: ClipRect,
@@ -170,7 +174,7 @@ fn collect_ordered_entries(
             .into_iter()
             .enumerate()
             .filter_map(|(sequence, child)| {
-                let resolved = doc.resolved_style(child).ok()?;
+                let resolved = doc.resolved_style_arc(child).ok()?;
                 Some((resolved.z_index, sequence, child))
             })
             .collect::<Vec<_>>();
@@ -300,7 +304,7 @@ fn strip_entry(entry: &PaintEntry, layout: LayoutRect, bar: ScrollbarPaint) -> P
         id: entry.id,
         kind: NodeKindView::Box,
         layout,
-        resolved: entry.resolved.clone(),
+        resolved: Arc::clone(&entry.resolved),
         clip: entry.clip,
         scrollbar: Some(bar),
     }
@@ -358,7 +362,7 @@ fn rounded_div(numerator: u32, denominator: u32) -> u32 {
 
 fn collect_entry(doc: &Document, node_id: NodeId) -> Option<PaintEntry> {
     let view = doc.get_node(node_id)?;
-    let resolved = doc.resolved_style(node_id).ok()?;
+    let resolved = doc.resolved_style_arc(node_id).ok()?;
     if resolved.display == Display::None || resolved.opacity <= 0.0 {
         return None;
     }
