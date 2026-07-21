@@ -139,11 +139,12 @@ impl Renderer {
 
         let total_cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);
         let full_redraw = should_flush_full(changes.len(), total_cells);
+        let bell = doc.take_pending_bell();
         let flush_start = std::time::Instant::now();
         if full_redraw {
-            self.terminal.flush_full(&self.new_grid, cursor)?;
+            self.terminal.flush_full(&self.new_grid, cursor, bell)?;
         } else {
-            self.terminal.flush_changes(&changes, cursor)?;
+            self.terminal.flush_changes(&changes, cursor, bell)?;
         }
         let flush_time = flush_start.elapsed();
         let cells_flushed = if full_redraw {
@@ -187,8 +188,9 @@ impl Renderer {
         let grid_stats = output.stats;
         let cursor = output.cursor;
 
+        let bell = doc.take_pending_bell();
         let flush_start = std::time::Instant::now();
-        self.terminal.flush_full(&self.new_grid, cursor)?;
+        self.terminal.flush_full(&self.new_grid, cursor, bell)?;
         let flush_time = flush_start.elapsed();
 
         let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);

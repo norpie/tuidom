@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -92,6 +92,7 @@ impl Document {
                 event_tx,
                 event_rx: TokioMutex::new(event_rx),
                 pending_resize: Mutex::new(None),
+                pending_bell: AtomicBool::new(false),
                 resize_notify: Notify::new(),
                 shutdown_notify: Arc::new(Notify::new()),
                 animation: Arc::new(Mutex::new(AnimationDriver::new())),
@@ -321,6 +322,27 @@ impl Document {
         self.inner.resize_notify.notify_waiters();
         self.inner.anim_config_changed.notify_waiters();
         self.inner.shutdown_notify.notify_waiters();
+    }
+
+    /// Ring the terminal bell.
+    ///
+    /// The bell is emitted by the next flush rather than written immediately: the
+    /// render task owns the output stream, and a byte written from another thread
+    /// could land in the middle of an escape sequence and corrupt it. Calling this
+    /// schedules a frame, so a bell still reaches the terminal when nothing on
+    /// screen changed.
+    ///
+    /// Several calls before that frame produce one bell — which is all a terminal
+    /// can make of them anyway. What the bell *does* is the terminal's choice: a
+    /// sound, a visual flash, or nothing at all.
+    pub fn bell(&self) {
+        self.inner.pending_bell.store(true, Ordering::SeqCst);
+        self.inner.notify.notify_one();
+    }
+
+    /// Claim a pending bell for the frame being flushed.
+    pub(crate) fn take_pending_bell(&self) -> bool {
+        self.inner.pending_bell.swap(false, Ordering::SeqCst)
     }
 
     /// Return the latest collected performance metrics.

@@ -1,7 +1,7 @@
 //! Internal document state behind `Arc`.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
@@ -188,6 +188,14 @@ pub(crate) struct DocumentInner {
 
     /// Latest pending terminal resize for the render task.
     pub pending_resize: Mutex<Option<(u16, u16)>>,
+
+    /// Whether a bell is waiting to be emitted by the next flush.
+    ///
+    /// A flag rather than a count: the flush path owns the output stream, so a
+    /// bell rides along with the next frame instead of racing it, and several
+    /// bells within one frame are one beep — which is all a terminal can make of
+    /// them anyway.
+    pub pending_bell: AtomicBool,
 
     /// Wakeup for render-task resize handling.
     pub resize_notify: Notify,

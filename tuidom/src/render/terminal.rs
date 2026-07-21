@@ -101,14 +101,31 @@ impl Terminal {
         &mut self,
         changes: &[CellChange],
         cursor: Option<RenderCursor>,
+        bell: bool,
     ) -> io::Result<()> {
-        flush_changes_into(&mut self.stdout, changes, cursor)
+        flush_changes_into(&mut self.stdout, changes, cursor, bell)
     }
 
     /// Flush the entire grid — used on resize.
-    pub fn flush_full(&mut self, grid: &Grid, cursor: Option<RenderCursor>) -> io::Result<()> {
-        flush_full_into(&mut self.stdout, grid, cursor)
+    pub fn flush_full(
+        &mut self,
+        grid: &Grid,
+        cursor: Option<RenderCursor>,
+        bell: bool,
+    ) -> io::Result<()> {
+        flush_full_into(&mut self.stdout, grid, cursor, bell)
     }
+}
+
+/// Queue a pending bell ahead of a frame's own output.
+///
+/// First in the flush so the bell is not held hostage by however long the frame's
+/// cell writes take, and so it still goes out when the frame writes nothing.
+fn queue_bell<W: Write>(out: &mut W, bell: bool) -> io::Result<()> {
+    if bell {
+        queue!(out, Print("\x07"))?;
+    }
+    Ok(())
 }
 
 /// Encode a set of cell changes as terminal output into `out`.
@@ -120,7 +137,9 @@ pub(crate) fn flush_changes_into<W: Write>(
     out: &mut W,
     changes: &[CellChange],
     cursor: Option<RenderCursor>,
+    bell: bool,
 ) -> io::Result<()> {
+    queue_bell(out, bell)?;
     // Attributes are sticky, so each flush starts from a known state and then emits only
     // transitions. `Attribute::Reset` also resets colors, which is harmless here because
     // every cell write re-specifies its own fg and bg.
@@ -140,8 +159,10 @@ pub(crate) fn flush_full_into<W: Write>(
     out: &mut W,
     grid: &Grid,
     cursor: Option<RenderCursor>,
+    bell: bool,
 ) -> io::Result<()> {
     use crossterm::terminal::{Clear, ClearType};
+    queue_bell(out, bell)?;
     queue!(
         out,
         Hide,

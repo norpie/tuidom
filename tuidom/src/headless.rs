@@ -215,12 +215,13 @@ impl HeadlessRuntime {
             None => true,
         };
 
+        let bell = self.doc.take_pending_bell();
         let flush_start = Instant::now();
         match (&changes, full_redraw) {
             (Some(changes), false) => {
-                flush_changes_into(&mut self.flush_output, changes, self.cursor)?
+                flush_changes_into(&mut self.flush_output, changes, self.cursor, bell)?
             }
-            _ => flush_full_into(&mut self.flush_output, &new_grid, self.cursor)?,
+            _ => flush_full_into(&mut self.flush_output, &new_grid, self.cursor, bell)?,
         }
         metrics.flush_time = flush_start.elapsed();
 
@@ -2178,5 +2179,92 @@ mod tests {
         runtime.simulate_text("bc");
 
         assert_eq!(&*seen.lock().unwrap(), "abc");
+    }
+
+    const BEL: u8 = 0x07;
+
+    fn bells_in(output: &[u8]) -> usize {
+        output.iter().filter(|byte| **byte == BEL).count()
+    }
+
+    #[test]
+    fn a_bell_rides_the_next_flush_and_leads_it() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+
+        doc.bell();
+        runtime.render_flushed().unwrap();
+
+        assert_eq!(bells_in(runtime.flush_output()), 1);
+        assert_eq!(
+            runtime.flush_output().first(),
+            Some(&BEL),
+            "the bell must lead the frame, not wait behind its cell writes"
+        );
+    }
+
+    #[test]
+    fn several_bells_before_one_frame_ring_once() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+
+        doc.bell();
+        doc.bell();
+        doc.bell();
+        runtime.render_flushed().unwrap();
+
+        assert_eq!(bells_in(runtime.flush_output()), 1);
+    }
+
+    #[test]
+    fn a_bell_is_claimed_by_one_frame_only() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+
+        doc.bell();
+        runtime.render_flushed().unwrap();
+        assert_eq!(bells_in(runtime.flush_output()), 1);
+
+        runtime.render_flushed().unwrap();
+        assert_eq!(
+            bells_in(runtime.flush_output()),
+            0,
+            "a rung bell must not echo on every later frame"
+        );
+    }
+
+    #[test]
+    fn a_bell_reaches_the_terminal_when_nothing_on_screen_changed() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("Hi").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+        // Settle the screen, so the next frame diffs to nothing at all.
+        runtime.render_flushed().unwrap();
+
+        doc.bell();
+        runtime.render_flushed().unwrap();
+
+        assert_eq!(bells_in(runtime.flush_output()), 1);
+        assert!(
+            !String::from_utf8_lossy(runtime.flush_output()).contains("Hi"),
+            "this frame should have had no cell writes of its own"
+        );
+    }
+
+    #[test]
+    fn a_full_redraw_carries_the_bell_too() {
+        let doc = Document::new().unwrap();
+        let text = doc.create_text("Hi").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+        doc.bell();
+        // The first frame has no previous grid to diff against, so it redraws fully.
+        runtime.render_flushed().unwrap();
+
+        assert_eq!(bells_in(runtime.flush_output()), 1);
+        assert_eq!(runtime.flush_output().first(), Some(&BEL));
     }
 }

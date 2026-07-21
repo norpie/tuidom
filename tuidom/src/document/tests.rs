@@ -4975,3 +4975,29 @@ fn targeted_handlers_run_guarded_and_survive_a_panic() {
     );
     assert!(!crate::panic::catching_panic());
 }
+
+/// A bell rides the next flush, so it is only ever heard if one is scheduled.
+/// Nothing on screen has to change for that to be true.
+#[tokio::test]
+async fn bell_schedules_a_frame() {
+    let doc = Document::new().unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.bell();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .expect("bell must wake the render task");
+}
+
+#[test]
+fn a_pending_bell_is_claimed_once() {
+    let doc = Document::new().unwrap();
+
+    assert!(!doc.take_pending_bell(), "no bell has been rung yet");
+    doc.bell();
+    assert!(doc.take_pending_bell());
+    assert!(
+        !doc.take_pending_bell(),
+        "the frame that claimed the bell consumed it"
+    );
+}
