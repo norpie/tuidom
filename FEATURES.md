@@ -23,14 +23,19 @@
 - [x] Attributes stored as `HashMap<String, String>`
 - [x] Public attributes API: set/get/remove
 - [x] `get_node(id)` for ID-based lookup — also exposes computed layout info (position, size)
-- [ ] `node_at(x, y)` for hit testing — returns topmost node at coordinates
+- [x] `node_at(x, y)` for hit testing — returns topmost node at coordinates
 - [x] Child ordering: `insert_before(parent, child, before_sibling)`, `move_child()`
-- [ ] Input (text input with cursor, selection, internal state)
-  - [ ] Full selection support (mouse drag, ctrl+a, shift+arrows)
-  - [ ] `multiline: bool` (default false) — single-line vs textarea
-  - [ ] `mask: Option<char>` (default None) — for password fields
+- [x] Input (text input with cursor, selection, internal state)
+  - [ ] Full selection support:
+    - [x] mouse drag — an Input is an implicit selection boundary, so a drag inside it
+          drives the input's own selection
+    - [ ] ctrl+a, shift+arrows — the key default action handles no modifiers yet
+  - [x] `multiline: bool` (default false) — single-line vs textarea
+  - [x] `mask: Option<char>` (default None) — for password fields
   - [ ] `show_cursor: Always | WhenFocused | Never` (default WhenFocused)
-  - [ ] Focusable by default
+  - [x] Focusable by default
+  - [x] `on_input` fires on value change — the edit is a key *default action* that runs
+        after listeners, so nothing outside could otherwise observe a keystroke
 
 ## Cursor
 
@@ -43,17 +48,21 @@
 ## Focus Management
 
 - [x] Focus is `Option<NodeId>` per focus context — can be `None`
-- [ ] Tab order follows DOM definition order
-- [ ] Arrow key navigation based on visual/spatial distance:
-  - [ ] Press arrow → focus nearest focusable node in that direction
-  - [ ] Distance measured edge-to-edge
-  - [ ] Tiebreaker: topmost (smallest y)
-  - [ ] No wrap — if nothing in that direction, do nothing (downstream can override via events)
-- [ ] Tab when focus is `None` focuses first focusable node (re-enter cycle)
+- [x] Tab order follows DOM definition order — walked from the active focus context, so
+      an open modal-like context scopes tab order without a filtering pass
+- [x] Arrow key navigation based on visual/spatial distance:
+  - [x] Press arrow → focus nearest focusable node in that direction
+  - [x] Distance measured edge-to-edge
+  - [x] Tiebreaker: **implemented differently** — ties break on cross-axis center distance
+        first, then paint order (topmost painted wins), not on smallest y. Center distance
+        is what makes the nearest *aligned* node win rather than an arbitrary one sharing
+        an edge.
+  - [x] No wrap — if nothing in that direction, do nothing (downstream can override via events)
+- [x] Tab when focus is `None` focuses first focusable node (re-enter cycle)
 - [x] Imperative control:
   - [x] `doc.focus(node_id)` — succeeds only if node is in active context (not behind a modal)
   - [x] `doc.blur()` — sets focus to `None` within current context
-- [ ] Focusable property: Box defaults to false, Input defaults to true
+- [x] Focusable property: Box defaults to false, Input defaults to true (`set_focusable`)
 - [x] Escape key behavior:
   - [x] First press: blur current node (focus → None)
   - [x] Second press (when already None): propagates to handlers (e.g., close modal)
@@ -259,6 +268,14 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [ ] Focus: focus, blur
     - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
   - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
+  - [x] Input: `on_input` fires on an `Input` node when its value changes (target, then
+        bubbles — like the DOM's, so a form-shaped container observes every field)
+    - [x] Real changes only: a keystroke that edits nothing, and cursor or selection
+          movement, stay silent
+    - [x] Programmatic `set_input_value` stays silent, so a two-way binding cannot loop
+          back through its own listener
+    - [x] No `prevent_default` — it reports a change already made; `prevent_default()` on
+          the key press suppresses the edit itself
   - [x] Frame: `on_post_frame` — document-level like resize, fires after each rendered frame with its metrics; DOM mutation in the handler schedules another frame, so handlers pace their mutations
   - [x] Animation: `on_transition_end`, `on_animation_end`, `on_animation_iteration` — node-targeted and bubbling like the DOM's; exempt from the disabled/inert swallow, since they report a change the engine already made
   - [x] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus

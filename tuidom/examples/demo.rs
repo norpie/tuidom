@@ -13,7 +13,8 @@
 //! Arrows / hjkl        — move focus spatially, or move input cursor
 //! Esc                  — blur focused node; press again in the modal to close it
 //! Hover buttons/input  — focus node
-//! Type in inputs       — edit text / masked password input
+//! Type in inputs       — edit text / masked password input; the status line tracks the
+//!                        value via one bubbled `on_input` listener on the row
 //! Space outside input  — toggle first button opacity (fade in/out)
 //! Click first button   — toggle button background, stop propagation
 //! Click background     — toggle container background
@@ -602,6 +603,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    let input_status = doc.create_text("input: \"edit me\"")?;
+    doc.set_style(input_status, &label_style)?;
+
+    // Registered on the row rather than on either input: on_input bubbles, so one
+    // listener covers both fields. The masked field reports its real value — masking is
+    // a render concern, not a state one.
+    {
+        let d = doc.clone();
+        doc.on_input(input_row, move |event| {
+            let which = if event.target() == password {
+                "password"
+            } else {
+                "input"
+            };
+            let _ = d.set_text_content(input_status, format!("{which}: {:?}", event.value));
+        })?;
+    }
+
     let window_status = doc.create_text("window: focused")?;
     doc.set_style(window_status, &label_style)?;
 
@@ -723,6 +742,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, selection_label)?;
     doc.append_child(stack, selection_row)?;
     doc.append_child(stack, selection_status)?;
+    doc.append_child(stack, input_status)?;
     doc.append_child(stack, window_status)?;
     doc.append_child(stack, animation_label)?;
     doc.append_child(stack, animation_row)?;
