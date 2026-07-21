@@ -50,6 +50,11 @@ until a given guide exists.
 - [**Layout**](layout.md) — flexbox in terminal cells, positioning, reading computed
   geometry, and centering when the space is odd
 
+- [**Events**](events.md) — dispatch and propagation, default actions and
+  `prevent_default`, coalescing, and the events that report what the engine did
+- [**Focus and selection**](focus-and-selection.md) — focus contexts and the focus stack,
+  inert versus disabled, spatial navigation, and screen-wide text selection
+
 <!-- Further guides are listed here as they land. -->
 
 ## Reading order

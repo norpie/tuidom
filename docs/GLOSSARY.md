@@ -126,43 +126,47 @@ stacking entries below still carry their own reasoning.*
 
 ## Events
 
+*Explained in [events](events.md).*
+
 **Event** — Input or system notification dispatched to handlers. Carries event-specific data and, for targeted events, propagation state.
 
-**Listener** — User-provided handler function. Internally stored with a stable id and shared callback so dispatch can snapshot listeners before invocation.
+**Listener** — A user-provided handler. `Fn + Send + Sync + 'static`, synchronous, and caught on panic. See [listener handles](events.md#listener-handles).
 
-**ListenerHandle** — Opaque handle for removing a registered listener. Contains a document-scoped listener id so handles from different documents do not collide.
+**ListenerHandle** — Opaque, document-scoped handle for removing a registered listener. See [listener handles](events.md#listener-handles).
 
-**Propagation** — Event flow through DOM tree. Target phase (fires on target node) → Bubble phase (fires on ancestors, root-ward).
+**Propagation** — Event flow through the tree: target phase, then bubble phase rootward. There is no capture phase. See [propagation](events.md#propagation).
 
-**Event Loop** — Async runtime that waits for terminal events, document notifications, animation state, and shutdown. It dispatches terminal events to listeners and renders when needed.
+**Event Loop** — The async runtime waiting on terminal events, document notifications, animation state, and shutdown. See [how a frame happens](architecture.md#how-a-frame-happens).
 
-**Input Event** — An `Input` node's value changed, reported by `on_input` after the key press default action that edited it. It targets the input and bubbles, so a form-shaped container can observe every field inside it without registering on each. It exists because the edit is a *default action*, which runs after listeners: an `on_key_press` handler reading `input_value()` sees the value as it was before the keystroke, with no way to observe the change short of deferring a frame. Only real changes fire it — a keystroke that edits nothing, and cursor or selection movement, leave the value alone and stay silent. Programmatic writes through `set_input_value` are silent too: the caller already knows what it wrote, and reporting it back would loop a two-way binding through itself. It carries no `prevent_default`, because it reports a change already made; the place to suppress the change is `prevent_default()` on the key press. It needs no disabled/inert exemption either, unlike the animation events — the default action only runs on the focused node, and a node cannot hold focus while blocked.
+**Input Event** — An `Input` node's value changed, reported by `on_input` after the key press default action that edited it. Targets the input and bubbles. See [events that report what the engine did](events.md#events-that-report-what-the-engine-did).
 
-**Post-Frame Event** — Document-level notification that a frame just finished, carrying that frame's recorded metrics. Like resize it has no target node and does not bubble. The render task never runs user code: the event goes through the runtime queue so handlers run on the event task, ordered with input handlers. Mutating the DOM from a post-frame handler schedules another frame, whose own post-frame event fires in turn — an unpaced handler keeps the renderer permanently active, so handlers pace their mutations to let it go idle.
+**Post-Frame Event** — Document-level notification that a frame finished, carrying its metrics. See [post-frame](events.md#post-frame).
 
-**Window Focus** — Whether the *terminal window* holds OS focus, reported as the document-level `on_window_focus` / `on_window_blur` events. Not DOM focus, despite the shared word: it names no node, and gaining or losing it never moves the focused node or disturbs the focus stack — alt-tabbing away and back returns the user to the node they left. Only terminals that support focus reporting send it; one that does not simply stays silent.
+**Window Focus** — Whether the *terminal window* holds OS focus, not DOM focus. Never moves the focused node. See [window focus](events.md#window-focus).
 
-**Input Coalescing** — Collapsing redundant runs in the batch of events already queued behind the one being processed. Only pointer movement and resize collapse, and only when adjacent: everything else — keys, presses, releases, wheel ticks — carries information its successor does not. Adjacency is the rule that makes it safe, because hover-to-focus lets the pointer's position decide which node a key press targets, so merging movement *across* a key would deliver it to the wrong node. Nothing is ever delayed to build a batch; a batch of one is returned unchanged, and collapsing only happens when the event task was already behind. This is also the queue's only bound — there is no backpressure, because there is nobody to push back on a terminal and dropping input would lose keystrokes silently.
+**Input Coalescing** — Collapsing adjacent runs of pointer movement and resize in an already-queued batch; the queue's only bound, since it applies no backpressure. See [input coalescing](events.md#input-coalescing).
 
-**Panic Restore** — The process-wide panic hook that puts the terminal back before a crash reaches the user: it undoes exactly the modes currently turned on, then chains to whatever hook was installed before it. It is installed only when a real terminal is set up, and never for a panic inside a downstream callback — those are caught, logged, and survived, so restoring for one would tear down an application that is still running. Terminal modes are tracked in one place that the setup guard, the normal drop, and the hook all restore from, and exactly one of them ever claims it.
+**Panic Restore** — The process-wide panic hook that restores terminal modes before a crash reaches the user, chaining to the previously installed hook. Never used for caught callback panics. See [panics and terminal restore](events.md#panics-and-terminal-restore).
 
-**Bell** — `doc.bell()`, emitted as `\x07` by the next flush rather than written when called: the render task owns the output stream, and a byte written from another thread could land inside an escape sequence and corrupt it. Ringing schedules a frame, so a bell still reaches the terminal when nothing on screen changed, and several bells before that frame produce one — which is all a terminal can make of them. What a bell *does* is the terminal's choice: a sound, a visual flash, or nothing.
+**Bell** — `doc.bell()`, emitted as `\x07` by the next flush rather than written when called. Coalesced, and schedules a frame. See [the bell](events.md#the-bell).
 
 ## Focus & Selection
 
-**Focus Context** — A subtree that traps focus, opened on a stacking context with `push_focus_context` and closed with `pop_focus_context`. The active context scopes everything about focus: `focused()` reports the focused node *within* it, tab order and spatial navigation search only inside it, and everything outside it is inert. The document root is a permanent focus context, so with nothing open the whole tree is in scope.
+*Explained in [focus and selection](focus-and-selection.md).*
 
-**Focus Stack** — The stack of open focus contexts, innermost last, with the permanent root context at the bottom. Each level remembers its own focused node, so restoring focus when a modal closes is just a pop rather than separate bookkeeping. Nested modals unwind in order. If a remembered node no longer exists, is no longer focusable, or has been disabled, focus is left cleared instead of jumping to a node the user never selected.
+**Focus Context** — A subtree that traps focus, opened on a stacking context with `push_focus_context`. Scopes `focused()`, tab order, and navigation; everything outside is inert. See [focus contexts](focus-and-selection.md#focus-contexts).
 
-**Inert** — State that blocks interaction on everything outside the active focus context. Inert nodes cannot be focused, are skipped by tab and spatial navigation, and swallow input events rather than bubbling them. Unlike a disabled node, an inert node merges no style — content behind a modal keeps its own appearance. Focus and blur events are exempt from the swallow, since they report a focus change the engine has already made.
+**Focus Stack** — The stack of open contexts, innermost last, each remembering its own focused node so a pop restores focus. See [the focus stack](focus-and-selection.md#the-focus-stack).
 
-**Spatial Navigation** — Arrow key focus movement based on visual distance (edge-to-edge) rather than DOM order.
+**Inert** — State that blocks interaction outside the active focus context. Unlike disabled, it merges no style. See [inert versus disabled](focus-and-selection.md#inert-versus-disabled).
 
-**Selection Boundary** — Container marked `selection_boundary: true`. A drag is confined to the boundary of its *starting* point — the nearest marked ancestor-or-self, the root when nothing is marked — for the whole gesture: crossing into another boundary just snaps the focus point to the nearest text inside the original one. An Input is an implicit boundary whose drag drives the input's own selection instead. Within one boundary, the selected range follows document order, so two unmarked columns select browser-style — the tail of one plus the head of the other.
+**Spatial Navigation** — Arrow key focus movement by visual edge-to-edge distance rather than DOM order. See [keyboard navigation](focus-and-selection.md#keyboard-navigation).
 
-**SelectionPoint** — A position in a document selection: a Text node plus a byte offset on a grapheme boundary. Content-addressed rather than screen-addressed, so scrolling never moves or invalidates it — rendering re-maps it through the current layout each frame. Consumers see the anchor/focus pair normalized to document order with the end extended past the glyph under it, so both endpoint cells of a drag are included, the way terminals select.
+**Selection Boundary** — A container marked `selection_boundary: true`, confining a drag to the boundary it started in. An Input is an implicit one. See [selection boundaries](focus-and-selection.md#selection-boundaries).
 
-**Selection Colors** — `selection_bg` / `selection_fg`, the style colors selected glyphs render with. Unset means reverse video: each selected cell swaps its foreground and background, visible on any theme with zero configuration. A drag that starts on a non-text cell snaps to the nearest character in the boundary, and a left press both clears the selection and arms a new drag — `prevent_default()` on the mouse down suppresses that default, keeping the selection.
+**SelectionPoint** — A position in a selection: a Text node plus a grapheme-aligned byte offset. Content-addressed, so scrolling never invalidates it. See [`SelectionPoint` is content-addressed](focus-and-selection.md#selectionpoint-is-content-addressed).
+
+**Selection Colors** — `selection_bg` / `selection_fg`; unset means reverse video. See [selection colors](focus-and-selection.md#selection-colors).
 
 ## Animation
 
