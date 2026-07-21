@@ -1031,14 +1031,9 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
- "tuidom-derive",
  "unicode-segmentation",
  "unicode-width",
 ]
-
-[[package]]
-name = "tuidom-derive"
-version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

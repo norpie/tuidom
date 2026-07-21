@@ -350,31 +350,23 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 
 ## DSL / Node Macro
 
-- [ ] RSX-style `node!` macro for declaring DOM structure:
-  ```rust
-  node!(doc,
-      box id="container" style={my_style} {
-          text { "Hello World" }
-          box focusable=true on_click={handler} {
-              text { "Click me" }
-          }
-      }
-  )
-  ```
-- [ ] Macro takes `&Document`, uses interior mutability — nested expressions work
-- [ ] Returns root `NodeId`
-- [ ] Expression escape hatch `{expr}` for inserting dynamic children:
-  ```rust
-  node!(doc,
-      box {
-          {some_component(doc, props)}  // Any expr returning NodeId
-      }
-  )
-  ```
-- [ ] Downstream component systems build on top:
-  - [ ] Components are just functions/structs returning `NodeId`
-  - [ ] Downstream creates their own macros for reactivity, state management
-  - [ ] We provide primitives, they provide abstractions
+**Out of scope for the engine.** A declarative DOM macro was planned here as `node!`, and
+the stub crate that would have held it has been removed rather than left exporting a
+`todo!()`. Two things changed the placement:
+
+- A tree-building macro is only worth having if it also expresses *updates*, and updates
+  are a reactivity question — which is a framework concern, not an engine one. The engine
+  deliberately has no opinion about how downstream drives it.
+- The framework layer settled on `view!` as the canonical declarative syntax, so `node!`
+  would have been a second, weaker spelling of the same idea.
+
+What stays true here regardless of the macro:
+
+- [x] The raw builder API is the supported way to construct a tree, and stays a
+      first-class surface rather than something a macro is expected to paper over
+- [x] Components are just functions returning `NodeId` — the engine needs no component
+      concept for that to work
+- [x] Downstream owns reactivity, state management, and any macro layer over this API
 
 ## Debugging & Developer Tools
 

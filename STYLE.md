@@ -28,7 +28,8 @@
 ## Documentation
 
 - Doc comments required on all public items
-- No module-level docs
+- Module-level docs where a module needs orientation, not on every file — a `//!` should
+  say what a module is *for* and what invariant holds across it, not restate its name
 - Examples developed alongside features to verify functionality
 - Focus on "why" and usage, not "what" (code is self-documenting)
 
