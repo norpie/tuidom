@@ -252,14 +252,20 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [ ] Events:
   - [x] Keyboard: key press
   - [x] Terminal resize
-  - [ ] Keyboard: key down, key up
+  - [ ] Keyboard: key down, key up — **not planned**: key release needs the kitty
+        keyboard protocol, so the API would silently never fire on most terminals.
+        `Repeat` is dropped alongside `Release` for the same reason.
   - [ ] Mouse: click, mouse down, mouse up, wheel (raw input)
   - [ ] Focus: focus, blur
     - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
   - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
   - [x] Frame: `on_post_frame` — document-level like resize, fires after each rendered frame with its metrics; DOM mutation in the handler schedules another frame, so handlers pace their mutations
   - [x] Animation: `on_transition_end`, `on_animation_end`, `on_animation_iteration` — node-targeted and bubbling like the DOM's; exempt from the disabled/inert swallow, since they report a change the engine already made
-  - [ ] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
+  - [x] Window: `on_window_focus`, `on_window_blur` — terminal window gains/loses OS focus
+    - [x] Document-level like resize: no target node, no bubbling
+    - [x] Never touches DOM focus or the focus stack — alt-tabbing back returns the
+          user to the node they left
+    - [x] Terminals without focus reporting simply never send it; no capability check
 - [x] Listener registration returns handle for removal
 - [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults), wheel (default scroll), and mouse down (selection start)
 
@@ -309,9 +315,21 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Restore terminal state on exit (raw mode, alternate screen, cursor visibility)
   - [x] Drop guard restores terminal state after successful setup
   - [x] Setup guard restores partially initialized terminal state if startup fails
-  - [ ] Panic hook restores terminal state even on crash
+  - [x] Panic hook restores terminal state even on crash
+    - [x] Chains to the previously installed hook; installed once, only for a real terminal
+    - [x] Skipped for panics inside downstream callbacks, which are caught and survived
+    - [x] One `Terminal` per process, enforced — a second `run()` is refused, not left
+          to corrupt the screen
+- [x] Input queue policy: unbounded, coalesced rather than backpressured
+  - [x] Adjacent pointer-move and resize runs collapse to the latest
+  - [x] Keys, presses, releases, and wheel ticks are never dropped or reordered
+  - [x] Coalescing engages only when the event task is already behind — nothing is
+        ever delayed to build a batch
 - [x] No built-in Ctrl+C or signal handling — user's responsibility (use `tokio::signal`, etc.)
-- [ ] `doc.bell()` — trigger terminal bell
+- [x] `doc.bell()` — trigger terminal bell
+  - [x] Emitted by the next flush, never written from the calling thread
+  - [x] Schedules a frame, so it rings when nothing on screen changed
+  - [x] Coalesced: several bells before one frame ring once
 
 ## DSL / Node Macro
 

@@ -5,6 +5,9 @@
 //! scrolling with overlay scrollbars, terminal text attributes, transitions,
 //! and the performance metrics API surfaced through the post-frame event.
 //!
+//! The terminal is also restored by a panic hook, so a crash cannot strand the
+//! user in the alternate screen with raw mode still on.
+//!
 //! Tab / Shift-Tab      — move focus in DOM order
 //! Focus the "focus me" panel — its border recolors, charset and sides untouched
 //! Arrows / hjkl        — move focus spatially, or move input cursor
@@ -27,6 +30,9 @@
 //!                        run unpaced (set_animation_fps(None)) as a stress test;
 //!                        hover the "hover me" chip — its background fades via a
 //!                        transition triggered by the focus pseudo-state
+//! b outside input      — ring the terminal bell (what that does is the
+//!                        terminal's choice: a sound, a flash, or nothing)
+//! Focus another window — the status line tracks it; DOM focus is untouched
 //! [ / ] outside input  — scroll the horizontal pane
 //! m outside input      — open the modal: focus is trapped inside it and the
 //!                        content behind it goes inert (no tab, hover, or clicks)
@@ -596,6 +602,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    let window_status = doc.create_text("window: focused")?;
+    doc.set_style(window_status, &label_style)?;
+
+    // Window focus is the OS window, not the DOM: alt-tabbing away leaves the
+    // focused node exactly where it was.
+    {
+        let d = doc.clone();
+        doc.on_window_focus(move |_| {
+            let _ = d.set_text_content(window_status, "window: focused");
+        });
+        let d = doc.clone();
+        doc.on_window_blur(move |_| {
+            let _ = d.set_text_content(window_status, "window: unfocused");
+        });
+    }
+
     doc.append_child(selection_row, left_boundary)?;
     doc.append_child(selection_row, right_boundary)?;
 
@@ -701,6 +723,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(stack, selection_label)?;
     doc.append_child(stack, selection_row)?;
     doc.append_child(stack, selection_status)?;
+    doc.append_child(stack, window_status)?;
     doc.append_child(stack, animation_label)?;
     doc.append_child(stack, animation_row)?;
     doc.append_child(stack, attrs_label)?;
@@ -829,6 +852,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KeyCode::Char(']') => {
                 let _ = d.scroll_by(wide, 4, 0);
             }
+            KeyCode::Char('b') => d.bell(),
             KeyCode::Char('q') => d.quit(),
             _ => {}
         }
