@@ -5001,3 +5001,75 @@ fn a_pending_bell_is_claimed_once() {
         "the frame that claimed the bell consumed it"
     );
 }
+
+#[test]
+fn window_focus_and_blur_reach_document_listeners() {
+    let doc = Document::new().unwrap();
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let focus_log = log.clone();
+    doc.on_window_focus(move |_| focus_log.lock().unwrap().push("focus"));
+    let blur_log = log.clone();
+    doc.on_window_blur(move |_| blur_log.lock().unwrap().push("blur"));
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.simulate_window_blur();
+    runtime.simulate_window_focus();
+    runtime.simulate_window_blur();
+
+    assert_eq!(&*log.lock().unwrap(), &["blur", "focus", "blur"]);
+}
+
+/// Window focus is the OS window, not the DOM. Alt-tabbing away and back must
+/// return the user to the node they left — including through a modal's trapped
+/// focus context, which is where losing it would be most destructive.
+#[test]
+fn window_focus_changes_leave_dom_focus_untouched() {
+    let doc = Document::new().unwrap();
+
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    let inner = focusable_child(&doc, modal);
+
+    doc.push_focus_context(modal).unwrap();
+    doc.focus(inner).unwrap();
+
+    let focused_before = doc.focused();
+    let depth_before = lock::mutex(&doc.inner.focus_contexts).depth();
+    assert_eq!(focused_before, Some(inner));
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.simulate_window_blur();
+    assert_eq!(
+        doc.focused(),
+        focused_before,
+        "blur must not clear DOM focus"
+    );
+
+    runtime.simulate_window_focus();
+    assert_eq!(doc.focused(), focused_before);
+    assert_eq!(
+        lock::mutex(&doc.inner.focus_contexts).depth(),
+        depth_before,
+        "the focus stack must survive a window focus cycle"
+    );
+}
+
+#[test]
+fn window_focus_listeners_can_be_removed() {
+    let doc = Document::new().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let hits = calls.clone();
+    let handle = doc.on_window_focus(move |_| {
+        hits.fetch_add(1, Ordering::Relaxed);
+    });
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.simulate_window_focus();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    assert!(doc.remove_listener(handle));
+    runtime.simulate_window_focus();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}

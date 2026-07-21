@@ -30,6 +30,10 @@ pub(crate) enum RuntimeEvent {
     Wheel(WheelEvent),
     /// Runtime resize requiring both public dispatch and renderer resize.
     Resize(ResizeEvent),
+    /// The terminal window gained OS focus.
+    WindowFocus,
+    /// The terminal window lost OS focus.
+    WindowBlur,
     /// A rendered frame, queued by the render task for post-frame dispatch.
     /// Boxed so the frame's metrics don't dominate the size of every queued event.
     PostFrame(Box<PostFrameEvent>),
@@ -176,6 +180,15 @@ pub(crate) fn process_runtime_event(
         RuntimeEvent::Resize(resize) => {
             doc.dispatch_resize(resize.clone());
             set_pending_resize(doc, resize);
+        }
+        // Window focus is the OS window, not the DOM. It deliberately leaves the
+        // focused node and the focus stack alone: alt-tabbing away and back must
+        // return the user to the node they left, not to nothing.
+        RuntimeEvent::WindowFocus => {
+            doc.dispatch_window_focus();
+        }
+        RuntimeEvent::WindowBlur => {
+            doc.dispatch_window_blur();
         }
         // Not input: a frame between a mouse down and up must not suppress the click.
         RuntimeEvent::PostFrame(mut event) => {

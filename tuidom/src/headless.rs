@@ -316,6 +316,19 @@ impl HeadlessRuntime {
         );
     }
 
+    /// Dispatch a simulated terminal window focus gain.
+    ///
+    /// The window is not a node: this reaches `on_window_focus` listeners and
+    /// leaves DOM focus alone.
+    pub fn simulate_window_focus(&mut self) {
+        process_runtime_event(&self.doc, RuntimeEvent::WindowFocus, &mut self.event_state);
+    }
+
+    /// Dispatch a simulated terminal window focus loss.
+    pub fn simulate_window_blur(&mut self) {
+        process_runtime_event(&self.doc, RuntimeEvent::WindowBlur, &mut self.event_state);
+    }
+
     /// Dispatch a simulated mouse button press at a screen coordinate.
     ///
     /// Mouse targeting uses the latest committed layout snapshot. Call

@@ -4,7 +4,9 @@ use std::io::{self, Stdout, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{
+    DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+};
 use crossterm::queue;
 use crossterm::style::{
     Attribute, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
@@ -41,6 +43,7 @@ const RAW_MODE: u8 = 1 << 0;
 const ALTERNATE_SCREEN: u8 = 1 << 1;
 const MOUSE_CAPTURE: u8 = 1 << 2;
 const CURSOR_HIDDEN: u8 = 1 << 3;
+const FOCUS_CHANGE: u8 = 1 << 4;
 
 fn mark_active(flag: u8) {
     ACTIVE.fetch_or(flag, Ordering::SeqCst);
@@ -83,6 +86,7 @@ impl Terminal {
             setup.enable_raw_mode()?;
             setup.enter_alternate_screen()?;
             setup.enable_mouse_capture()?;
+            setup.enable_focus_change()?;
             setup.hide_cursor()?;
             setup.finish()
         })();
@@ -253,6 +257,16 @@ impl TerminalSetup {
         self.stdout()?.flush()
     }
 
+    /// Ask the terminal to report window focus changes.
+    ///
+    /// Terminals that do not support it ignore the sequence and simply never send
+    /// the events, so this needs no capability check.
+    fn enable_focus_change(&mut self) -> io::Result<()> {
+        queue!(self.stdout()?, EnableFocusChange)?;
+        mark_active(FOCUS_CHANGE);
+        self.stdout()?.flush()
+    }
+
     fn hide_cursor(&mut self) -> io::Result<()> {
         queue!(self.stdout()?, Hide)?;
         mark_active(CURSOR_HIDDEN);
@@ -321,6 +335,9 @@ fn queue_restore<W: Write>(out: &mut W, state: u8) -> io::Result<()> {
     }
     if state & MOUSE_CAPTURE != 0 {
         queue!(out, DisableMouseCapture)?;
+    }
+    if state & FOCUS_CHANGE != 0 {
+        queue!(out, DisableFocusChange)?;
     }
     if state & ALTERNATE_SCREEN != 0 {
         queue!(out, LeaveAlternateScreen)?;
@@ -460,7 +477,7 @@ mod tests {
 
     /// Every mode that shows up as an escape sequence. Raw mode is a syscall, so
     /// it is deliberately not part of what [`queue_restore`] emits.
-    const SEQUENCED: [u8; 3] = [CURSOR_HIDDEN, MOUSE_CAPTURE, ALTERNATE_SCREEN];
+    const SEQUENCED: [u8; 4] = [CURSOR_HIDDEN, MOUSE_CAPTURE, FOCUS_CHANGE, ALTERNATE_SCREEN];
 
     fn restore_bytes(state: u8) -> String {
         let mut out = Vec::new();

@@ -573,6 +573,25 @@ pub struct ResizeEvent {
     pub height: u16,
 }
 
+/// The terminal window gained OS focus.
+///
+/// Document-level like resize: the window is not a node, so the event has no
+/// target and does not bubble. This is the *window*, not the DOM — it says
+/// nothing about which node is focused, and receiving it never moves DOM focus.
+///
+/// Only fires on terminals that report focus changes, and only while the runtime
+/// has asked for them; a terminal that stays silent simply never sends one.
+#[derive(Debug, Clone)]
+pub struct WindowFocusEvent;
+
+/// The terminal window lost OS focus.
+///
+/// The counterpart to [`WindowFocusEvent`], with the same caveats: document-level,
+/// no target, and unrelated to which node holds DOM focus. A typical use is
+/// dimming a selection or pausing a spinner while the user is looking elsewhere.
+#[derive(Debug, Clone)]
+pub struct WindowBlurEvent;
+
 /// A completed frame, dispatched after it was flushed to the screen.
 ///
 /// Post-frame is document-level like resize: a frame has no target node, so the
@@ -706,6 +725,9 @@ pub(crate) type SelectionChangeEventHandler =
     Arc<dyn Fn(&mut SelectionChangeEvent) + Send + Sync + 'static>;
 pub(crate) type ResizeEventHandler = Arc<dyn Fn(&mut ResizeEvent) + Send + Sync + 'static>;
 pub(crate) type PostFrameEventHandler = Arc<dyn Fn(&mut PostFrameEvent) + Send + Sync + 'static>;
+pub(crate) type WindowFocusEventHandler =
+    Arc<dyn Fn(&mut WindowFocusEvent) + Send + Sync + 'static>;
+pub(crate) type WindowBlurEventHandler = Arc<dyn Fn(&mut WindowBlurEvent) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TargetedEventKind {
@@ -753,6 +775,10 @@ pub(crate) enum ListenerKind {
     Resize(ResizeEventHandler),
     /// Post-frame listener.
     PostFrame(PostFrameEventHandler),
+    /// Terminal window focus listener.
+    WindowFocus(WindowFocusEventHandler),
+    /// Terminal window blur listener.
+    WindowBlur(WindowBlurEventHandler),
 }
 
 /// Registered event listener.

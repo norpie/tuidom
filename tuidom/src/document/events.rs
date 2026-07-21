@@ -8,6 +8,7 @@ use crate::event::{
     AnimationEndEvent, AnimationIterationEvent, EventPhase, FocusEvent, KeyEvent, Listener,
     ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent, ScrollEvent,
     SelectionChangeEvent, TargetedEvent, TargetedEventKind, TransitionEndEvent, WheelEvent,
+    WindowBlurEvent, WindowFocusEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -246,6 +247,78 @@ impl Document {
         )
     }
 
+    /// Register a listener for the terminal window gaining OS focus.
+    ///
+    /// Document-level like resize: the window is not a node, so the event has no
+    /// target and does not bubble.
+    ///
+    /// This is the *window*, not the DOM. Gaining window focus does not change
+    /// which node is focused, and tuidom deliberately leaves DOM focus and the
+    /// focus stack untouched — alt-tabbing away and back returns the user to
+    /// exactly the node they left.
+    ///
+    /// Only fires on terminals that report focus changes. One that does not
+    /// simply never sends the event.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_window_focus<F>(&self, handler: F) -> ListenerHandle
+    where
+        F: Fn(&mut WindowFocusEvent) + Send + Sync + 'static,
+    {
+        self.register_document_listener(
+            &self.inner.window_focus_listeners,
+            ListenerKind::WindowFocus(Arc::new(handler)),
+        )
+    }
+
+    /// Register a listener for the terminal window losing OS focus.
+    ///
+    /// The counterpart to [`on_window_focus`](Self::on_window_focus), with the
+    /// same caveats: document-level, no target, and unrelated to DOM focus.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_window_blur<F>(&self, handler: F) -> ListenerHandle
+    where
+        F: Fn(&mut WindowBlurEvent) + Send + Sync + 'static,
+    {
+        self.register_document_listener(
+            &self.inner.window_blur_listeners,
+            ListenerKind::WindowBlur(Arc::new(handler)),
+        )
+    }
+
+    pub(crate) fn dispatch_window_focus(&self) {
+        let listeners = lock::mutex(&self.inner.window_focus_listeners).clone();
+        let mut event = WindowFocusEvent;
+        for listener in listeners {
+            let panicked = catch_handler_panic(|| {
+                if let ListenerKind::WindowFocus(handler) = &listener.kind {
+                    handler(&mut event);
+                }
+            });
+
+            if panicked {
+                log::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
+    pub(crate) fn dispatch_window_blur(&self) {
+        let listeners = lock::mutex(&self.inner.window_blur_listeners).clone();
+        let mut event = WindowBlurEvent;
+        for listener in listeners {
+            let panicked = catch_handler_panic(|| {
+                if let ListenerKind::WindowBlur(handler) = &listener.kind {
+                    handler(&mut event);
+                }
+            });
+
+            if panicked {
+                log::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
     fn register_targeted_listener(
         &self,
         node: NodeId,
@@ -310,6 +383,8 @@ impl Document {
             &self.inner.resize_listeners,
             &self.inner.post_frame_listeners,
             &self.inner.selection_listeners,
+            &self.inner.window_focus_listeners,
+            &self.inner.window_blur_listeners,
         ] {
             let mut listeners = lock::mutex(store);
             let old_len = listeners.len();

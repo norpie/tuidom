@@ -111,6 +111,8 @@ impl Document {
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
                 post_frame_listeners: Mutex::new(Vec::new()),
+                window_focus_listeners: Mutex::new(Vec::new()),
+                window_blur_listeners: Mutex::new(Vec::new()),
                 color_vars: Mutex::new(HashMap::new()),
                 terminal_background: Mutex::new(Color::black()),
             }),

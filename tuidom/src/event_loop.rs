@@ -398,6 +398,8 @@ fn convert_terminal_event(event: CrosstermEvent) -> Option<RuntimeEvent> {
             Some(RuntimeEvent::KeyPress(convert_key_event(key)))
         }
         CrosstermEvent::Mouse(mouse) => convert_mouse_event(mouse),
+        CrosstermEvent::FocusGained => Some(RuntimeEvent::WindowFocus),
+        CrosstermEvent::FocusLost => Some(RuntimeEvent::WindowBlur),
         _ => None,
     }
 }
