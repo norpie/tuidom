@@ -55,6 +55,15 @@ until a given guide exists.
 - [**Focus and selection**](focus-and-selection.md) — focus contexts and the focus stack,
   inert versus disabled, spatial navigation, and screen-wide text selection
 
+- [**Scrolling**](scrolling.md) — overflow and what it does to layout, scroll offsets,
+  wheel chaining, culling, and scrollbars
+- [**Virtualization**](virtualization.md) — the spacer pattern, window math, measurement
+  caches, and anchoring
+- [**Animation**](animation.md) — transitions, keyframe animations, frames nodes, and the
+  tick that only exists while something moves
+- [**Rendering**](rendering.md) — paint order and z-index, the cell grid, diffing, and the
+  cursor
+
 <!-- Further guides are listed here as they land. -->
 
 ## Reading order

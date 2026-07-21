@@ -23,22 +23,22 @@ directory explain — see [`README.md`](README.md) for how the two divide.
 
 ## Layout & Positioning
 
-*Flex, sizing, and positioning are explained in [layout](layout.md); the scrolling and
-stacking entries below still carry their own reasoning.*
+*Flex, sizing, and positioning are explained in [layout](layout.md); the scrolling entries
+in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Layout Snapshot** — The document-level map of latest computed layout by `NodeId`: each node's rectangle plus its maximum scroll per axis, from one taffy pass. See [layout is published, not stored](architecture.md#layout-is-published-not-stored) and [reading computed layout](layout.md#reading-computed-layout).
 
-**Overflow** — Per-axis style property for content exceeding a node's box: `Visible` (default) spills, `Scroll` clips and scrolls, `Clip` clips without scrolling. A `Scroll` or `Clip` axis also drops the automatic content-size floor in layout, so the container may be smaller than its content — which is what makes overflow possible in the first place.
+**Overflow** — Per-axis property for content exceeding a node's box: `Visible`, `Scroll`, or `Clip`. A `Scroll`/`Clip` axis also drops the content-size floor in layout. See [making something scroll](scrolling.md#making-something-scroll).
 
-**Scroll Offset** — How far a scroll container's content is shifted, in terminal cells. Runtime state like focus, not style: keyed by `NodeId` on the document, driven by wheel routing and `scroll_to`/`scroll_by`, and clamped to content minus viewport as measured by the same layout pass that produced the rects — a relayout that shrinks content re-clamps stored offsets. The offset is applied at paint time as a translation of the container's descendants; layout is scroll-invariant, so a wheel tick never re-runs taffy.
+**Scroll Offset** — How far a scroll container's content is shifted, in cells. Runtime state like focus, not style. See [scroll offset is runtime state](scrolling.md#scroll-offset-is-runtime-state).
 
-**Scrollport** — The padding box of a scrolling or clipping node: the region its descendants' painting and hit-testing are bounded to, per clipped axis. Content slides through the padding but never over the border, and an axis left `Visible` stays unbounded — the clip bounds axes independently.
+**Scrollport** — The padding box of a scrolling or clipping node, bounding its descendants' painting and hit-testing per clipped axis. See [the scrollport](scrolling.md#the-scrollport).
 
-**Scroll Chaining** — Wheel routing walks from the hit node rootward to the nearest container scrollable on the wheel's axis that can still move in the wheel's direction. A container at the end of its range passes the wheel to the ancestor beyond it, and inert or disabled containers are skipped the same way they swallow the wheel event itself.
+**Scroll Chaining** — Wheel routing to the nearest ancestor scrollable on the wheel's axis that can still move in its direction. See [wheel routing and chaining](scrolling.md#wheel-routing-and-chaining).
 
-**Stacking Context** — Explicit isolation marker created with `stacking_context: true`. Paint order already treats every node's subtree as an isolated unit, so the marker's behavior is to make a node eligible to become a focus context: only a stacking context can trap focus, because trapping focus in a subtree a sibling could paint over would leave the user interacting with something they cannot see. Being a stacking context never traps focus on its own.
+**Stacking Context** — Marker set with `stacking_context: true`, making a node eligible to trap focus. Paint isolation is already universal, so that eligibility is all it grants. See [stacking contexts](rendering.md#stacking-contexts).
 
-**z-index** — Integer paint-order value for sibling subtrees. Lower values paint first; higher values paint later. DOM order is the stable tiebreaker for equal values. A descendant's `z_index` cannot escape its parent subtree.
+**z-index** — Integer paint-order value for sibling subtrees; DOM order breaks ties. A descendant's value cannot escape its parent subtree. See [paint order](rendering.md#paint-order).
 
 **Position::Flow** — Default positioning mode. Node participates in normal flex layout. See [positioning](layout.md#positioning).
 
@@ -46,19 +46,21 @@ stacking entries below still carry their own reasoning.*
 
 ## Virtualization
 
-**Virtualization** — Materializing only the visible window of a large collection. Culling is paint-only — everything culled is still laid out — whereas virtualization decides what exists in the DOM at all. The engine does not virtualize on its own: the `virtualize` module provides the range math and window diffing, and downstream owns every node, the way a browser sits under a virtualized list rather than being one.
+*Explained in [virtualization](virtualization.md).*
 
-**Spacer** — An empty Box holding open the space of every unmaterialized item on one side of the window. With a leading and a trailing spacer, a scroll container's measured content size is the true total, so scroll clamping, scrollbar geometry, and wheel routing stay correct with nothing virtual about them. A spacer must set `flex_shrink(0.0)`: an empty box has no content floor, so default flex shrink would collapse it — and with it the scroll range it exists to hold open.
+**Virtualization** — Materializing only the visible window of a large collection. Unlike culling, which is paint-only, it decides what exists in the DOM at all. The engine provides the math; downstream owns every node. See [when you actually need it](virtualization.md#when-you-actually-need-it).
 
-**Window** — The item range a virtualized collection should have in the DOM: the items covering the scrollport (straddlers included) plus overscan, together with the two spacer extents that stand in for everything else. Produced by the uniform math or the measurement cache; diffed against the materialized range by the `Virtualizer`.
+**Spacer** — An empty Box holding open the space of every unmaterialized item on one side of the window, so the container's measured content size stays the true total. Must set `flex_shrink(0.0)`. See [the spacer pattern](virtualization.md#the-spacer-pattern).
 
-**Overscan** — Items materialized beyond each edge of the visible range, so a small scroll reveals rows that already exist instead of waiting for materialization. Measured in items, not cells.
+**Window** — The item range a virtualized collection should have in the DOM, plus the two spacer extents standing in for everything else. See [uniform items](virtualization.md#uniform-items).
 
-**Stride** — Cells from one item's start to the next: the item's extent plus any flex gap between items. The uniform window math is built on the stride, which is why virtualized items must not flex-grow or shrink.
+**Overscan** — Items materialized beyond each edge of the visible range, measured in items rather than cells. See [uniform items](virtualization.md#uniform-items).
 
-**Measurement Cache** — Extents for variably sized items: an estimate for items not yet measured, recorded measurements for the rest, answering offset and window queries over the mix. Backed by a Fenwick tree over the deltas from the estimate, so queries stay logarithmic however much of the collection has been measured. One axis, like all virtualization math — a 2D grid runs it per axis.
+**Stride** — Cells from one item's start to the next: its extent plus any flex gap. Virtualized items must not flex. See [uniform items](virtualization.md#uniform-items).
 
-**Anchoring** — Absorbing a measurement's extent change into the scroll offset when the measured item lies above the viewport, so the content on screen stays visually pinned instead of shifting under the user. `record` returns the signed change as the compensation to apply.
+**Measurement Cache** — Extents for variably sized items, mixing an estimate with recorded measurements over a Fenwick tree so queries stay logarithmic. One axis. See [variable-sized items](virtualization.md#variable-sized-items).
+
+**Anchoring** — Absorbing a measurement's extent change into the scroll offset when the measured item is above the viewport, so on-screen content stays visually pinned. See [anchoring](virtualization.md#anchoring).
 
 ## Styling
 
@@ -170,37 +172,41 @@ stacking entries below still carry their own reasoning.*
 
 ## Animation
 
-**Transition** — Property animation triggered by a change in a node's *merged* resolved value — an explicit style change and a pseudo-state change (focus, active, disabled) animate alike. One per node/property pair. An interrupted transition hands over its currently displayed value, so a retarget never jumps; a pure reversal gets only the share of the duration matching the distance it covers. States with no interpolable value — an unset background, an `Auto` size, a `Flow` position, a cells↔percent unit change — snap instead of transitioning, the way CSS cannot animate `auto`. Completion fires a bubbling transition-end event; interrupted transitions and removed nodes fire none. Colors interpolate in OKLCH; cell values interpolate fractionally and round only at application. Layout-affecting properties (position, size, padding, margin) feed the layout engine per animation frame while in flight — and only then.
+*Explained in [animation](animation.md).*
 
-**Keyframe Animation** — Multi-step animation started with `doc.animate`: keyframes at percentages holding typed [AnimatableProperty] values, played over a duration for an iteration count (finite or infinite) in a direction (normal, reverse, alternate). Easing applies per keyframe segment, like CSS. A property missing an explicit 0%/100% keyframe uses the node's underlying resolved value as the implicit endpoint. Values apply on top of any running transitions — animations win on conflict — and when the animation ends it is removed, returning the node to its underlying style; a handler holds the final state by setting it as the node's style from the end event. The returned `AnimationHandle` pauses (values freeze, no frames driven), resumes (elapsed time excludes the pause), and cancels (no end event). End and iteration events bubble from the animated node; iteration boundaries crossed within one frame coalesce into a single event carrying the latest count.
+**Transition** — Property animation triggered by a change in a node's *merged* resolved value, so explicit style changes and pseudo-state changes animate alike. One per node/property pair. See [transitions](animation.md#transitions).
 
-**Frames Node** — Node type that cycles through text content on a timer (for spinners, ASCII animations). The current frame is a function of elapsed time, not stored state — a flip is nothing but the clock passing a boundary. Measured on the largest frame, so cycling never reflows the content around it. A lone frames node paces rendering at its own interval rather than the animation tick, so a 100ms spinner repaints ten times a second; a single frame or zero interval drives no rendering at all.
+**Keyframe Animation** — Multi-step animation started with `doc.animate`: typed values at percentages, played for an iteration count in a direction. See [keyframe animations](animation.md#keyframe-animations).
 
-**AnimatableProperty** — Typed keyframe value, one variant per animatable property (opacity, colors, absolute position offsets, width/height, padding, margin). A non-animatable property — border style, text content, a boolean — is unrepresentable, so a keyframe cannot be written that the engine would have to ignore. Color values are `Color` expressions evaluated once against the node's scope when `animate` is called.
+**Frames Node** — Node type cycling through text content on a timer. The current frame is a function of elapsed time, not stored state. See [frames nodes](animation.md#frames-nodes).
 
-**Easing** — Interpolation curve: Linear, EaseIn, EaseOut, EaseInOut, and CSS-style `CubicBezier(x1, y1, x2, y2)`. Transitions ease their whole run; keyframe animations ease each segment.
+**AnimatableProperty** — Typed keyframe value, one variant per animatable property. A non-animatable property is unrepresentable. See [typed values](animation.md#typed-values).
 
-**Animation Tick** — The pacing of animation-driven frames: transitions and keyframe animations render on a document-wide tick (default ~60fps, `set_animation_fps`), where `None` removes the pacing entirely — a stress-test mode, not a default. Frames nodes schedule by their own flip intervals instead. The tick exists only while something animates: an idle document stays fully passive, and paused animations do not count.
+**Easing** — Interpolation curve: `Linear`, `EaseIn`, `EaseOut`, `EaseInOut`, and CSS-style `CubicBezier(x1, y1, x2, y2)`. See [easing](animation.md#easing).
+
+**Animation Tick** — The pacing of animation-driven frames, ~60fps by default, existing only while something animates. See [the animation tick](animation.md#the-animation-tick).
 
 ## Rendering
 
-**Cell** — Single terminal cell position. Contains display content, fg/bg colors, and terminal attributes.
+*Explained in [rendering](rendering.md); the scrollbar entries in [scrolling](scrolling.md).*
 
-**CellAttrs** — The bold/italic/underline state carried by a cell's glyph. Packed on the cell — unlike on `Style`, where the three are separate properties — because nothing merges at the cell level: attributes belong to the glyph and are replaced or cleared with it.
+**Cell** — A single terminal cell position: display content, fg/bg colors, and attributes. Crate-private; `ScreenCell` is the public view. See [the grid](rendering.md#the-grid).
 
-**CellContent** — The display content stored in a cell: empty space, a grapheme glyph, or a wide-glyph continuation marker.
+**CellAttrs** — The bold/italic/underline state carried by a cell's glyph, packed on the cell rather than kept separate as on `Style`. See [the grid](rendering.md#the-grid).
 
-**WideContinuation** — Marker for the second terminal cell occupied by a width-2 glyph. It is not printed directly; the glyph head prints the visible character.
+**CellContent** — What a cell holds: empty space, a grapheme glyph, or a wide-glyph continuation marker. See [the grid](rendering.md#the-grid).
 
-**Grid** — 2D buffer of Cells representing screen state (width × height). Carries an active clip while painting, honored at the cell-write level so fills, text, borders, and half-block edges all clip identically.
+**WideContinuation** — Marker for the second cell of a width-2 glyph. Never printed directly; the glyph head prints the character. See [the grid](rendering.md#the-grid).
 
-**Culling** — Render-time drop of a node whose translated rectangle lies wholly outside its clip: it is left out of the paint entries, so it paints nothing and cannot be hit, while remaining in the DOM and in layout. Where a subtree's clip is empty the walk stops entirely.
+**Grid** — The 2D buffer of cells a frame is painted into, carrying the active clip. See [the grid](rendering.md#the-grid).
 
-**Scrollbar** — Overlay strips on a scroll container's last viewport column and row, drawn after the container's subtree so they cover the content they scroll but not what later covers the container. They occupy no layout — showing or hiding a bar never reflows content. `ScrollbarCharset` is the primitive (block and half-block are named constructors); show modes are `Always`, `WhenFocused` (hover focuses, so also "while hovered"), `WhenScrolling` (see below), and `Never`, all gated on the axis actually being scrollable. Hit-testing a bar resolves to its container, and a left press on a bar has *grabbing it* as its default action, in place of selection and click: a thumb press grabs the thumb where it is, a track press jumps the thumb under the cursor, and the same press continues as a drag either way — geometry is re-read from live layout each move, through the inverse of the thumb math, exact at both ends. `prevent_default()` on the mouse down keeps the press an ordinary container press.
+**Culling** — Render-time drop of a node whose translated rect lies wholly outside its clip. Paint-only: culled nodes stay in the DOM and in layout. See [culling](scrolling.md#culling).
 
-**WhenScrolling** — The auto-hiding scrollbar show mode. The bar appears when the scroll offset actually changes and stays while grabbed; afterwards it holds fully visible for the container's `scrollbar_hide_delay`, then fades out over its `scrollbar_fade_duration` (both style properties) by ramping alpha into the bar colors. Visibility is a pure function of the document clock against per-container last-activity instants, so headless time travel renders every phase. A waiting bar schedules one deadline wake at fade start, only the fade itself ticks smoothly, and a fully faded bar leaves the document as passive as if it never existed.
+**Scrollbar** — Overlay strips on a scroll container's last viewport column and row, occupying no layout. See [scrollbars](scrolling.md#scrollbars).
 
-**Render Cursor** — Cursor metadata produced with a rendered frame. It carries cursor position, shape, foreground-derived color, and clipped visibility without mutating grid cell content.
+**WhenScrolling** — The auto-hiding scrollbar show mode: appears on offset change, holds, then fades. Scheduled rather than polled. See [`WhenScrolling`](scrolling.md#whenscrolling).
+
+**Render Cursor** — Cursor metadata produced alongside a frame — position, shape, color, clipped visibility — without mutating cell content. See [the cursor](rendering.md#the-cursor).
 
 ---
 
