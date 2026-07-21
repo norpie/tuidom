@@ -205,6 +205,17 @@ doc.on_click(button, move |_| {
 A panicking handler is caught and logged, and the application survives. One bad callback
 in a downstream component should not take down a running program.
 
+### Listeners are snapshotted before dispatch
+
+Dispatch clones the listeners for the whole propagation path *before* invoking any of them,
+and releases the registry lock first.
+
+Two things follow. **Registering or removing a listener from inside a handler does not
+affect the dispatch in progress** — the change takes effect from the next event, so a
+handler that removes itself still finishes, and one that adds a listener does not have it
+fire for the event that added it. And because the lock is released first, a handler is free
+to register listeners without deadlocking against the dispatch that called it.
+
 ## Keyboard
 
 ```rust

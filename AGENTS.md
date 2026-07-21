@@ -8,11 +8,66 @@ Read these at the start of every session:
 
 - **General information**: @README.md
 - **Glossary of terms**: @docs/GLOSSARY.md
-- **Feature requirements**: @docs/FEATURES.md
 - **Code style conventions**: @docs/STYLE.md
 
-Everything else lives in `docs/` — see `docs/README.md` for the index. Those guides are
-**not** auto-loaded; read the one you need when you need it.
+Read on demand, not auto-loaded:
+
+- `docs/FEATURES.md` — what exists yet, as checkboxes. Consult it when the question is
+  "is this built", not as background.
+- `docs/README.md` — index of the guides, and the rule dividing them from the glossary.
+- The guides themselves: `architecture`, `getting-started`, `layout`, `styling`, `colors`,
+  `events`, `focus-and-selection`, `scrolling`, `virtualization`, `animation`,
+  `rendering`, `testing`.
+
+The glossary defines terms and links to the guide that explains each one. Follow the link
+when you need the reasoning; the definition alone is usually enough to work from.
+
+## Repository Layout
+
+```
+tuidom/src/
+  document/     public API surface — one `impl Document` block per file, split by concern
+  event/        event types, key codes, dispatch metadata
+  style/        Style, StyleValue, ResolvedStyle, color, border, scrollbar
+  layout/       taffy bridge, measurement, rounding
+  render/       grid, paint, diff, terminal backend
+  animation/    driver, keyframes, interpolable values
+  virtualize/   window math, measurement cache, Virtualizer
+  inner.rs      DocumentInner — all runtime state, keyed by NodeId
+  headless.rs   headless runtime + simulated input (the verification path)
+  paint_order.rs, geometry.rs, performance.rs, panic.rs, lock.rs, error.rs, id.rs
+tuidom/
+  examples/demo.rs    human-facing smoke test
+  benches/frame.rs    criterion frame benchmark
+  tests/              empty on purpose — tests live in-crate
+docs/           guides, glossary, features, style
+.plans/         plans + roadmaps (gitignored)
+```
+
+## Repo Patterns
+
+Invariants that reading any single file will not teach:
+
+- `Document` is `Arc<DocumentInner>`; every public method takes `&self`. Cloning is cheap
+  and expected. Never wrap it in another `Arc`.
+- Runtime state — scroll offsets, focus stack, selection, active node, pseudo styles,
+  in-flight animations — lives on `DocumentInner` keyed by `NodeId`, **not** on `NodeData`.
+  So node identity owns runtime state: rebuilding a subtree loses the user's scroll
+  position, focus, and selection. Patch live nodes.
+- Computed layout is not on the node either. It is published per frame as one
+  `layout_snapshot` map, replaced under a single lock.
+- **Never dispatch an event while holding a `nodes.get_mut` guard.** DashMap holds guards
+  per key; a handler is downstream code that may touch that very node, and it deadlocks —
+  not errors, deadlocks. Clone what the event needs inside the borrow, scope the borrow,
+  dispatch after. `document/input.rs:apply_input_default_action_to` is the worked example.
+- Default actions run **after** listeners. That is what makes `prevent_default` possible,
+  and why observing engine-driven state needs its own event rather than inference.
+- The render task never runs user code. Events it produces (post-frame, transition-end,
+  animation-end) go through the runtime queue so handlers run on the event task.
+- `#![warn(missing_docs)]` is on. Public items need doc comments.
+- Tests live in-crate next to the code; `tuidom/tests/` is empty on purpose. Tests may
+  `unwrap`; `src/` may not.
+- One `Terminal` per process, enforced. Headless is how you test.
 
 ## Workflow 
 

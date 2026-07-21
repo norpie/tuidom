@@ -206,7 +206,7 @@ stray corner glyphs on the ends.
 ## Half-block edges
 
 A **half-block edge** ends a node's fill halfway into its own outermost row or column,
-using `▀▄▌▐` (or `▗▖▝▘` where two edges meet):
+using a half block (`▀▄▌▐`) — or a quadrant block (`▗▖▝▘`) where two edges meet:
 
 ```rust
 s.half_block_edges(Sides::new(true, false, true, false));   // top and bottom

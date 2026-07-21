@@ -17,7 +17,7 @@ directory explain — see [`README.md`](README.md) for how the two divide.
 
 **DocumentInner** — Internal state behind the `Arc`: the arena, caches, listener and animation state, layout snapshot, and lifecycle flags. See [where state lives](architecture.md#where-state-lives).
 
-**Arena** — The document's node storage, a `DashMap` from `NodeId` to `NodeData`. Single source of truth for all nodes.
+**Arena** — The document's node storage, a `DashMap` from `NodeId` to `NodeData`. Single source of truth for all nodes. See [where state lives](architecture.md#where-state-lives).
 
 **NodeData** — A node's stored representation: kind, parent, children, attributes, style, and cached resolved style. Computed layout is *not* here — see [layout is published, not stored](architecture.md#layout-is-published-not-stored).
 
@@ -130,7 +130,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 *Explained in [events](events.md).*
 
-**Event** — Input or system notification dispatched to handlers. Carries event-specific data and, for targeted events, propagation state.
+**Event** — Input or system notification dispatched to handlers. Carries event-specific data and, for targeted events, propagation state. See [two kinds of event](events.md#two-kinds-of-event).
 
 **Listener** — A user-provided handler. `Fn + Send + Sync + 'static`, synchronous, and caught on panic. See [listener handles](events.md#listener-handles).
 

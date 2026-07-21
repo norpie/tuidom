@@ -146,11 +146,15 @@ value** as that endpoint. Animating from wherever it currently is needs no boile
 
 ### Control
 
+`animate` returns an **`AnimationHandle`**, which is how you reach a running animation:
+
 ```rust
 doc.pause_animation(handle);     // values freeze, and drive no frames
 doc.resume_animation(handle);    // elapsed time excludes the pause
 doc.cancel_animation(handle);    // no end event fires
 ```
+
+Each returns `bool` — whether the handle still referred to a live animation.
 
 A paused animation does not count as active, so pausing every animation lets the document go
 fully passive.

@@ -63,8 +63,8 @@ until a given guide exists.
   tick that only exists while something moves
 - [**Rendering**](rendering.md) — paint order and z-index, the cell grid, diffing, and the
   cursor
-
-<!-- Further guides are listed here as they land. -->
+- [**Testing**](testing.md) — the headless runtime, frozen time, simulated input, and
+  screen inspection
 
 ## Reading order
 
