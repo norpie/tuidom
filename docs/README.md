@@ -43,6 +43,13 @@ until a given guide exists.
 - [**Architecture**](architecture.md) — what a `Document` actually is, where state lives,
   how a frame happens, and the concurrency rules that follow from it
 
+- [**Styling**](styling.md) — `Style`, inheritance, pseudo-states, borders, half-block
+  edges, and the metadata escape hatches
+- [**Colors**](colors.md) — OKLCH, variables, derivations, and the resolution order that
+  makes `CurrentBg` non-circular
+- [**Layout**](layout.md) — flexbox in terminal cells, positioning, reading computed
+  geometry, and centering when the space is odd
+
 <!-- Further guides are listed here as they land. -->
 
 ## Reading order

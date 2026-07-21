@@ -23,7 +23,10 @@ directory explain — see [`README.md`](README.md) for how the two divide.
 
 ## Layout & Positioning
 
-**Layout Snapshot** — The document-level map of latest computed layout by `NodeId`: each node's rectangle plus its maximum scroll per axis, both from the same taffy pass. Layout is published by replacing the contents of this map under one lock, so readers do not observe partially updated per-node layout state. Layout positions may be negative/offscreen; rendering clips them to the grid.
+*Flex, sizing, and positioning are explained in [layout](layout.md); the scrolling and
+stacking entries below still carry their own reasoning.*
+
+**Layout Snapshot** — The document-level map of latest computed layout by `NodeId`: each node's rectangle plus its maximum scroll per axis, from one taffy pass. See [layout is published, not stored](architecture.md#layout-is-published-not-stored) and [reading computed layout](layout.md#reading-computed-layout).
 
 **Overflow** — Per-axis style property for content exceeding a node's box: `Visible` (default) spills, `Scroll` clips and scrolls, `Clip` clips without scrolling. A `Scroll` or `Clip` axis also drops the automatic content-size floor in layout, so the container may be smaller than its content — which is what makes overflow possible in the first place.
 
@@ -37,9 +40,9 @@ directory explain — see [`README.md`](README.md) for how the two divide.
 
 **z-index** — Integer paint-order value for sibling subtrees. Lower values paint first; higher values paint later. DOM order is the stable tiebreaker for equal values. A descendant's `z_index` cannot escape its parent subtree.
 
-**Position::Flow** — Default positioning mode. Node participates in normal flexbox layout.
+**Position::Flow** — Default positioning mode. Node participates in normal flex layout. See [positioning](layout.md#positioning).
 
-**Position::Absolute** — Node removed from normal flow and positioned at a signed cell offset from its parent's box origin. Screen-root placement is expressed by parenting the node to the root. Published layout rectangles remain screen-absolute regardless of positioning mode.
+**Position::Absolute** — Node removed from flow and offset by signed cells from its parent's box origin. See [positioning](layout.md#positioning).
 
 ## Virtualization
 
@@ -59,63 +62,67 @@ directory explain — see [`README.md`](README.md) for how the two divide.
 
 ## Styling
 
-**Style** — User-provided style with unresolved values. Contains `StyleValue<T>` which can be `Unset`, `Set(T)`, or `Inherit`.
+*Explained in [styling](styling.md); the flex and centering entries in [layout](layout.md).*
 
-**ResolvedStyle** — Computed style with all values resolved. Inheritance is computed and defaults are applied; colors remain in OKLCH until render-time RGB conversion.
+**Style** — A node's user-provided style, holding a `StyleValue<T>` per property. See [style is a struct, not a builder](styling.md#style-is-a-struct-not-a-builder).
 
-**PseudoState** — State that merges an extra style on top of a node's base style: focused, active, or disabled. Styles merge in the order base → focus → active → disabled, so disabled wins on conflict.
+**StyleValue** — A property's three states: `Unset` (use the default), `Set(v)`, or `Inherit` (take the parent's resolved value). See [three states per property](styling.md#three-states-per-property-stylevalue).
 
-**Active** — The node currently being pressed. The engine sets it from mouse down on the hit's focus target and clears it on mouse up anywhere, so a drag off the node leaves nothing stuck pressed. `Document::set_active` drives it for activation the engine cannot see, such as keyboard presses.
+**ResolvedStyle** — A `Style` with every value collapsed to a concrete one: inheritance walked, defaults applied, colors still in OKLCH. See [what the engine actually uses](styling.md#resolvedstyle-what-the-engine-actually-uses).
 
-**Disabled** — State that blocks interaction across a whole subtree. A node is *effectively disabled* when it or any ancestor is disabled: it cannot be focused, is skipped by tab and spatial navigation, and swallows targeted events instead of bubbling them to enabled ancestors. Each node merges its own disabled style whenever it is effectively disabled.
+**PseudoState** — An extra style merged on top of a node's base style: focused, active, or disabled, in that order. See [pseudo-states](styling.md#pseudo-states).
 
-**Centered** — Result of a centering helper. `Even(offset)` when the leftover space divides evenly; `Uneven { low, high }` when terminal cells make exact centering impossible and the two closest offsets are equally valid.
+**Active** — The node currently being pressed. See [active](styling.md#active).
 
-**StyleValue** — Wrapper for style properties. `Unset` uses the document/default style, `Inherit` resolves from the parent, and `Set(value)` uses an explicit value.
+**Disabled** — State that blocks interaction across a whole subtree, and is inherited as *effectively disabled* by descendants. See [disabled](styling.md#disabled).
 
-**EdgeInsets** — Terminal-cell spacing for the top, right, bottom, and left edges of a node. Used by padding and margin style fields.
+**Centered** — Result of a centering helper: `Even(offset)`, or `Uneven { low, high }` when terminal cells make exact centering impossible. See [centering in discrete cells](layout.md#centering-in-discrete-cells).
 
-**Border** — A node's frame: one `BorderCharset` plus the sides it is drawn on. A border occupies real cells — layout insets the node's content and children by one cell per drawn side — so it frames content instead of painting over it. Its color is the separate `border_color` property, which follows the node's resolved foreground when unset.
+**EdgeInsets** — Terminal-cell spacing for a node's top, right, bottom, and left edges; used by `padding` and `margin`. See [cells are not square](layout.md#cells-are-not-square).
 
-**BorderCharset** — The eight characters that draw a box: four edges and four corners. The charset is the primitive; `single`, `double`, `rounded`, `thick`, and `ascii` are named constructors, not special cases. One charset per node, because a corner is drawn from the charset and a double-top/single-left corner has no coherent character.
+**Border** — A node's frame: one `BorderCharset` plus the `Sides` it is drawn on. Occupies real cells. See [borders](styling.md#borders).
 
-**Sides** — Which sides of a node an edge treatment is drawn on. Presence, not width: every edge treatment tuidom draws — a border, a half-block edge — is either on a side or not. A border's corner cell gets its corner character only when both adjacent sides are drawn; otherwise the one side present runs straight through it, so a top-only border is a clean rule.
+**BorderCharset** — The eight characters that draw a box — four edges, four corners. `single`, `double`, `rounded`, `thick`, and `ascii` are named constructors over it. See [borders](styling.md#borders).
 
-**Half-Block Edge** — A node's fill ending halfway into its own outermost row or column, drawn with a half block (`▀▄▌▐`) or, where two edges meet, a quadrant block (`▗▖▝▘`). It is not a border: it frames nothing and costs no layout — it repaints cells the node already owns. Its purpose is the boundary between two colors. A terminal cell is about twice as tall as it is wide, so a cell of vertical padding reads as two cells of horizontal padding; ending the fill on a half cell is what balances them.
+**Sides** — Which sides of a node an edge treatment is drawn on. Presence, not width. See [sides are presence, not width](styling.md#sides-are-presence-not-width).
 
-**FlexDirection** — Main-axis direction for flex containers: row, column, and their reverse variants, which lay children out from the end of the main axis.
+**Half-Block Edge** — A node's fill ending halfway into its outermost row or column, drawn with `▀▄▌▐` or `▗▖▝▘`. Not a border: it frames nothing and costs no layout. See [half-block edges](styling.md#half-block-edges).
 
-**FlexGap** — Terminal-cell spacing between flex children and flex lines. `column` is horizontal spacing and `row` is vertical spacing.
+**FlexDirection** — Main-axis direction for a flex container: row, column, or their reverse variants. See [flex containers](layout.md#flex-containers).
 
-**AlignSelf** — Cross-axis alignment override for one flex item. When unset, the item follows its parent container's `AlignItems` behavior.
+**FlexGap** — Spacing between flex children and flex lines. `row` is vertical, `column` is horizontal. See [flex containers](layout.md#flex-containers).
 
-**FlexWrap** — Flex container wrapping behavior. `NoWrap` keeps children on one line; `Wrap` allows children to move onto additional lines when they exceed the available main-axis space; `WrapReverse` wraps the same way but stacks the resulting lines in reverse cross-axis order.
+**AlignSelf** — Cross-axis alignment override for one flex item; a type alias for `AlignItems`. See [alignment](layout.md#alignment).
 
-**AlignContent** — Cross-axis alignment for wrapped flex lines. Controls how multiple flex lines are packed or distributed inside a flex container.
+**FlexWrap** — `NoWrap`, `Wrap`, or `WrapReverse`, which stacks wrapped lines in reverse cross-axis order. See [alignment](layout.md#alignment).
 
-**Custom Style Property** — Raw inline style metadata stored on `Style`. Custom properties do not inherit, do not resolve into `ResolvedStyle`, and do not affect layout or rendering.
+**AlignContent** — Cross-axis alignment for wrapped flex lines. See [alignment](layout.md#alignment).
 
-**Attribute** — Raw string key/value metadata stored on a node. Attribute keys cannot be empty.
+**Custom Style Property** — Raw string metadata on a `Style`. Does not inherit, resolve, or affect rendering. See [metadata that does nothing](styling.md#metadata-that-does-nothing).
+
+**Attribute** — Raw string key/value metadata on a node; keys cannot be empty. See [metadata that does nothing](styling.md#metadata-that-does-nothing).
 
 ## Colors
 
-**OKLCH** — Perceptually uniform color space (Lightness, Chroma, Hue, Alpha). Used internally for all color operations.
+*Explained in [colors](colors.md).*
 
-**Color** — A color as written in a `Style`: an expression, not a value. It can name a variable or refer to the node it is used on, neither of which means anything until it is resolved against a specific node.
+**OKLCH** — Perceptually uniform color space (Lightness, Chroma, Hue, Alpha), used for every color operation. See [OKLCH, and why not RGB](colors.md#oklch-and-why-not-rgb).
 
-**ResolvedColor** — What a `Color` evaluates to during style resolution: a concrete OKLCH color, and what `ResolvedStyle` holds. Hue is stored canonically (0–360), so two spellings of one angle are one color and share one cache entry.
+**Color** — A color as written in a `Style`: an expression, not a value. It may name a variable or refer to the node it is used on. See [a `Color` is an expression](colors.md#a-color-is-an-expression).
 
-**Color Variable** — Named color reference (e.g. `Color::var("--primary")`), declared on the document or on a node and in scope for that node's descendants. Redeclaring a name shadows it for the subtree. A node's own declarations resolve against its *parent's* scope, never against each other — a `HashMap` has no declaration order, and resolving against an already-concrete scope makes reference cycles impossible to write. A name nothing defines makes the whole expression unresolvable, and the property falls back to its default rather than half-applying a derivation.
+**ResolvedColor** — What a `Color` evaluates to during resolution: a concrete OKLCH color with canonical hue. See [a `Color` is an expression](colors.md#a-color-is-an-expression).
 
-**Color Derivation** — A computed color: `Color::var("--primary").darken(0.1)`, `CurrentBg.with_alpha(0.5)`. Lightness steps are absolute, not proportional, because OKLCH's lightness is perceptually uniform. `mix` blends two colors in OKLCH, taking the short way around the hue circle and borrowing the other color's hue when one is a gray — a gray has no hue, and interpolating its nominal 0° would swing the result through unrelated colors.
+**Color Variable** — A named color (`Color::var("--primary")`) declared on the document or a node, in scope for that node's descendants. See [color variables](colors.md#color-variables).
 
-**CurrentBg / CurrentFg** — Color references that resolve relative to the node they are used on. They are self-referential in the two properties they are defined from, so resolution is ordered: in `background`, and in a variable declaration, they mean the *parent's* values; from `color` onward they mean the node's own. This is the only reading that is not circular.
+**Color Derivation** — A computed color, such as `Color::var("--primary").darken(0.1)`. See [derivations](colors.md#derivations).
 
-**Effective Background** — The background a node visually sits on: its own if it has one, otherwise the nearest ancestor's, falling back to the document's declared terminal background. It is what `CurrentBg` resolves to, and it is never absent — a node deriving a color from what it sits on needs an answer even when nothing in its ancestry paints one.
+**CurrentBg / CurrentFg** — Color references resolving relative to the node they are used on, under a fixed resolution order. See [`CurrentBg` and `CurrentFg`](colors.md#currentbg-and-currentfg).
 
-**Terminal Background** — The terminal background color the document *assumes*. The real one is unknowable without querying the terminal, so it is declared rather than detected. It is the bottom of the effective-background chain and the base a translucent color blends toward over an unpainted cell. It is an assumption for color math, never a color that gets painted: an unpainted cell still emits the terminal default, so an unstyled app keeps showing the user's real background.
+**Effective Background** — The background a node visually sits on; what `CurrentBg` resolves to, and never absent. See [effective background](colors.md#effective-background).
 
-**Rgb** — Final color format (Red, Green, Blue) sent to terminal. Converted from OKLCH only at render time.
+**Terminal Background** — The terminal background the document *assumes*, since the real one is unknowable. Never painted. See [terminal background is an assumption](colors.md#terminal-background-is-an-assumption).
+
+**Rgb** — Final color format sent to the terminal, converted from OKLCH at render time. See [Rgb, and when conversion happens](colors.md#rgb-and-when-conversion-happens).
 
 ## Events
 
