@@ -38,7 +38,12 @@ Written as areas of the engine get documented. The set is being filled in; the
 [glossary](GLOSSARY.md) is complete in the meantime and is the best conceptual reference
 until a given guide exists.
 
-<!-- Guides are listed here as they land. -->
+- [**Getting started**](getting-started.md) — build a first application: document, tree,
+  style, focus, input, and how to test it without a terminal
+- [**Architecture**](architecture.md) — what a `Document` actually is, where state lives,
+  how a frame happens, and the concurrency rules that follow from it
+
+<!-- Further guides are listed here as they land. -->
 
 ## Reading order
 

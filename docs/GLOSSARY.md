@@ -1,22 +1,25 @@
 # Glossary
 
-Terms and concepts used throughout the tuidom codebase.
+Terms and concepts used throughout the tuidom codebase. Entries define; the guides in this
+directory explain — see [`README.md`](README.md) for how the two divide.
 
 ## Core Concepts
 
-**Node** — Any item in the DOM tree. All items are nodes (Box, Text, Input, Frames, Canvas). We don't use "element" — just "node".
+*Explained in [architecture](architecture.md).*
 
-**NodeId** — Lightweight, `Copy` integer handle that references a node in one document's arena. Encodes internal document identity so handles from different documents do not collide.
+**Node** — Any item in the DOM tree (Box, Text, Input, Frames, Canvas). We don't use "element" — just "node".
 
-**Document** — The owner and public API surface. Wraps `Arc<DocumentInner>` for cheap cloning and owns one permanent root node.
+**NodeId** — Lightweight, `Copy` integer handle referencing a node in one document's arena. See [the document model](architecture.md#the-document-model).
 
-**Root Node** — The permanent top-level Box node created by `Document::new()`. It is the entry point for layout, rendering, and current runtime event dispatch; it always exists and cannot be reparented or removed.
+**Document** — The owner and public API surface; wraps `Arc<DocumentInner>`. See [the document model](architecture.md#the-document-model).
 
-**DocumentInner** — Internal state holding the arena, document/root ids, caches, event/listener state, animation state, layout snapshots, notifications, renderer-facing state, and lifecycle flags. Behind Arc for thread-safe sharing.
+**Root Node** — The permanent top-level Box created by `Document::new()`, and the entry point for layout, paint, and document-level dispatch. See [the root node](architecture.md#the-root-node).
 
-**Arena** — Internal storage using DashMap. Maps `NodeId` to `NodeData`. Single source of truth for all nodes.
+**DocumentInner** — Internal state behind the `Arc`: the arena, caches, listener and animation state, layout snapshot, and lifecycle flags. See [where state lives](architecture.md#where-state-lives).
 
-**NodeData** — Internal node representation. Contains the node kind, parent/children, attributes, style, cached resolved style, and animation/transition metadata. Computed layout is published separately as a document-level layout snapshot.
+**Arena** — The document's node storage, a `DashMap` from `NodeId` to `NodeData`. Single source of truth for all nodes.
+
+**NodeData** — A node's stored representation: kind, parent, children, attributes, style, and cached resolved style. Computed layout is *not* here — see [layout is published, not stored](architecture.md#layout-is-published-not-stored).
 
 ## Layout & Positioning
 
