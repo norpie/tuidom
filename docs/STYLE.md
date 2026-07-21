@@ -15,7 +15,8 @@
 ## Naming & Consistency
 
 - Follow standard Rust conventions
-- When introducing new concepts, add them to `GLOSSARY.md`
+- When introducing new concepts, define them in [`GLOSSARY.md`](GLOSSARY.md) and explain
+  the reasoning in the guide that owns the area — the glossary says *what*, guides say *why*
 - Maintain consistency within the codebase
 
 ## Error Handling
