@@ -1,3 +1,5 @@
+use tokio::sync::mpsc;
+
 use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::document::selection::PendingSelection;
@@ -53,6 +55,67 @@ pub(crate) enum RuntimeEvent {
         handle: AnimationHandle,
         iteration: u64,
     },
+}
+
+/// Collapse redundant runs in a drained batch, leaving order otherwise intact.
+///
+/// Only *adjacent* events merge, and only the two kinds where every value but the
+/// last is dead weight: pointer movement and resize. Everything else — keys,
+/// presses, releases, wheel ticks, frame and animation events — passes through
+/// untouched, because each one carries information the next does not.
+///
+/// Adjacency is the load-bearing rule. Hover-to-focus makes the pointer's position
+/// decide which node a key press targets, so merging movement *across* a key would
+/// deliver that key to the wrong node. A press between two runs is a boundary for
+/// the same reason: a drag starts where the button went down, not where the pointer
+/// finished.
+///
+/// This runs only over what was already queued, so a batch of one — the common
+/// case — is returned unchanged. Nothing is ever collapsed to reduce latency; it
+/// is collapsed because the event task was already behind.
+pub(crate) fn coalesce(batch: &mut Vec<RuntimeEvent>) {
+    if batch.len() < 2 {
+        return;
+    }
+
+    let mut kept = 0;
+    for index in 0..batch.len() {
+        if index + 1 < batch.len() && superseded_by(&batch[index], &batch[index + 1]) {
+            continue;
+        }
+        batch.swap(kept, index);
+        kept += 1;
+    }
+    batch.truncate(kept);
+}
+
+/// Whether `event` carries nothing that `next` does not already say.
+fn superseded_by(event: &RuntimeEvent, next: &RuntimeEvent) -> bool {
+    match (event, next) {
+        // A drag and a hover are different gestures, so a change of held button
+        // ends the run even though both are movement.
+        (RuntimeEvent::MouseMove { held: from, .. }, RuntimeEvent::MouseMove { held: to, .. }) => {
+            from == to
+        }
+        (RuntimeEvent::Resize(_), RuntimeEvent::Resize(_)) => true,
+        _ => false,
+    }
+}
+
+/// Take the next event plus everything already queued behind it, coalesced.
+///
+/// Never waits for more: the drain is `try_recv` only, so this adds no latency
+/// and degrades to "process one event" whenever the task is keeping up.
+pub(crate) fn drain_and_coalesce(
+    first: RuntimeEvent,
+    rx: &mut mpsc::UnboundedReceiver<RuntimeEvent>,
+) -> Vec<RuntimeEvent> {
+    let mut batch = vec![first];
+    while let Ok(event) = rx.try_recv() {
+        batch.push(event);
+    }
+    coalesce(&mut batch);
+    batch
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -340,6 +403,183 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    use crate::event::KeyCode;
+
+    fn moved(x: i32, held: Option<MouseButton>) -> RuntimeEvent {
+        RuntimeEvent::MouseMove { x, y: 0, held }
+    }
+
+    fn resized(width: u16) -> RuntimeEvent {
+        RuntimeEvent::Resize(ResizeEvent { width, height: 24 })
+    }
+
+    fn coalesced(events: Vec<RuntimeEvent>) -> Vec<RuntimeEvent> {
+        let mut batch = events;
+        coalesce(&mut batch);
+        batch
+    }
+
+    fn move_xs(events: &[RuntimeEvent]) -> Vec<i32> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::MouseMove { x, .. } => Some(*x),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_single_event_batch_is_left_alone() {
+        let batch = coalesced(vec![moved(3, None)]);
+        assert_eq!(move_xs(&batch), vec![3]);
+    }
+
+    #[test]
+    fn a_run_of_moves_collapses_to_the_last_position() {
+        let batch = coalesced(vec![moved(1, None), moved(2, None), moved(3, None)]);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(move_xs(&batch), vec![3]);
+    }
+
+    #[test]
+    fn a_key_between_move_runs_breaks_them() {
+        let batch = coalesced(vec![
+            moved(1, None),
+            moved(2, None),
+            RuntimeEvent::KeyPress(KeyEvent::new(KeyCode::Char('a'))),
+            moved(8, None),
+            moved(9, None),
+        ]);
+
+        // Hover decides which node the key targets, so the pointer must be at 2
+        // when the key runs — not fast-forwarded to 9.
+        assert_eq!(batch.len(), 3);
+        assert_eq!(move_xs(&batch), vec![2, 9]);
+        assert!(matches!(batch[1], RuntimeEvent::KeyPress(_)));
+    }
+
+    #[test]
+    fn moves_do_not_merge_across_a_held_button_change() {
+        let batch = coalesced(vec![
+            moved(1, None),
+            moved(2, None),
+            moved(5, Some(MouseButton::Left)),
+            moved(6, Some(MouseButton::Left)),
+        ]);
+
+        assert_eq!(
+            move_xs(&batch),
+            vec![2, 6],
+            "hover and drag are different gestures"
+        );
+    }
+
+    #[test]
+    fn a_press_between_move_runs_breaks_them() {
+        let batch = coalesced(vec![
+            moved(1, None),
+            moved(2, None),
+            RuntimeEvent::MouseDown(MouseEvent::new(2, 0, MouseButton::Left)),
+            moved(7, Some(MouseButton::Left)),
+            moved(8, Some(MouseButton::Left)),
+        ]);
+
+        assert_eq!(batch.len(), 3);
+        assert_eq!(move_xs(&batch), vec![2, 8]);
+    }
+
+    #[test]
+    fn a_run_of_resizes_collapses_to_the_final_size() {
+        let batch = coalesced(vec![resized(80), resized(100), resized(120)]);
+
+        assert_eq!(batch.len(), 1);
+        match &batch[0] {
+            RuntimeEvent::Resize(resize) => assert_eq!(resize.width, 120),
+            other => panic!("expected a resize, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn presses_releases_and_wheel_ticks_are_never_dropped() {
+        let batch = coalesced(vec![
+            RuntimeEvent::MouseDown(MouseEvent::new(1, 2, MouseButton::Left)),
+            RuntimeEvent::MouseUp(MouseEvent::new(1, 2, MouseButton::Left)),
+            RuntimeEvent::Wheel(WheelEvent::new(1, 2, 1)),
+            RuntimeEvent::Wheel(WheelEvent::new(1, 2, 1)),
+            RuntimeEvent::Wheel(WheelEvent::new(1, 2, 1)),
+        ]);
+
+        // Wheel deltas stay separate: scroll chaining decides per event whether a
+        // container can still move before passing to its ancestor.
+        assert_eq!(batch.len(), 5);
+    }
+
+    #[test]
+    fn interleaved_moves_and_keys_keep_their_order() {
+        let batch = coalesced(vec![
+            moved(1, None),
+            RuntimeEvent::KeyPress(KeyEvent::new(KeyCode::Char('a'))),
+            moved(2, None),
+            RuntimeEvent::KeyPress(KeyEvent::new(KeyCode::Char('b'))),
+        ]);
+
+        assert_eq!(batch.len(), 4, "nothing here is adjacent to its own kind");
+        assert_eq!(move_xs(&batch), vec![1, 2]);
+    }
+
+    #[test]
+    fn draining_takes_everything_already_queued_and_coalesces_it() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        for x in 1..=5 {
+            tx.send(moved(x, None)).unwrap();
+        }
+        tx.send(RuntimeEvent::KeyPress(KeyEvent::new(KeyCode::Char('z'))))
+            .unwrap();
+
+        let first = rx.try_recv().unwrap();
+        let batch = drain_and_coalesce(first, &mut rx);
+
+        assert_eq!(move_xs(&batch), vec![5]);
+        assert_eq!(batch.len(), 2);
+        assert!(rx.try_recv().is_err(), "the drain empties the queue");
+    }
+
+    #[test]
+    fn draining_an_empty_queue_yields_just_the_first_event() {
+        let (_tx, mut rx) = mpsc::unbounded_channel::<RuntimeEvent>();
+        let batch = drain_and_coalesce(moved(4, None), &mut rx);
+        assert_eq!(move_xs(&batch), vec![4]);
+    }
+
+    /// The invariant collapsing must not break: a click is synthesized from a
+    /// matching down/up pair, and the movement between them is irrelevant to it.
+    #[test]
+    fn a_click_survives_a_collapsed_move_run() {
+        let doc = Document::new().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_handler = calls.clone();
+        doc.on_click(doc.root(), move |_| {
+            calls_for_handler.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+
+        let batch = coalesced(vec![
+            RuntimeEvent::MouseDown(MouseEvent::new(1, 2, MouseButton::Left)),
+            moved(1, Some(MouseButton::Left)),
+            moved(1, Some(MouseButton::Left)),
+            RuntimeEvent::MouseUp(MouseEvent::new(1, 2, MouseButton::Left)),
+        ]);
+        assert_eq!(batch.len(), 3, "only the move run collapses");
+
+        let mut state = RuntimeEventState::default();
+        for event in batch {
+            process_runtime_event(&doc, event, &mut state);
+        }
+
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn pending_resize_keeps_latest_size() {

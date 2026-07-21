@@ -17,7 +17,7 @@ use crate::event::{MouseButton, MouseEvent, ResizeEvent, WheelEvent, convert_key
 use crate::lock;
 use crate::render::Renderer;
 use crate::runtime_event::{
-    RuntimeEvent, RuntimeEventState, process_runtime_event, take_pending_resize,
+    RuntimeEvent, RuntimeEventState, drain_and_coalesce, process_runtime_event, take_pending_resize,
 };
 
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
@@ -96,8 +96,8 @@ async fn event_task(doc: Document) -> io::Result<()> {
 
         tokio::select! {
             _ = doc.inner.shutdown_notify.notified() => break,
-            maybe_event = recv_runtime_event(&doc) => {
-                let Some(event) = maybe_event else {
+            maybe_batch = recv_runtime_batch(&doc) => {
+                let Some(batch) = maybe_batch else {
                     if is_shutdown(&doc) {
                         break;
                     }
@@ -106,7 +106,9 @@ async fn event_task(doc: Document) -> io::Result<()> {
                         "runtime event queue closed",
                     ));
                 };
-                process_runtime_event(&doc, event, &mut event_state);
+                for event in batch {
+                    process_runtime_event(&doc, event, &mut event_state);
+                }
             }
         }
     }
@@ -245,9 +247,14 @@ fn enqueue_runtime_event(doc: &Document, event: RuntimeEvent) -> io::Result<()> 
     })
 }
 
-/// Receive the next queued runtime event.
-async fn recv_runtime_event(doc: &Document) -> Option<RuntimeEvent> {
-    doc.inner.event_rx.lock().await.recv().await
+/// Receive the next queued runtime event, plus everything already behind it.
+///
+/// The lock is held for the whole batch so a drain cannot interleave with another
+/// consumer, and the drain itself never blocks — see [`drain_and_coalesce`].
+async fn recv_runtime_batch(doc: &Document) -> Option<Vec<RuntimeEvent>> {
+    let mut rx = doc.inner.event_rx.lock().await;
+    let first = rx.recv().await?;
+    Some(drain_and_coalesce(first, &mut rx))
 }
 
 /// Render a diffed frame with timing for the performance API.
