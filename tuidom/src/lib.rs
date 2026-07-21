@@ -29,6 +29,7 @@ mod lock;
 /// Node data storage and views.
 mod node;
 mod paint_order;
+mod panic;
 /// Runtime performance metrics.
 pub mod performance;
 /// Screen buffer and rendering.

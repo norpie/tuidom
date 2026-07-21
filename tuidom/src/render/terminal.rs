@@ -1,6 +1,7 @@
 //! Terminal I/O — crossterm initialization, flush, and cleanup.
 
 use std::io::{self, Stdout, Write};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -12,11 +13,43 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
+use crate::panic::install_hook;
 use crate::render::RenderCursor;
 use crate::render::diff::CellChange;
 use crate::render::grid::{Cell, CellAttrs, Grid};
 use crate::style::CursorShape;
 use crate::style::color::Rgb;
+
+/// Terminal modes currently active on the real terminal.
+///
+/// Global because the panic hook has no handle to [`Terminal`] — it runs wherever
+/// the panic did. Setup guards, the live terminal, and the hook all restore from
+/// this one source of truth, and [`take_active`] hands the bits to exactly one
+/// caller, so a panic followed by an unwinding `Drop` cannot restore twice.
+static ACTIVE: AtomicU8 = AtomicU8::new(0);
+
+/// Whether a [`Terminal`] already owns the process's terminal.
+///
+/// [`ACTIVE`] describes the terminal, not any one owner, so a second `Terminal`
+/// would share it: whichever dropped first would restore modes the other was
+/// still using, and the survivor would render into a cooked normal screen. That
+/// configuration cannot work anyway — two renderers diff against separate grids
+/// and would fight over every cell — so it is refused rather than counted.
+static INSTANCE_HELD: AtomicBool = AtomicBool::new(false);
+
+const RAW_MODE: u8 = 1 << 0;
+const ALTERNATE_SCREEN: u8 = 1 << 1;
+const MOUSE_CAPTURE: u8 = 1 << 2;
+const CURSOR_HIDDEN: u8 = 1 << 3;
+
+fn mark_active(flag: u8) {
+    ACTIVE.fetch_or(flag, Ordering::SeqCst);
+}
+
+/// Claim the active modes, leaving none behind for a second restorer.
+fn take_active() -> u8 {
+    ACTIVE.swap(0, Ordering::SeqCst)
+}
 
 /// Wraps stdout with crossterm setup and teardown.
 pub(crate) struct Terminal {
@@ -25,16 +58,42 @@ pub(crate) struct Terminal {
 
 impl Terminal {
     /// Initialize the terminal: raw mode, alternate screen, hide cursor.
+    ///
+    /// Fails if another [`Terminal`] is already live — one process drives one
+    /// terminal, so a second concurrent `Document::run()` is refused here rather
+    /// than left to corrupt the screen.
     pub fn new() -> io::Result<Self> {
-        let mut setup = TerminalSetup::new(io::stdout());
-        setup.enable_raw_mode()?;
-        setup.enter_alternate_screen()?;
-        setup.enable_mouse_capture()?;
-        setup.hide_cursor()?;
+        if INSTANCE_HELD
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(io::Error::other(
+                "a terminal is already active; only one Document may run() per process",
+            ));
+        }
 
-        Ok(Self {
-            stdout: setup.finish()?,
-        })
+        // Installed before the first mode is turned on, so a panic partway through
+        // setup is covered by the same restore path as a panic during the run.
+        install_hook();
+
+        let mut setup = TerminalSetup::new(io::stdout());
+        // Every `?` here drops `setup`, restoring whatever was turned on; the
+        // instance claim has to be released on those paths too.
+        let started = (|| {
+            setup.enable_raw_mode()?;
+            setup.enter_alternate_screen()?;
+            setup.enable_mouse_capture()?;
+            setup.hide_cursor()?;
+            setup.finish()
+        })();
+
+        match started {
+            Ok(stdout) => Ok(Self { stdout }),
+            Err(err) => {
+                INSTANCE_HELD.store(false, Ordering::SeqCst);
+                Err(err)
+            }
+        }
     }
 
     /// Flush only the changed cells to the terminal.
@@ -139,50 +198,43 @@ pub(crate) fn flush_full_into<W: Write>(
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        restore_terminal(&mut self.stdout, true, true, true, true);
+        restore_terminal(&mut self.stdout);
+        INSTANCE_HELD.store(false, Ordering::SeqCst);
     }
 }
 
 struct TerminalSetup {
     stdout: Option<Stdout>,
-    raw_mode_enabled: bool,
-    alternate_screen_entered: bool,
-    cursor_hidden: bool,
-    mouse_capture_enabled: bool,
 }
 
 impl TerminalSetup {
     fn new(stdout: Stdout) -> Self {
         Self {
             stdout: Some(stdout),
-            raw_mode_enabled: false,
-            alternate_screen_entered: false,
-            cursor_hidden: false,
-            mouse_capture_enabled: false,
         }
     }
 
     fn enable_raw_mode(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
-        self.raw_mode_enabled = true;
+        mark_active(RAW_MODE);
         Ok(())
     }
 
     fn enter_alternate_screen(&mut self) -> io::Result<()> {
         queue!(self.stdout()?, EnterAlternateScreen)?;
-        self.alternate_screen_entered = true;
+        mark_active(ALTERNATE_SCREEN);
         self.stdout()?.flush()
     }
 
     fn enable_mouse_capture(&mut self) -> io::Result<()> {
         queue!(self.stdout()?, EnableMouseCapture)?;
-        self.mouse_capture_enabled = true;
+        mark_active(MOUSE_CAPTURE);
         self.stdout()?.flush()
     }
 
     fn hide_cursor(&mut self) -> io::Result<()> {
         queue!(self.stdout()?, Hide)?;
-        self.cursor_hidden = true;
+        mark_active(CURSOR_HIDDEN);
         self.stdout()?.flush()
     }
 
@@ -192,11 +244,12 @@ impl TerminalSetup {
             .ok_or_else(|| io::Error::other("terminal setup missing stdout"))
     }
 
+    /// Hand the initialized terminal over, disarming this guard.
+    ///
+    /// The active bitset deliberately stays set: those modes are still on, and
+    /// undoing them passes to [`Terminal`]'s own `Drop`. Taking the stdout handle
+    /// is what disarms the guard — with none left, its `Drop` restores nothing.
     fn finish(mut self) -> io::Result<Stdout> {
-        self.raw_mode_enabled = false;
-        self.alternate_screen_entered = false;
-        self.cursor_hidden = false;
-        self.mouse_capture_enabled = false;
         self.stdout
             .take()
             .ok_or_else(|| io::Error::other("terminal setup missing stdout"))
@@ -206,44 +259,58 @@ impl TerminalSetup {
 impl Drop for TerminalSetup {
     fn drop(&mut self) {
         if let Some(stdout) = self.stdout.as_mut() {
-            restore_terminal(
-                stdout,
-                self.cursor_hidden,
-                self.mouse_capture_enabled,
-                self.alternate_screen_entered,
-                self.raw_mode_enabled,
-            );
+            restore_terminal(stdout);
         }
     }
 }
 
-fn restore_terminal(
-    stdout: &mut Stdout,
-    cursor_hidden: bool,
-    mouse_capture_enabled: bool,
-    alternate_screen_entered: bool,
-    raw_mode_enabled: bool,
-) {
-    if cursor_hidden {
-        let _ = queue!(stdout, Show);
+/// Restore the terminal modes that are still active, exactly once.
+fn restore_terminal(stdout: &mut Stdout) {
+    let state = take_active();
+    // Nothing was ever turned on — or another restorer already claimed it. Writing
+    // resets to a terminal this process never touched would be scribbling on it.
+    if state == 0 {
+        return;
     }
-    if mouse_capture_enabled {
-        let _ = queue!(stdout, DisableMouseCapture);
+
+    let _ = queue_restore(stdout, state);
+    let _ = stdout.flush();
+    if state & RAW_MODE != 0 {
+        let _ = disable_raw_mode();
     }
-    if alternate_screen_entered {
-        let _ = queue!(stdout, LeaveAlternateScreen);
+}
+
+/// Restore the terminal from the panic hook.
+///
+/// Takes a fresh stdout handle because the hook runs wherever the panic did, with
+/// no access to the live [`Terminal`]. With no terminal set up the bitset is empty
+/// and this writes nothing, which is what makes the hook safe to leave installed.
+pub(crate) fn restore_for_panic() {
+    restore_terminal(&mut io::stdout());
+}
+
+/// Queue the teardown sequence for the modes in `state`.
+///
+/// Split from [`restore_terminal`] so the emitted sequence can be asserted without
+/// a tty, the same way the flush path is. Raw mode is absent by design: it is a
+/// syscall rather than a sequence, so it stays with the caller.
+fn queue_restore<W: Write>(out: &mut W, state: u8) -> io::Result<()> {
+    if state & CURSOR_HIDDEN != 0 {
+        queue!(out, Show)?;
     }
-    let _ = queue!(
-        stdout,
+    if state & MOUSE_CAPTURE != 0 {
+        queue!(out, DisableMouseCapture)?;
+    }
+    if state & ALTERNATE_SCREEN != 0 {
+        queue!(out, LeaveAlternateScreen)?;
+    }
+    queue!(
+        out,
         SetCursorStyle::DefaultUserShape,
         Print("\x1b]112\x07"),
         ResetColor,
         SetAttribute(Attribute::Reset)
-    );
-    let _ = stdout.flush();
-    if raw_mode_enabled {
-        let _ = disable_raw_mode();
-    }
+    )
 }
 
 fn queue_cursor<W: Write>(stdout: &mut W, cursor: Option<RenderCursor>) -> io::Result<()> {
@@ -363,5 +430,61 @@ fn to_crossterm_color(color: Option<Rgb>) -> crossterm::style::Color {
             b: rgb.b,
         },
         None => crossterm::style::Color::Reset,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every mode that shows up as an escape sequence. Raw mode is a syscall, so
+    /// it is deliberately not part of what [`queue_restore`] emits.
+    const SEQUENCED: [u8; 3] = [CURSOR_HIDDEN, MOUSE_CAPTURE, ALTERNATE_SCREEN];
+
+    fn restore_bytes(state: u8) -> String {
+        let mut out = Vec::new();
+        queue_restore(&mut out, state).expect("writing to a Vec cannot fail");
+        String::from_utf8(out).expect("restore sequence is valid utf-8")
+    }
+
+    #[test]
+    fn each_active_mode_adds_its_own_teardown() {
+        let tail = restore_bytes(0);
+        for flag in SEQUENCED {
+            let emitted = restore_bytes(flag);
+            assert!(
+                emitted.len() > tail.len(),
+                "mode {flag:#06b} emitted no teardown"
+            );
+            assert!(
+                emitted.ends_with(&tail),
+                "the unconditional reset tail must come last, after mode {flag:#06b}"
+            );
+        }
+    }
+
+    #[test]
+    fn inactive_modes_are_left_alone() {
+        let all: u8 = SEQUENCED.iter().fold(0, |acc, flag| acc | flag);
+        for flag in SEQUENCED {
+            let without = restore_bytes(all & !flag);
+            assert!(
+                without.len() < restore_bytes(all).len(),
+                "mode {flag:#06b} was torn down despite being inactive"
+            );
+        }
+    }
+
+    /// The one sequence worth pinning literally: failing to leave the alternate
+    /// screen is what strands a user looking at a dead frame.
+    #[test]
+    fn leaving_the_alternate_screen_emits_its_sequence() {
+        assert!(restore_bytes(ALTERNATE_SCREEN).contains("\x1b[?1049l"));
+        assert!(!restore_bytes(CURSOR_HIDDEN).contains("\x1b[?1049l"));
+    }
+
+    #[test]
+    fn raw_mode_alone_emits_only_the_reset_tail() {
+        assert_eq!(restore_bytes(RAW_MODE), restore_bytes(0));
     }
 }

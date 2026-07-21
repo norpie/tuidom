@@ -1,4 +1,3 @@
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +11,7 @@ use crate::event::{
 };
 use crate::id::NodeId;
 use crate::lock;
+use crate::panic::catch_handler_panic;
 
 impl Document {
     /// Register a key press listener on a node.
@@ -424,13 +424,13 @@ impl Document {
 
         event.set_dispatch_state(target, target, EventPhase::Target);
         for listener in listeners {
-            let result = catch_unwind(AssertUnwindSafe(|| {
+            let panicked = catch_handler_panic(|| {
                 if let ListenerKind::Scroll(handler) = &listener.kind {
                     handler(event);
                 }
-            }));
+            });
 
-            if result.is_err() {
+            if panicked {
                 log::error!("event listener {} panicked", listener.id);
             }
         }
@@ -506,13 +506,13 @@ impl Document {
     pub(crate) fn dispatch_post_frame(&self, event: &mut PostFrameEvent) {
         let listeners = lock::mutex(&self.inner.post_frame_listeners).clone();
         for listener in listeners {
-            let result = catch_unwind(AssertUnwindSafe(|| {
+            let panicked = catch_handler_panic(|| {
                 if let ListenerKind::PostFrame(handler) = &listener.kind {
                     handler(event);
                 }
-            }));
+            });
 
-            if result.is_err() {
+            if panicked {
                 log::error!("event listener {} panicked", listener.id);
             }
         }
@@ -521,13 +521,13 @@ impl Document {
     pub(crate) fn dispatch_selection_change(&self, mut event: SelectionChangeEvent) {
         let listeners = lock::mutex(&self.inner.selection_listeners).clone();
         for listener in listeners {
-            let result = catch_unwind(AssertUnwindSafe(|| {
+            let panicked = catch_handler_panic(|| {
                 if let ListenerKind::SelectionChange(handler) = &listener.kind {
                     handler(&mut event);
                 }
-            }));
+            });
 
-            if result.is_err() {
+            if panicked {
                 log::error!("event listener {} panicked", listener.id);
             }
         }
@@ -536,13 +536,13 @@ impl Document {
     pub(crate) fn dispatch_resize(&self, mut event: ResizeEvent) {
         let listeners = lock::mutex(&self.inner.resize_listeners).clone();
         for listener in listeners {
-            let result = catch_unwind(AssertUnwindSafe(|| {
+            let panicked = catch_handler_panic(|| {
                 if let ListenerKind::Resize(handler) = &listener.kind {
                     handler(&mut event);
                 }
-            }));
+            });
 
-            if result.is_err() {
+            if panicked {
                 log::error!("event listener {} panicked", listener.id);
             }
         }
@@ -606,11 +606,11 @@ impl Document {
             event.set_dispatch_state(target, current_target, phase);
 
             for listener in listeners {
-                let result = catch_unwind(AssertUnwindSafe(|| {
+                let panicked = catch_handler_panic(|| {
                     invoke(&listener.kind, event);
-                }));
+                });
 
-                if result.is_err() {
+                if panicked {
                     log::error!("event listener {} panicked", listener.id);
                 }
             }

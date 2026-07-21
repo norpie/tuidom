@@ -4914,3 +4914,64 @@ fn grabbed_bar_schedules_nothing_until_release() {
     let schedule = doc.scrollbar_fade_schedule(doc.now());
     assert!(schedule.next_deadline.is_some());
 }
+
+/// The panic hook must not tear the terminal down for a handler panic that is
+/// caught and survived, so every downstream callback runs guarded. Observing the
+/// guard from inside a handler is what proves dispatch actually sets it.
+#[test]
+fn handlers_run_guarded_against_the_panic_hook() {
+    let doc = Document::new().unwrap();
+    let guarded = Arc::new(Mutex::new(None));
+
+    let observed = guarded.clone();
+    doc.on_resize(move |_| {
+        *observed.lock().unwrap() = Some(crate::panic::catching_panic());
+    });
+
+    assert!(
+        !crate::panic::catching_panic(),
+        "the dispatching thread starts unguarded"
+    );
+    doc.dispatch_resize(ResizeEvent {
+        width: 80,
+        height: 24,
+    });
+
+    assert_eq!(*guarded.lock().unwrap(), Some(true));
+    assert!(
+        !crate::panic::catching_panic(),
+        "the guard must not outlive the dispatch"
+    );
+}
+
+/// A targeted, bubbling handler gets the same guard as the document-level ones.
+#[test]
+fn targeted_handlers_run_guarded_and_survive_a_panic() {
+    let doc = Document::new().unwrap();
+    let guarded = Arc::new(Mutex::new(None));
+    let reached_parent = Arc::new(AtomicUsize::new(0));
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), child).unwrap();
+
+    doc.on_click(child, |_| panic!("handler bug")).unwrap();
+
+    let observed = guarded.clone();
+    let parent_hits = reached_parent.clone();
+    doc.on_click(doc.root(), move |_| {
+        *observed.lock().unwrap() = Some(crate::panic::catching_panic());
+        parent_hits.fetch_add(1, Ordering::Relaxed);
+    })
+    .unwrap();
+
+    let mut click = MouseEvent::new(0, 0, MouseButton::Left);
+    doc.dispatch_click_to(child, &mut click);
+
+    assert_eq!(*guarded.lock().unwrap(), Some(true));
+    assert_eq!(
+        reached_parent.load(Ordering::Relaxed),
+        1,
+        "a panicking child handler must not stop the event bubbling"
+    );
+    assert!(!crate::panic::catching_panic());
+}

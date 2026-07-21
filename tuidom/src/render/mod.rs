@@ -9,7 +9,7 @@ use std::io;
 use std::time::Duration;
 
 use terminal::Terminal;
-pub(crate) use terminal::{flush_changes_into, flush_full_into};
+pub(crate) use terminal::{flush_changes_into, flush_full_into, restore_for_panic};
 
 use crate::document::Document;
 use crate::lock;
