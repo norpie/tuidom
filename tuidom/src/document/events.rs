@@ -5,8 +5,8 @@ use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
-    AnimationEndEvent, AnimationIterationEvent, EventPhase, FocusEvent, KeyEvent, Listener,
-    ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent, ScrollEvent,
+    AnimationEndEvent, AnimationIterationEvent, EventPhase, FocusEvent, InputEvent, KeyEvent,
+    Listener, ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent, ScrollEvent,
     SelectionChangeEvent, TargetedEvent, TargetedEventKind, TransitionEndEvent, WheelEvent,
     WindowBlurEvent, WindowFocusEvent,
 };
@@ -137,6 +137,25 @@ impl Document {
             node,
             TargetedEventKind::Scroll,
             ListenerKind::Scroll(Arc::new(handler)),
+        )
+    }
+
+    /// Register a value change listener on an `Input` node.
+    ///
+    /// Fires after a key press edits the input's value, and bubbles like the DOM's
+    /// `input` — register on a container to observe every input inside it. Only real
+    /// changes fire: a keystroke that edits nothing, cursor movement, and programmatic
+    /// [`set_input_value`](Self::set_input_value) calls all stay silent. To suppress the
+    /// edit itself, call `prevent_default()` on the key press.
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_input<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut InputEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Input,
+            ListenerKind::Input(Arc::new(handler)),
         )
     }
 
@@ -478,6 +497,22 @@ impl Document {
     pub(crate) fn dispatch_wheel_to(&self, target: NodeId, event: &mut WheelEvent) {
         self.dispatch_targeted_event(target, event, TargetedEventKind::Wheel, |kind, event| {
             if let ListenerKind::Wheel(handler) = kind {
+                handler(event);
+            }
+        });
+    }
+
+    /// Dispatch an input value change, target phase then bubbling.
+    ///
+    /// Unlike scroll it bubbles, so a form-shaped container can observe every field inside
+    /// it, and unlike the animation events it is not exempt from the disabled/inert
+    /// swallow. It needs no exemption: the value is only edited by the key default action,
+    /// which runs on the focused node, and a node cannot be focused while blocked —
+    /// disabling a subtree blurs the focus inside it, and `focused()` is scoped to the
+    /// active focus context, so an inert node is never returned either.
+    pub(crate) fn dispatch_input_to(&self, target: NodeId, event: &mut InputEvent) {
+        self.dispatch_targeted_event(target, event, TargetedEventKind::Input, |kind, event| {
+            if let ListenerKind::Input(handler) = kind {
                 handler(event);
             }
         });

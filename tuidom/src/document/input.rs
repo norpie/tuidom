@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
-use crate::event::KeyCode;
+use crate::event::{InputEvent, KeyCode};
 use crate::id::NodeId;
 use crate::node::{InputState, NodeKind};
 
@@ -250,8 +250,11 @@ impl Document {
     }
 
     fn apply_input_default_action_to(&self, node: NodeId, code: KeyCode) -> Result<bool> {
-        let mut refresh_layout = false;
-        let handled = {
+        // An input measures on its content, so a value change is exactly what needs
+        // relayout — and exactly what `on_input` reports. The two share one flag because
+        // they are the same condition, not because they happen to coincide today.
+        let mut value_changed = false;
+        let (handled, value) = {
             let Some(mut data) = self.inner.nodes.get_mut(&node) else {
                 return Ok(false);
             };
@@ -259,18 +262,18 @@ impl Document {
                 return Ok(false);
             };
 
-            match code {
+            let handled = match code {
                 KeyCode::Char(ch) if !ch.is_control() => {
                     replace_selection_or_insert(state, &ch.to_string());
-                    refresh_layout = true;
+                    value_changed = true;
                     true
                 }
                 KeyCode::Backspace => {
-                    refresh_layout = delete_selection_or_previous_grapheme(state);
+                    value_changed = delete_selection_or_previous_grapheme(state);
                     true
                 }
                 KeyCode::Delete => {
-                    refresh_layout = delete_selection_or_next_grapheme(state);
+                    value_changed = delete_selection_or_next_grapheme(state);
                     true
                 }
                 KeyCode::Left => {
@@ -293,20 +296,28 @@ impl Document {
                 KeyCode::Enter => {
                     if state.multiline {
                         replace_selection_or_insert(state, "\n");
-                        refresh_layout = true;
+                        value_changed = true;
                     }
                     true
                 }
                 _ => false,
-            }
+            };
+
+            // Cloned inside the borrow, dispatched outside it: a handler is downstream
+            // code and may touch this very node, which would deadlock against the guard.
+            (handled, value_changed.then(|| state.content.clone()))
         };
 
         if handled {
             self.update_input_scroll(node)?;
-            if refresh_layout {
+            if value_changed {
                 self.register_layout_node(node)?;
             }
             self.inner.notify.notify_one();
+        }
+
+        if let Some(value) = value {
+            self.dispatch_input_to(node, &mut InputEvent::new(value));
         }
 
         Ok(handled)

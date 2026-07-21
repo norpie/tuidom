@@ -5073,3 +5073,183 @@ fn window_focus_listeners_can_be_removed() {
     runtime.simulate_window_focus();
     assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
+
+/// Focused input in the tree, plus a sink recording every `on_input` value.
+fn input_with_recorder(doc: &Document, content: &str) -> (NodeId, Arc<Mutex<Vec<String>>>) {
+    let input = doc.create_input(content).unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.focus(input).unwrap();
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    doc.on_input(input, move |event| {
+        sink.lock().unwrap().push(event.value.clone());
+    })
+    .unwrap();
+
+    (input, seen)
+}
+
+#[test]
+fn typing_fires_input_with_the_new_value() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "");
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('h')));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('i')));
+
+    // The value carried is the value *after* the edit, which is the whole point: an
+    // on_key_press handler reading input_value() sees the state before it.
+    assert_eq!(&*seen.lock().unwrap(), &["h".to_string(), "hi".to_string()]);
+    assert_eq!(doc.input_value(input).unwrap(), "hi");
+}
+
+#[test]
+fn a_keystroke_that_edits_nothing_fires_no_input_event() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "ab");
+
+    // Backspace at the very start and delete at the very end both no-op.
+    doc.set_input_cursor(input, 0).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Backspace));
+    doc.set_input_cursor(input, 2).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Delete));
+
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(doc.input_value(input).unwrap(), "ab");
+}
+
+#[test]
+fn cursor_movement_fires_no_input_event() {
+    let doc = Document::new().unwrap();
+    let (_, seen) = input_with_recorder(&doc, "abc");
+
+    for code in [
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::Up,
+        KeyCode::Down,
+    ] {
+        doc.dispatch_key_press(KeyEvent::new(code));
+    }
+
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[test]
+fn set_input_value_fires_no_input_event() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "");
+
+    // Programmatic writes stay silent, so a downstream two-way binding pushing a value
+    // into the input cannot loop back through its own listener.
+    doc.set_input_value(input, "written").unwrap();
+
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(doc.input_value(input).unwrap(), "written");
+}
+
+#[test]
+fn enter_fires_only_in_a_multiline_input() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "a");
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Enter));
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(doc.input_value(input).unwrap(), "a");
+
+    doc.set_input_multiline(input, true).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Enter));
+    assert_eq!(&*seen.lock().unwrap(), &["a\n".to_string()]);
+}
+
+#[test]
+fn backspace_over_a_selection_fires_once() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "abcd");
+
+    doc.set_input_selection(input, 1..3).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Backspace));
+
+    assert_eq!(&*seen.lock().unwrap(), &["ad".to_string()]);
+}
+
+#[test]
+fn input_events_bubble_to_an_ancestor() {
+    let doc = Document::new().unwrap();
+    let form = doc.create_box().unwrap();
+    doc.append_child(doc.root(), form).unwrap();
+    let input = doc.create_input("").unwrap();
+    doc.append_child(form, input).unwrap();
+    doc.focus(input).unwrap();
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    doc.on_input(form, move |event| {
+        sink.lock()
+            .unwrap()
+            .push((event.target(), event.current_target(), event.phase()));
+    })
+    .unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+
+    // A form-shaped container observes the field without registering on it.
+    assert_eq!(&*seen.lock().unwrap(), &[(input, form, EventPhase::Bubble)]);
+}
+
+#[test]
+fn stop_propagation_keeps_an_input_event_off_the_ancestor() {
+    let doc = Document::new().unwrap();
+    let form = doc.create_box().unwrap();
+    doc.append_child(doc.root(), form).unwrap();
+    let input = doc.create_input("").unwrap();
+    doc.append_child(form, input).unwrap();
+    doc.focus(input).unwrap();
+
+    doc.on_input(input, |event| event.stop_propagation())
+        .unwrap();
+    let reached = Arc::new(AtomicUsize::new(0));
+    let counter = reached.clone();
+    doc.on_input(form, move |_| {
+        counter.fetch_add(1, Ordering::Relaxed);
+    })
+    .unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+
+    assert_eq!(reached.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn preventing_the_key_default_suppresses_the_edit_and_the_event() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "");
+
+    // The only place to intervene: the event itself reports a change already made, so it
+    // carries no prevent_default of its own.
+    doc.on_key_press(input, |event| event.prevent_default())
+        .unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(doc.input_value(input).unwrap(), "");
+}
+
+#[test]
+fn disabling_a_focused_input_blurs_it_so_later_keys_fire_nothing() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "");
+
+    doc.set_disabled(input, true).unwrap();
+    assert_eq!(doc.focused(), None);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+
+    // This is why on_input needs no disabled/inert exemption: the default action only
+    // runs on the focused node, and a disabled node cannot hold focus.
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(doc.input_value(input).unwrap(), "");
+}

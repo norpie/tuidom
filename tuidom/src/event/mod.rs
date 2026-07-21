@@ -400,6 +400,63 @@ impl ScrollEvent {
     }
 }
 
+/// An `Input` node's value changed.
+///
+/// Fires on the input after a key press default action changes its value, and bubbles
+/// like the DOM's `input` — register on a form-shaped container to observe every field
+/// inside it. It reports a change the engine has already made, so there is nothing left
+/// to prevent; suppress the change itself with `prevent_default()` on the key press,
+/// which skips the default action that would have edited the value.
+///
+/// Only real changes fire it. A keystroke that edits nothing — backspace at the start of
+/// the content, delete at the end — fires nothing, and neither does cursor or selection
+/// movement, which leaves the value alone.
+///
+/// Programmatic writes through
+/// [`set_input_value`](crate::Document::set_input_value) fire nothing either: the caller
+/// already knows the value it just wrote, and reporting it back would loop a downstream
+/// binding straight through itself.
+#[derive(Debug, Clone)]
+pub struct InputEvent {
+    /// The input's value after the change.
+    pub value: String,
+    metadata: TargetedMetadata,
+}
+
+impl InputEvent {
+    pub(crate) fn new(value: String) -> Self {
+        Self {
+            value,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The input whose value changed.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+
+    /// The node whose listeners are currently being invoked.
+    pub fn current_target(&self) -> NodeId {
+        self.metadata.current_target
+    }
+
+    /// The current dispatch phase.
+    pub fn phase(&self) -> EventPhase {
+        self.metadata.phase
+    }
+
+    /// Stop this event from bubbling to ancestor nodes.
+    pub fn stop_propagation(&mut self) {
+        self.metadata.propagation_stopped = true;
+    }
+
+    /// Whether propagation to ancestor nodes has been stopped.
+    pub fn propagation_stopped(&self) -> bool {
+        self.metadata.propagation_stopped
+    }
+}
+
 /// A completed property transition.
 ///
 /// Fires on the transitioned node once the property settles on its target value,
@@ -677,6 +734,17 @@ impl TargetedEvent for ScrollEvent {
     }
 }
 
+impl TargetedEvent for InputEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        self.propagation_stopped()
+    }
+}
+
 impl TargetedEvent for TransitionEndEvent {
     fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
         self.metadata
@@ -715,6 +783,7 @@ pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
+pub(crate) type InputEventHandler = Arc<dyn Fn(&mut InputEvent) + Send + Sync + 'static>;
 pub(crate) type TransitionEndEventHandler =
     Arc<dyn Fn(&mut TransitionEndEvent) + Send + Sync + 'static>;
 pub(crate) type AnimationEndEventHandler =
@@ -739,6 +808,7 @@ pub(crate) enum TargetedEventKind {
     Click,
     Wheel,
     Scroll,
+    Input,
     TransitionEnd,
     AnimationEnd,
     AnimationIteration,
@@ -763,6 +833,8 @@ pub(crate) enum ListenerKind {
     Wheel(WheelEventHandler),
     /// Scroll offset change listener.
     Scroll(ScrollEventHandler),
+    /// Input value change listener.
+    Input(InputEventHandler),
     /// Transition end listener.
     TransitionEnd(TransitionEndEventHandler),
     /// Animation end listener.

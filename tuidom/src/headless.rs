@@ -2194,6 +2194,32 @@ mod tests {
         assert_eq!(&*seen.lock().unwrap(), "abc");
     }
 
+    #[test]
+    fn simulated_text_fires_one_input_event_per_character() {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+        doc.focus(input).unwrap();
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        doc.on_input(input, move |event| {
+            sink.lock().unwrap().push(event.value.clone());
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+        runtime.simulate_text("hey");
+
+        // Each character is its own edit, carrying the value as of that keystroke — a
+        // downstream binding sees every intermediate state, not just the final one.
+        assert_eq!(
+            &*seen.lock().unwrap(),
+            &["h".to_string(), "he".to_string(), "hey".to_string()]
+        );
+        assert_eq!(doc.input_value(input).unwrap(), "hey");
+    }
+
     const BEL: u8 = 0x07;
 
     fn bells_in(output: &[u8]) -> usize {
