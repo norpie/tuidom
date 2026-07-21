@@ -650,13 +650,13 @@ mod tests {
         doc.append_child(doc.root(), a).unwrap();
         doc.append_child(doc.root(), b).unwrap();
         let mut a_style = Style::new();
-        a_style.width(Length::Pixels(2));
-        a_style.height(Length::Pixels(1));
+        a_style.width(Length::Cells(2));
+        a_style.height(Length::Cells(1));
         a_style.flex_shrink(0.0);
         doc.set_style(a, &a_style).unwrap();
         let mut b_style = Style::new();
-        b_style.width(Length::Pixels(1));
-        b_style.height(Length::Pixels(1));
+        b_style.width(Length::Cells(1));
+        b_style.height(Length::Cells(1));
         doc.set_style(b, &b_style).unwrap();
         doc.set_transition(
             a,
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(doc.get_node(b).unwrap().layout.unwrap().rect.x, 2);
 
         doc.update_style(a, |style| {
-            style.width(Length::Pixels(10));
+            style.width(Length::Cells(10));
         })
         .unwrap();
 
@@ -707,8 +707,8 @@ mod tests {
         let node = doc.create_box().unwrap();
         doc.append_child(doc.root(), node).unwrap();
         let mut style = Style::new();
-        style.width(Length::Pixels(1));
-        style.height(Length::Pixels(1));
+        style.width(Length::Cells(1));
+        style.height(Length::Cells(1));
         style.background(Color::red());
         style.position(Position::Absolute { x: 0, y: 0 });
         doc.set_style(node, &style).unwrap();
@@ -1101,8 +1101,8 @@ mod tests {
         let node = doc.create_box().unwrap();
         doc.append_child(doc.root(), node).unwrap();
         let mut style = Style::new();
-        style.width(Length::Pixels(4));
-        style.height(Length::Pixels(1));
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(1));
         doc.set_style(node, &style).unwrap();
 
         let mut runtime = HeadlessRuntime::new(doc, 20, 3);
@@ -1112,8 +1112,8 @@ mod tests {
             node,
             KeyframeAnimation::from_to(
                 Duration::from_secs(1),
-                [AnimatableProperty::Width(Length::Pixels(2))],
-                [AnimatableProperty::Width(Length::Pixels(10))],
+                [AnimatableProperty::Width(Length::Cells(2))],
+                [AnimatableProperty::Width(Length::Cells(10))],
             ),
         )
         .unwrap();
@@ -1409,8 +1409,8 @@ mod tests {
         let doc = Document::new().unwrap();
         let node = doc.create_box().unwrap();
         let mut style = Style::new();
-        style.width(Length::Pixels(1));
-        style.height(Length::Pixels(1));
+        style.width(Length::Cells(1));
+        style.height(Length::Cells(1));
         style.background(Color::red());
         doc.set_style(node, &style).unwrap();
         doc.append_child(doc.root(), node).unwrap();

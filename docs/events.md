@@ -154,7 +154,7 @@ doc.on_focus(panel, |event| {
 ```
 
 **`on_transition_end` / `on_animation_end` / `on_animation_iteration`** — an animation
-reached a boundary. See the animation guide when it lands.
+reached a boundary. See [animation](animation.md).
 
 ## Blocked nodes swallow events
 

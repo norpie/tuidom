@@ -297,8 +297,8 @@ fn absolute_node_paints_and_hit_tests_outside_its_parent() {
 
     let parent = doc.create_box().unwrap();
     let mut parent_style = Style::new();
-    parent_style.width(Length::Pixels(2));
-    parent_style.height(Length::Pixels(1));
+    parent_style.width(Length::Cells(2));
+    parent_style.height(Length::Cells(1));
     doc.set_style(parent, &parent_style).unwrap();
     doc.append_child(doc.root(), parent).unwrap();
 
@@ -376,8 +376,8 @@ fn mouse_up_outside_pressed_node_still_clears_active() {
     let doc = Document::new().unwrap();
     let button = doc.create_box().unwrap();
     let mut button_style = Style::new();
-    button_style.width(Length::Pixels(1));
-    button_style.height(Length::Pixels(1));
+    button_style.width(Length::Cells(1));
+    button_style.height(Length::Cells(1));
     doc.set_style(button, &button_style).unwrap();
     doc.append_child(doc.root(), button).unwrap();
     doc.set_focusable(button, true).unwrap();
@@ -523,8 +523,8 @@ fn disabled_nodes_swallow_targeted_events() {
 
     // Empty boxes measure zero, so give them size for the hit test to land on the button.
     let mut sized = Style::new();
-    sized.width(Length::Pixels(2));
-    sized.height(Length::Pixels(1));
+    sized.width(Length::Cells(2));
+    sized.height(Length::Cells(1));
     doc.set_style(panel, &sized).unwrap();
     doc.set_style(button, &sized).unwrap();
 
@@ -803,8 +803,8 @@ fn bordered_box(doc: &Document, border: Border, width: u16, height: u16) -> Node
     let node = doc.create_box().unwrap();
     doc.append_child(doc.root(), node).unwrap();
     let mut style = Style::new();
-    style.width(Length::Pixels(width));
-    style.height(Length::Pixels(height));
+    style.width(Length::Cells(width));
+    style.height(Length::Cells(height));
     style.border(border);
     doc.set_style(node, &style).unwrap();
     node
@@ -1096,7 +1096,7 @@ fn single_line_input_scroll_keeps_cursor_visible() {
     let input = doc.create_input("abcdef").unwrap();
     doc.append_child(doc.root(), input).unwrap();
     let mut style = Style::new();
-    style.width(Length::Pixels(3));
+    style.width(Length::Cells(3));
     doc.set_style(input, &style).unwrap();
     doc.focus(input).unwrap();
 
@@ -1125,8 +1125,8 @@ fn multiline_input_scroll_keeps_cursor_visible() {
     doc.append_child(doc.root(), input).unwrap();
     doc.set_input_multiline(input, true).unwrap();
     let mut style = Style::new();
-    style.width(Length::Pixels(2));
-    style.height(Length::Pixels(2));
+    style.width(Length::Cells(2));
+    style.height(Length::Cells(2));
     doc.set_style(input, &style).unwrap();
     doc.focus(input).unwrap();
 
@@ -1179,8 +1179,8 @@ fn padded_input_places_cursor_and_scrolls_against_its_content_rect() {
     // Border-box width 5 minus one cell of padding per side leaves a 3-cell content rect,
     // whose origin is (1, 1).
     let mut style = Style::new();
-    style.width(Length::Pixels(5));
-    style.height(Length::Pixels(3));
+    style.width(Length::Cells(5));
+    style.height(Length::Cells(3));
     style.padding(EdgeInsets::all(1));
     doc.set_style(input, &style).unwrap();
     doc.focus(input).unwrap();
@@ -1213,7 +1213,7 @@ fn focused_block_cursor_inverts_cell_and_exposes_metadata() {
     doc.append_child(doc.root(), other).unwrap();
 
     let mut style = Style::new();
-    style.width(Length::Pixels(3));
+    style.width(Length::Cells(3));
     style.color(Color::black());
     doc.set_style(input, &style).unwrap();
     doc.set_style(other, &style).unwrap();
@@ -1450,7 +1450,7 @@ fn node_ids_are_scoped_to_their_document() {
     assert!(second.get_node(first_root).is_none());
 
     let mut style = Style::new();
-    style.width(Length::Pixels(1));
+    style.width(Length::Cells(1));
     assert_eq!(
         second.set_style(first_root, &style),
         Err(TuidomError::NodeNotFound { id: first_root })
@@ -1500,8 +1500,8 @@ fn failed_layout_preserves_previous_snapshot() {
     let child = doc.create_box().unwrap();
 
     let mut child_style = Style::new();
-    child_style.width(Length::Pixels(7));
-    child_style.height(Length::Pixels(1));
+    child_style.width(Length::Cells(7));
+    child_style.height(Length::Cells(1));
     doc.set_style(child, &child_style).unwrap();
     doc.append_child(root, child).unwrap();
     doc.compute_layout(20, 5).unwrap();
@@ -1550,13 +1550,13 @@ fn inherited_style_change_updates_layout_without_recreating_taffy_nodes() {
     let child = doc.create_box().unwrap();
 
     let mut root_style = Style::new();
-    root_style.width(Length::Pixels(10));
-    root_style.height(Length::Pixels(1));
+    root_style.width(Length::Cells(10));
+    root_style.height(Length::Cells(1));
     doc.set_style(root, &root_style).unwrap();
 
     let mut child_style = Style::new();
     child_style.inherit_width();
-    child_style.height(Length::Pixels(1));
+    child_style.height(Length::Cells(1));
     doc.set_style(child, &child_style).unwrap();
 
     doc.append_child(root, child).unwrap();
@@ -1565,7 +1565,7 @@ fn inherited_style_change_updates_layout_without_recreating_taffy_nodes() {
     doc.compute_layout(100, 10).unwrap();
     assert_eq!(doc.get_node(child).unwrap().layout.unwrap().rect.width, 10);
 
-    doc.update_style(root, |style| style.width(Length::Pixels(20)))
+    doc.update_style(root, |style| style.width(Length::Cells(20)))
         .unwrap();
     doc.compute_layout(100, 10).unwrap();
 
@@ -1921,7 +1921,7 @@ fn wheel_chains_to_the_outer_scroller_at_the_end() {
     let mut inner_style = Style::new();
     inner_style.flex_direction(FlexDirection::Column);
     inner_style.overflow_y(Overflow::Scroll);
-    inner_style.height(Length::Pixels(2));
+    inner_style.height(Length::Cells(2));
     inner_style.flex_shrink(0.0);
     doc.set_style(inner, &inner_style).unwrap();
     doc.append_child(outer, inner).unwrap();
@@ -1955,7 +1955,7 @@ fn horizontal_wheel_scrolls_the_horizontal_axis() {
 
     let container = doc.create_box().unwrap();
     let mut style = Style::new();
-    style.width(Length::Pixels(5));
+    style.width(Length::Cells(5));
     style.overflow_x(Overflow::Scroll);
     doc.set_style(container, &style).unwrap();
     doc.append_child(doc.root(), container).unwrap();
@@ -2084,7 +2084,7 @@ impl VirtualList {
 
     fn set_spacer(&self, spacer: NodeId, cells: u64) {
         let mut style = Style::new();
-        style.height(Length::Pixels(u16::try_from(cells).unwrap_or(u16::MAX)));
+        style.height(Length::Cells(u16::try_from(cells).unwrap_or(u16::MAX)));
         // An empty Box has no content floor, so default flex shrink would collapse
         // the spacer to fit the container — and with it the whole scroll range.
         style.flex_shrink(0.0);
@@ -2444,8 +2444,8 @@ fn focus_style_merges_into_focused_node_style() {
     doc.set_focusable(node, true).unwrap();
 
     let mut base = Style::new();
-    base.width(Length::Pixels(1));
-    base.height(Length::Pixels(1));
+    base.width(Length::Cells(1));
+    base.height(Length::Cells(1));
     base.color(Color::blue());
     doc.set_style(node, &base).unwrap();
 
@@ -2462,8 +2462,8 @@ fn focus_style_merges_into_focused_node_style() {
 
     doc.focus(node).unwrap();
     let focused = doc.resolved_style(node).unwrap();
-    assert_eq!(focused.width, Length::Pixels(1));
-    assert_eq!(focused.height, Length::Pixels(1));
+    assert_eq!(focused.width, Length::Cells(1));
+    assert_eq!(focused.height, Length::Cells(1));
     assert_eq!(focused.color, ResolvedColor::red());
     assert_eq!(focused.background, Some(ResolvedColor::green()));
 
@@ -2501,12 +2501,12 @@ fn focus_style_layout_effect_refreshes_on_focus_change() {
     doc.set_focusable(node, true).unwrap();
 
     let mut base = Style::new();
-    base.width(Length::Pixels(1));
-    base.height(Length::Pixels(1));
+    base.width(Length::Cells(1));
+    base.height(Length::Cells(1));
     doc.set_style(node, &base).unwrap();
 
     let mut focus = Style::new();
-    focus.width(Length::Pixels(4));
+    focus.width(Length::Cells(4));
     doc.set_focus_style(node, &focus).unwrap();
 
     doc.compute_layout(10, 3).unwrap();
@@ -2706,13 +2706,13 @@ fn spatial_navigation_reaches_absolute_node_at_its_offset_position() {
     doc.set_style(root, &root_style).unwrap();
 
     let mut current_style = Style::new();
-    current_style.width(Length::Pixels(2));
-    current_style.height(Length::Pixels(2));
+    current_style.width(Length::Cells(2));
+    current_style.height(Length::Cells(2));
     doc.set_style(current, &current_style).unwrap();
 
     let mut absolute_style = Style::new();
-    absolute_style.width(Length::Pixels(2));
-    absolute_style.height(Length::Pixels(2));
+    absolute_style.width(Length::Cells(2));
+    absolute_style.height(Length::Cells(2));
     absolute_style.position(Position::Absolute { x: 10, y: 0 });
     doc.set_style(absolute, &absolute_style).unwrap();
 
@@ -3442,11 +3442,11 @@ fn set_style_gets_resolved() {
     let node = doc.create_box().unwrap();
 
     let mut style = Style::new();
-    style.width(Length::Pixels(42));
+    style.width(Length::Cells(42));
     style.padding(EdgeInsets::symmetric(2, 1));
     style.margin(EdgeInsets::new(1, 2, 3, 4));
     style.flex_direction(FlexDirection::Column);
-    style.flex_basis(Length::Pixels(3));
+    style.flex_basis(Length::Cells(3));
     style.flex_grow(1.0);
     style.flex_shrink(0.5);
     style.flex_wrap(FlexWrap::Wrap);
@@ -3456,11 +3456,11 @@ fn set_style_gets_resolved() {
     doc.set_style(node, &style).unwrap();
 
     let resolved = doc.resolved_style(node).unwrap();
-    assert_eq!(resolved.width, Length::Pixels(42));
+    assert_eq!(resolved.width, Length::Cells(42));
     assert_eq!(resolved.padding, EdgeInsets::symmetric(2, 1));
     assert_eq!(resolved.margin, EdgeInsets::new(1, 2, 3, 4));
     assert_eq!(resolved.flex_direction, FlexDirection::Column);
-    assert_eq!(resolved.flex_basis, Length::Pixels(3));
+    assert_eq!(resolved.flex_basis, Length::Cells(3));
     assert_eq!(resolved.flex_grow, 1.0);
     assert_eq!(resolved.flex_shrink, 0.5);
     assert_eq!(resolved.flex_wrap, FlexWrap::Wrap);
@@ -3500,17 +3500,17 @@ fn update_style_invalidates_cache() {
     let node = doc.create_box().unwrap();
 
     let mut style = Style::new();
-    style.width(Length::Pixels(10));
+    style.width(Length::Cells(10));
     doc.set_style(node, &style).unwrap();
 
-    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(10));
+    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Cells(10));
 
     doc.update_style(node, |s| {
-        s.width(Length::Pixels(20));
+        s.width(Length::Cells(20));
     })
     .unwrap();
 
-    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(20));
+    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Cells(20));
 }
 
 #[test]
@@ -3519,19 +3519,19 @@ fn panicking_update_style_does_not_partially_mutate_style() {
     let node = doc.create_box().unwrap();
 
     let mut style = Style::new();
-    style.width(Length::Pixels(10));
+    style.width(Length::Cells(10));
     doc.set_style(node, &style).unwrap();
-    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(10));
+    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Cells(10));
 
     let result = catch_unwind(AssertUnwindSafe(|| {
         let _ = doc.update_style(node, |style| {
-            style.width(Length::Pixels(20));
+            style.width(Length::Cells(20));
             panic!("boom");
         });
     }));
 
     assert!(result.is_err());
-    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Pixels(10));
+    assert_eq!(doc.resolved_style(node).unwrap().width, Length::Cells(10));
 }
 
 #[test]
@@ -3593,7 +3593,7 @@ fn explicitly_inherits_from_parent() {
     parent_style.padding(EdgeInsets::all(2));
     parent_style.margin(EdgeInsets::new(1, 2, 3, 4));
     parent_style.flex_direction(FlexDirection::Column);
-    parent_style.flex_basis(Length::Pixels(3));
+    parent_style.flex_basis(Length::Cells(3));
     parent_style.flex_grow(1.0);
     parent_style.flex_shrink(0.5);
     parent_style.flex_wrap(FlexWrap::Wrap);
@@ -3623,7 +3623,7 @@ fn explicitly_inherits_from_parent() {
     assert_eq!(child_resolved.padding, EdgeInsets::all(2));
     assert_eq!(child_resolved.margin, EdgeInsets::new(1, 2, 3, 4));
     assert_eq!(child_resolved.flex_direction, FlexDirection::Column);
-    assert_eq!(child_resolved.flex_basis, Length::Pixels(3));
+    assert_eq!(child_resolved.flex_basis, Length::Cells(3));
     assert_eq!(child_resolved.flex_grow, 1.0);
     assert_eq!(child_resolved.flex_shrink, 0.5);
     assert_eq!(child_resolved.flex_wrap, FlexWrap::Wrap);
@@ -3923,8 +3923,8 @@ fn tab_order_is_scoped_to_the_active_focus_context() {
 fn modal_scene(doc: &Document) -> (NodeId, NodeId, NodeId) {
     let mut background_style = Style::new();
     background_style.position(Position::Absolute { x: 0, y: 0 });
-    background_style.width(Length::Pixels(2));
-    background_style.height(Length::Pixels(1));
+    background_style.width(Length::Cells(2));
+    background_style.height(Length::Cells(1));
 
     let background = doc.create_box().unwrap();
     doc.append_child(doc.root(), background).unwrap();
@@ -3934,16 +3934,16 @@ fn modal_scene(doc: &Document) -> (NodeId, NodeId, NodeId) {
     let mut modal_style = Style::new();
     modal_style.stacking_context(true);
     modal_style.position(Position::Absolute { x: 2, y: 0 });
-    modal_style.width(Length::Pixels(2));
-    modal_style.height(Length::Pixels(1));
+    modal_style.width(Length::Cells(2));
+    modal_style.height(Length::Cells(1));
 
     let modal = doc.create_box().unwrap();
     doc.append_child(doc.root(), modal).unwrap();
     doc.set_style(modal, &modal_style).unwrap();
 
     let mut confirm_style = Style::new();
-    confirm_style.width(Length::Pixels(2));
-    confirm_style.height(Length::Pixels(1));
+    confirm_style.width(Length::Cells(2));
+    confirm_style.height(Length::Cells(1));
 
     let confirm = doc.create_box().unwrap();
     doc.append_child(modal, confirm).unwrap();
@@ -4077,8 +4077,8 @@ fn spatial_navigation_skips_inert_candidates_instead_of_dead_ending_on_them() {
     fn absolute_button(doc: &Document, parent: NodeId, x: i32, width: u16) -> NodeId {
         let mut style = Style::new();
         style.position(Position::Absolute { x, y: 0 });
-        style.width(Length::Pixels(width));
-        style.height(Length::Pixels(1));
+        style.width(Length::Cells(width));
+        style.height(Length::Cells(1));
 
         let node = doc.create_box().unwrap();
         doc.append_child(parent, node).unwrap();
@@ -4090,8 +4090,8 @@ fn spatial_navigation_skips_inert_candidates_instead_of_dead_ending_on_them() {
     let mut modal_style = Style::new();
     modal_style.stacking_context(true);
     modal_style.position(Position::Absolute { x: 0, y: 0 });
-    modal_style.width(Length::Pixels(8));
-    modal_style.height(Length::Pixels(1));
+    modal_style.width(Length::Cells(8));
+    modal_style.height(Length::Cells(1));
 
     let modal = doc.create_box().unwrap();
     doc.append_child(doc.root(), modal).unwrap();
@@ -4698,8 +4698,8 @@ fn scrollbar_drag_does_not_move_focus() {
     let (doc, mut runtime, _container) = scrollbar_drag_setup();
     let other = doc.create_box().unwrap();
     let mut style = Style::new();
-    style.width(Length::Pixels(2));
-    style.height(Length::Pixels(2));
+    style.width(Length::Cells(2));
+    style.height(Length::Cells(2));
     doc.set_style(other, &style).unwrap();
     doc.append_child(doc.root(), other).unwrap();
     doc.set_focusable(other, true).unwrap();
@@ -4738,7 +4738,7 @@ fn horizontal_scrollbar_drag_scrolls_x() {
     let doc = Document::new().unwrap();
     let container = doc.create_box().unwrap();
     let mut style = Style::new();
-    style.width(Length::Pixels(5));
+    style.width(Length::Cells(5));
     style.overflow_x(Overflow::Scroll);
     doc.set_style(container, &style).unwrap();
     doc.append_child(doc.root(), container).unwrap();

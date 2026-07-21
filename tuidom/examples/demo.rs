@@ -183,8 +183,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dialog_style.border_color(Color::oklch(0.8, 0.1, 280.0));
 
     let mut input_style = Style::new();
-    input_style.width(Length::Pixels(24));
-    input_style.height(Length::Pixels(1));
+    input_style.width(Length::Cells(24));
+    input_style.height(Length::Cells(1));
     input_style.color(Color::white());
     input_style.background(Color::oklch(0.18, 0.04, 260.0));
     input_style.cursor_shape(CursorShape::Bar);
@@ -352,7 +352,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let separator = doc.create_box()?;
     let mut separator_style = Style::new();
     separator_style.width(Length::Percent(100.0));
-    separator_style.height(Length::Pixels(1));
+    separator_style.height(Length::Cells(1));
     separator_style.border(
         Border::new(BorderCharset::single()).with_sides(Sides::new(true, false, false, false)),
     );
@@ -440,7 +440,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let list = doc.create_box()?;
     let mut list_style = Style::new();
     list_style.flex_direction(FlexDirection::Column);
-    list_style.height(Length::Pixels(5));
+    list_style.height(Length::Cells(5));
     list_style.overflow_y(Overflow::Scroll);
     list_style.border(Border::new(BorderCharset::single()));
     list_style.border_color(Color::oklch(0.55, 0.02, 260.0));
@@ -468,7 +468,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let wide = doc.create_box()?;
     let mut wide_style = Style::new();
-    wide_style.width(Length::Pixels(24));
+    wide_style.width(Length::Cells(24));
     wide_style.overflow_x(Overflow::Scroll);
     wide_style.scrollbar_charset(ScrollbarCharset::half_block());
     // The bar overlays the viewport's bottom row, and without this the pane is one row
@@ -489,7 +489,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auto_hide = doc.create_box()?;
     let mut auto_hide_style = Style::new();
     auto_hide_style.flex_direction(FlexDirection::Column);
-    auto_hide_style.height(Length::Pixels(5));
+    auto_hide_style.height(Length::Cells(5));
     auto_hide_style.overflow_y(Overflow::Scroll);
     auto_hide_style.scrollbar_show(ScrollbarShow::WhenScrolling);
     auto_hide_style.scrollbar_hide_delay(Duration::from_millis(800));
@@ -997,7 +997,7 @@ impl VirtualPane {
         let container = doc.create_box()?;
         let mut style = Style::new();
         style.flex_direction(FlexDirection::Column);
-        style.height(Length::Pixels(5));
+        style.height(Length::Cells(5));
         style.overflow_y(Overflow::Scroll);
         style.border(Border::new(BorderCharset::single()));
         style.border_color(Color::oklch(0.55, 0.02, 260.0));
@@ -1056,7 +1056,7 @@ impl VirtualPane {
 
     fn set_spacer(&self, spacer: NodeId, cells: u64) {
         let mut style = Style::new();
-        style.height(Length::Pixels(u16::try_from(cells).unwrap_or(u16::MAX)));
+        style.height(Length::Cells(u16::try_from(cells).unwrap_or(u16::MAX)));
         // An empty box has no content floor, so default flex shrink would collapse
         // the spacer to fit the container — and with it the whole scroll range.
         style.flex_shrink(0.0);

@@ -928,7 +928,7 @@ mod tests {
         let start = Instant::now();
 
         let from_style = ResolvedStyle {
-            width: crate::style::Length::Pixels(4),
+            width: crate::style::Length::Cells(4),
             ..ResolvedStyle::default()
         };
         let to_style = ResolvedStyle {

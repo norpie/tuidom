@@ -102,17 +102,12 @@ panel.background(Color::oklch(0.25, 0.03, 260.0));
 doc.set_style(container, &panel)?;
 ```
 
-Two things to know up front:
-
-**`Length::Pixels` means terminal cells.** There are no pixels in a terminal; the variant
-is named for familiarity and measures cells. `Length::Pixels(10)` is ten columns wide or
-ten rows tall depending on the axis.
+One thing to know up front:
 
 **Colors are OKLCH, not RGB.** `Color::oklch(lightness, chroma, hue)` — lightness `0.0` to
 `1.0`, chroma from `0.0` (gray) up to around `0.4`, hue in degrees. It converts to RGB only
 at render time. This is what makes `darken(0.1)` mean the same perceptual step on every
-hue instead of a different one per color. See the colors guide when it lands, and the
-[glossary](GLOSSARY.md#colors) meanwhile.
+hue instead of a different one per color. See [colors](colors.md) for the whole model.
 
 For a one-off tweak, `update_style` edits in place rather than replacing:
 
@@ -234,8 +229,7 @@ assert_eq!(rt.get_cell(0, 0).map(|c| c.text), Some("h".to_string()));
 handle — the same rule as `run()`.
 
 This is the supported feedback loop, and it is why the engine has a headless mode at all.
-The testing guide covers the full surface when it lands; `tuidom/src/headless.rs` has
-sixty-eight tests using it in the meantime.
+[testing](testing.md) covers the full surface.
 
 ## Where to go next
 

@@ -546,7 +546,7 @@ fn to_taffy_inset(position: Position) -> Rect<LengthPercentageAuto> {
 
 fn to_dimension(length: Length) -> Dimension {
     match length {
-        Length::Pixels(n) => Dimension::length(n as f32),
+        Length::Cells(n) => Dimension::length(n as f32),
         Length::Percent(p) => Dimension::percent(p as f32 / 100.0),
         Length::Auto => Dimension::auto(),
     }
@@ -669,8 +669,8 @@ mod tests {
 
     fn fixed_centered_style(width: u16, height: u16) -> DomStyle {
         let mut style = DomStyle::new();
-        style.width(Length::Pixels(width));
-        style.height(Length::Pixels(height));
+        style.width(Length::Cells(width));
+        style.height(Length::Cells(height));
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
         style
@@ -696,8 +696,8 @@ mod tests {
         for _ in 0..2 {
             let child = doc.create_box().unwrap();
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(8));
-            child_style.height(Length::Pixels(4));
+            child_style.width(Length::Cells(8));
+            child_style.height(Length::Cells(4));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(container, child).unwrap();
         }
@@ -811,14 +811,14 @@ mod tests {
         let third = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(1));
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second, third] {
             let mut child_style = DomStyle::new();
             child_style.width(Length::Percent(100.0 / 3.0));
-            child_style.height(Length::Pixels(1));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -849,8 +849,8 @@ mod tests {
         let child = doc.create_text("A").unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(4));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(4));
         root_style.padding(EdgeInsets::new(1, 2, 0, 3));
         root_style.align_items(AlignItems::FlexStart);
         doc.set_style(root, &root_style).unwrap();
@@ -871,19 +871,19 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(1));
         doc.set_style(root, &root_style).unwrap();
 
         let mut first_style = DomStyle::new();
-        first_style.width(Length::Pixels(2));
-        first_style.height(Length::Pixels(1));
+        first_style.width(Length::Cells(2));
+        first_style.height(Length::Cells(1));
         first_style.margin(EdgeInsets::new(0, 1, 0, 0));
         doc.set_style(first, &first_style).unwrap();
 
         let mut second_style = DomStyle::new();
-        second_style.width(Length::Pixels(2));
-        second_style.height(Length::Pixels(1));
+        second_style.width(Length::Cells(2));
+        second_style.height(Length::Cells(1));
         doc.set_style(second, &second_style).unwrap();
 
         doc.append_child(root, first).unwrap();
@@ -906,15 +906,15 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(4));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(4));
         root_style.flex_direction(FlexDirection::Column);
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -936,15 +936,15 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(1));
         root_style.gap(FlexGap::new(0, 2));
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -966,16 +966,16 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(2));
-        root_style.height(Length::Pixels(5));
+        root_style.width(Length::Cells(2));
+        root_style.height(Length::Cells(5));
         root_style.flex_direction(FlexDirection::Column);
         root_style.gap(FlexGap::new(2, 0));
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -997,14 +997,14 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(12));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(12));
+        root_style.height(Length::Cells(1));
         doc.set_style(root, &root_style).unwrap();
 
         for (child, grow) in [(first, 1.0), (second, 2.0)] {
             let mut child_style = DomStyle::new();
-            child_style.height(Length::Pixels(1));
-            child_style.flex_basis(Length::Pixels(0));
+            child_style.height(Length::Cells(1));
+            child_style.flex_basis(Length::Cells(0));
             child_style.flex_grow(grow);
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
@@ -1028,14 +1028,14 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(8));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(8));
+        root_style.height(Length::Cells(1));
         doc.set_style(root, &root_style).unwrap();
 
         for (child, shrink) in [(first, 1.0), (second, 3.0)] {
             let mut child_style = DomStyle::new();
-            child_style.height(Length::Pixels(1));
-            child_style.flex_basis(Length::Pixels(6));
+            child_style.height(Length::Cells(1));
+            child_style.flex_basis(Length::Cells(6));
             child_style.flex_shrink(shrink);
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
@@ -1065,14 +1065,14 @@ mod tests {
         let offset = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(20));
-        root_style.height(Length::Pixels(10));
+        root_style.width(Length::Cells(20));
+        root_style.height(Length::Cells(10));
         root_style.padding(EdgeInsets::all(4));
         doc.set_style(root, &root_style).unwrap();
 
         let mut parent_style = DomStyle::new();
-        parent_style.width(Length::Pixels(10));
-        parent_style.height(Length::Pixels(5));
+        parent_style.width(Length::Cells(10));
+        parent_style.height(Length::Cells(5));
         parent_style.padding(EdgeInsets::new(3, 0, 0, 2));
         doc.set_style(parent, &parent_style).unwrap();
         doc.append_child(root, parent).unwrap();
@@ -1082,8 +1082,8 @@ mod tests {
             (offset, Position::Absolute { x: 3, y: 1 }),
         ] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(1));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(1));
+            child_style.height(Length::Cells(1));
             child_style.position(position);
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(parent, child).unwrap();
@@ -1110,8 +1110,8 @@ mod tests {
         let child = doc.create_box().unwrap();
 
         let mut parent_style = DomStyle::new();
-        parent_style.width(Length::Pixels(10));
-        parent_style.height(Length::Pixels(6));
+        parent_style.width(Length::Cells(10));
+        parent_style.height(Length::Cells(6));
         parent_style.border(Border::new(BorderCharset::single()));
         doc.set_style(parent, &parent_style).unwrap();
         doc.append_child(doc.root(), parent).unwrap();
@@ -1156,8 +1156,8 @@ mod tests {
         let child = doc.create_box().unwrap();
 
         let mut parent_style = DomStyle::new();
-        parent_style.width(Length::Pixels(10));
-        parent_style.height(Length::Pixels(6));
+        parent_style.width(Length::Cells(10));
+        parent_style.height(Length::Cells(6));
         parent_style.border(
             Border::new(BorderCharset::single()).with_sides(Sides::new(false, false, false, true)),
         );
@@ -1196,16 +1196,16 @@ mod tests {
         let flush = doc.create_box().unwrap();
 
         let mut parent_style = DomStyle::new();
-        parent_style.width(Length::Pixels(10));
-        parent_style.height(Length::Pixels(6));
+        parent_style.width(Length::Cells(10));
+        parent_style.height(Length::Cells(6));
         parent_style.padding(EdgeInsets::all(2));
         parent_style.border(Border::new(BorderCharset::single()));
         doc.set_style(parent, &parent_style).unwrap();
         doc.append_child(doc.root(), parent).unwrap();
 
         let mut flush_style = DomStyle::new();
-        flush_style.width(Length::Pixels(1));
-        flush_style.height(Length::Pixels(1));
+        flush_style.width(Length::Cells(1));
+        flush_style.height(Length::Cells(1));
         flush_style.position(Position::Absolute { x: 0, y: 0 });
         doc.set_style(flush, &flush_style).unwrap();
         doc.append_child(parent, flush).unwrap();
@@ -1227,15 +1227,15 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(2));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(2));
         root_style.align_items(AlignItems::FlexStart);
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, absolute, second] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             if child == absolute {
                 child_style.position(Position::Absolute { x: 7, y: 1 });
             }
@@ -1264,21 +1264,21 @@ mod tests {
         let child = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(20));
-        root_style.height(Length::Pixels(10));
+        root_style.width(Length::Cells(20));
+        root_style.height(Length::Cells(10));
         doc.set_style(root, &root_style).unwrap();
 
         let mut absolute_style = DomStyle::new();
-        absolute_style.width(Length::Pixels(8));
-        absolute_style.height(Length::Pixels(4));
+        absolute_style.width(Length::Cells(8));
+        absolute_style.height(Length::Cells(4));
         absolute_style.padding(EdgeInsets::all(1));
         absolute_style.position(Position::Absolute { x: 5, y: 2 });
         doc.set_style(absolute, &absolute_style).unwrap();
         doc.append_child(root, absolute).unwrap();
 
         let mut child_style = DomStyle::new();
-        child_style.width(Length::Pixels(2));
-        child_style.height(Length::Pixels(1));
+        child_style.width(Length::Cells(2));
+        child_style.height(Length::Cells(1));
         doc.set_style(child, &child_style).unwrap();
         doc.append_child(absolute, child).unwrap();
 
@@ -1298,20 +1298,20 @@ mod tests {
         let child = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(20));
-        root_style.height(Length::Pixels(10));
+        root_style.width(Length::Cells(20));
+        root_style.height(Length::Cells(10));
         root_style.padding(EdgeInsets::all(2));
         doc.set_style(root, &root_style).unwrap();
 
         let mut parent_style = DomStyle::new();
-        parent_style.width(Length::Pixels(4));
-        parent_style.height(Length::Pixels(2));
+        parent_style.width(Length::Cells(4));
+        parent_style.height(Length::Cells(2));
         doc.set_style(parent, &parent_style).unwrap();
         doc.append_child(root, parent).unwrap();
 
         let mut child_style = DomStyle::new();
-        child_style.width(Length::Pixels(1));
-        child_style.height(Length::Pixels(1));
+        child_style.width(Length::Cells(1));
+        child_style.height(Length::Cells(1));
         child_style.position(Position::Absolute { x: -3, y: -3 });
         doc.set_style(child, &child_style).unwrap();
         doc.append_child(parent, child).unwrap();
@@ -1331,13 +1331,13 @@ mod tests {
         let absolute = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(5));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(5));
         doc.set_style(root, &root_style).unwrap();
 
         let mut absolute_style = DomStyle::new();
-        absolute_style.width(Length::Pixels(2));
-        absolute_style.height(Length::Pixels(1));
+        absolute_style.width(Length::Cells(2));
+        absolute_style.height(Length::Cells(1));
         absolute_style.position(Position::Absolute { x: 3, y: 3 });
         absolute_style.display(Display::None);
         doc.set_style(absolute, &absolute_style).unwrap();
@@ -1357,15 +1357,15 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(1));
         root_style.flex_direction(FlexDirection::RowReverse);
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -1388,15 +1388,15 @@ mod tests {
         let second = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(4));
-        root_style.height(Length::Pixels(6));
+        root_style.width(Length::Cells(4));
+        root_style.height(Length::Cells(6));
         root_style.flex_direction(FlexDirection::ColumnReverse);
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(2));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(2));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -1419,16 +1419,16 @@ mod tests {
         let third = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(5));
-        root_style.height(Length::Pixels(2));
+        root_style.width(Length::Cells(5));
+        root_style.height(Length::Cells(2));
         root_style.flex_wrap(FlexWrap::WrapReverse);
         root_style.align_items(AlignItems::FlexStart);
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second, third] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -1452,13 +1452,13 @@ mod tests {
         let child = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(1));
         doc.set_style(root, &root_style).unwrap();
 
         let mut child_style = DomStyle::new();
-        child_style.height(Length::Pixels(1));
-        child_style.flex_basis(Length::Pixels(4));
+        child_style.height(Length::Cells(1));
+        child_style.flex_basis(Length::Cells(4));
         doc.set_style(child, &child_style).unwrap();
         doc.append_child(root, child).unwrap();
 
@@ -1478,16 +1478,16 @@ mod tests {
         let third = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(5));
-        root_style.height(Length::Pixels(2));
+        root_style.width(Length::Cells(5));
+        root_style.height(Length::Cells(2));
         root_style.flex_wrap(FlexWrap::Wrap);
         root_style.align_items(AlignItems::FlexStart);
         doc.set_style(root, &root_style).unwrap();
 
         for child in [first, second, third] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -1512,8 +1512,8 @@ mod tests {
         let third = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(5));
-        root_style.height(Length::Pixels(6));
+        root_style.width(Length::Cells(5));
+        root_style.height(Length::Cells(6));
         root_style.flex_wrap(FlexWrap::Wrap);
         root_style.align_content(AlignContent::Center);
         root_style.align_items(AlignItems::FlexStart);
@@ -1521,8 +1521,8 @@ mod tests {
 
         for child in [first, second, third] {
             let mut child_style = DomStyle::new();
-            child_style.width(Length::Pixels(2));
-            child_style.height(Length::Pixels(1));
+            child_style.width(Length::Cells(2));
+            child_style.height(Length::Cells(1));
             doc.set_style(child, &child_style).unwrap();
             doc.append_child(root, child).unwrap();
         }
@@ -1545,14 +1545,14 @@ mod tests {
         let child = doc.create_box().unwrap();
 
         let mut root_style = DomStyle::new();
-        root_style.width(Length::Pixels(10));
-        root_style.height(Length::Pixels(5));
+        root_style.width(Length::Cells(10));
+        root_style.height(Length::Cells(5));
         root_style.align_items(AlignItems::FlexStart);
         doc.set_style(root, &root_style).unwrap();
 
         let mut child_style = DomStyle::new();
-        child_style.width(Length::Pixels(2));
-        child_style.height(Length::Pixels(1));
+        child_style.width(Length::Cells(2));
+        child_style.height(Length::Cells(1));
         child_style.align_self(AlignSelf::Center);
         doc.set_style(child, &child_style).unwrap();
         doc.append_child(root, child).unwrap();
@@ -1576,8 +1576,8 @@ mod tests {
             .unwrap();
 
         let mut child_style = DomStyle::new();
-        child_style.width(Length::Pixels(10));
-        child_style.height(Length::Pixels(5));
+        child_style.width(Length::Cells(10));
+        child_style.height(Length::Cells(5));
         doc.set_style(child, &child_style).unwrap();
 
         doc.append_child(root, parent).unwrap();

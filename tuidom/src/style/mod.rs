@@ -40,8 +40,8 @@ pub enum StyleValue<T> {
 /// Sizing for width and height properties.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Length {
-    /// Fixed size in terminal cells.
-    Pixels(u16),
+    /// Exactly `n` terminal cells — columns on the horizontal axis, rows on the vertical.
+    Cells(u16),
     /// Percentage of parent's content area.
     Percent(f64),
     /// Size to content (for flex containers: size to children; for text: size to content).
@@ -1222,14 +1222,14 @@ mod tests {
     fn builder_chain() {
         let mut style = Style::new();
         style.width(Length::Percent(100.0));
-        style.height(Length::Pixels(20));
+        style.height(Length::Cells(20));
         style.padding(EdgeInsets::symmetric(2, 1));
         style.margin(EdgeInsets::new(1, 2, 3, 4));
         style.color(Color::white());
         style.background(Color::blue());
         style.opacity(0.5);
         style.flex_direction(FlexDirection::Column);
-        style.flex_basis(Length::Pixels(3));
+        style.flex_basis(Length::Cells(3));
         style.flex_grow(1.0);
         style.flex_shrink(0.5);
         style.flex_wrap(FlexWrap::Wrap);
@@ -1245,12 +1245,12 @@ mod tests {
         style.set_custom("--role", "panel");
 
         assert_eq!(style.width, StyleValue::Set(Length::Percent(100.0)));
-        assert_eq!(style.height, StyleValue::Set(Length::Pixels(20)));
+        assert_eq!(style.height, StyleValue::Set(Length::Cells(20)));
         assert_eq!(style.padding, StyleValue::Set(EdgeInsets::symmetric(2, 1)));
         assert_eq!(style.margin, StyleValue::Set(EdgeInsets::new(1, 2, 3, 4)));
         assert_eq!(style.opacity, StyleValue::Set(0.5));
         assert_eq!(style.flex_direction, StyleValue::Set(FlexDirection::Column));
-        assert_eq!(style.flex_basis, StyleValue::Set(Length::Pixels(3)));
+        assert_eq!(style.flex_basis, StyleValue::Set(Length::Cells(3)));
         assert_eq!(style.flex_grow, StyleValue::Set(1.0));
         assert_eq!(style.flex_shrink, StyleValue::Set(0.5));
         assert_eq!(style.flex_wrap, StyleValue::Set(FlexWrap::Wrap));

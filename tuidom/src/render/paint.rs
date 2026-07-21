@@ -1059,8 +1059,8 @@ mod tests {
         let text = doc.create_text("hi").unwrap();
 
         let mut root_style = Style::new();
-        root_style.width(Length::Pixels(5));
-        root_style.height(Length::Pixels(1));
+        root_style.width(Length::Cells(5));
+        root_style.height(Length::Cells(1));
         doc.set_style(root, &root_style).unwrap();
 
         doc.append_child(root, text).unwrap();
@@ -1749,7 +1749,7 @@ mod tests {
         // The scrolled-out content must never bleed into the sibling's cells.
         let container = doc.create_box().unwrap();
         let mut style = Style::new();
-        style.width(Length::Pixels(5));
+        style.width(Length::Cells(5));
         style.overflow_x(Overflow::Scroll);
         style.scrollbar_show(ScrollbarShow::Never);
         doc.set_style(container, &style).unwrap();
@@ -1762,7 +1762,7 @@ mod tests {
 
         let sibling = doc.create_box().unwrap();
         let mut sibling_style = Style::new();
-        sibling_style.width(Length::Pixels(5));
+        sibling_style.width(Length::Cells(5));
         sibling_style.background(Color::red());
         doc.set_style(sibling, &sibling_style).unwrap();
         doc.append_child(doc.root(), sibling).unwrap();
@@ -1803,7 +1803,7 @@ mod tests {
         let mut inner_style = Style::new();
         inner_style.flex_direction(FlexDirection::Column);
         inner_style.overflow_y(Overflow::Scroll);
-        inner_style.height(Length::Pixels(2));
+        inner_style.height(Length::Cells(2));
         inner_style.flex_shrink(0.0);
         inner_style.scrollbar_show(ScrollbarShow::Never);
         doc.set_style(inner, &inner_style).unwrap();
@@ -1886,7 +1886,7 @@ mod tests {
 
         let container = doc.create_box().unwrap();
         let mut style = Style::new();
-        style.width(Length::Pixels(5));
+        style.width(Length::Cells(5));
         style.overflow_x(Overflow::Scroll);
         doc.set_style(container, &style).unwrap();
         doc.append_child(doc.root(), container).unwrap();

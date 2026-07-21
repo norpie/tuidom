@@ -35,7 +35,7 @@ makes overflow possible in the first place.
 
 The practical consequence: setting `overflow_y(Scroll)` on a container whose height is
 `Auto` usually does nothing visible, because the container still sizes to its content.
-Scroll containers need a bounded height — a fixed `Length::Pixels`, a `Percent`, or
+Scroll containers need a bounded height — a fixed `Length::Cells`, a `Percent`, or
 `flex_grow` inside a bounded parent.
 
 ## Scroll offset is runtime state

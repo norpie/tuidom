@@ -10,7 +10,7 @@ use crate::style::{EdgeInsets, Length, Position, ResolvedColor};
 /// One variant per interpolation shape, not per property: width and height are
 /// both a cell count, padding and margin both four of them. A property maps to
 /// a variant through [`extract_animated_value`], and two values interpolate only
-/// when they share a variant — a `Pixels` width cannot animate to a `Percent`
+/// when they share a variant — a `Cells` width cannot animate to a `Percent`
 /// one, so that change snaps.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum AnimatedValue {
@@ -161,13 +161,13 @@ pub(crate) fn apply_animated_value(
             }
         }
         (TransitionProperty::Width, AnimatedValue::Cells(v)) => {
-            resolved.width = Length::Pixels(round_cells_u16(v))
+            resolved.width = Length::Cells(round_cells_u16(v))
         }
         (TransitionProperty::Width, AnimatedValue::Percent(v)) => {
             resolved.width = Length::Percent(v)
         }
         (TransitionProperty::Height, AnimatedValue::Cells(v)) => {
-            resolved.height = Length::Pixels(round_cells_u16(v))
+            resolved.height = Length::Cells(round_cells_u16(v))
         }
         (TransitionProperty::Height, AnimatedValue::Percent(v)) => {
             resolved.height = Length::Percent(v)
@@ -186,7 +186,7 @@ pub(crate) fn apply_animated_value(
 
 pub(crate) fn length_value(length: Length) -> Option<AnimatedValue> {
     match length {
-        Length::Pixels(v) => Some(AnimatedValue::Cells(f64::from(v))),
+        Length::Cells(v) => Some(AnimatedValue::Cells(f64::from(v))),
         Length::Percent(v) => Some(AnimatedValue::Percent(v)),
         Length::Auto => None,
     }

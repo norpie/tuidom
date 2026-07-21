@@ -6,23 +6,17 @@ that are different because the target is a terminal rather than a browser.
 
 Terms in **bold** are defined in the [glossary](GLOSSARY.md#layout--positioning).
 
-## Cells, not pixels
+## Lengths
 
-Every length in tuidom is a whole terminal cell. That produces the library's worst naming
-wart, which you should know about immediately:
-
-```rust
-Length::Pixels(10)     // ten CELLS, not pixels
-```
-
-There are no pixels in a terminal. The variant is named for familiarity with CSS and means
-columns on the horizontal axis, rows on the vertical one.
+Every length in tuidom is a whole terminal cell — columns on the horizontal axis, rows on
+the vertical one. There is no smaller unit, so nothing here is fractional and nothing is
+subpixel.
 
 The three length modes:
 
 | | |
 |---|---|
-| `Length::Pixels(n)` | exactly `n` cells |
+| `Length::Cells(n)` | exactly `n` cells |
 | `Length::Percent(p)` | `p` percent of the parent's content area |
 | `Length::Auto` | size to content — for a flex container, to its children |
 
@@ -78,7 +72,7 @@ you usually want the first; in a `Row` container, the second.
 ```rust
 child.flex_grow(1.0);        // take a share of leftover space
 child.flex_shrink(0.0);      // never shrink below basis
-child.flex_basis(Length::Pixels(20));
+child.flex_basis(Length::Cells(20));
 ```
 
 `flex_shrink(0.0)` deserves special mention because forgetting it causes a real bug rather

@@ -47,7 +47,7 @@ happening.
 
 ```rust
 let mut spacer = Style::new();
-spacer.height(Length::Pixels(cells));
+spacer.height(Length::Cells(cells));
 spacer.flex_shrink(0.0);
 ```
 

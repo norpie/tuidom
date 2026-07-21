@@ -38,7 +38,7 @@ pub struct Uniform {
 ///
 /// Extents are `u64` so the math stays exact for any collection; the engine itself
 /// scrolls at most `u16::MAX` cells on an axis, so a spacer applied to a style
-/// saturates at [`Length::Pixels`](crate::style::Length::Pixels)'s range.
+/// saturates at [`Length::Cells`](crate::style::Length::Cells)'s range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Window {
     /// The items that should exist in the DOM, visible plus overscan.

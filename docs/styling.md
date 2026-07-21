@@ -161,7 +161,7 @@ out from one flag rather than needing a style per descendant.
 
 Note that disabled is *not* the same as inert, which blocks interaction outside an active
 focus context. Inert nodes merge no style at all — content behind a modal keeps its
-appearance. See the focus guide when it lands.
+appearance. See [inert versus disabled](focus-and-selection.md#inert-versus-disabled).
 
 ## Borders
 
