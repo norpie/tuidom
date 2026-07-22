@@ -34,10 +34,12 @@ mod layout;
 mod pseudo;
 mod scroll;
 pub(crate) mod selection;
+mod snapshot;
 mod style;
 mod tree;
 
 pub use selection::SelectionPoint;
+pub use snapshot::{DocumentSnapshot, NodeSnapshot};
 
 #[cfg(test)]
 mod tests;

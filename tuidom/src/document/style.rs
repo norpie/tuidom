@@ -155,6 +155,23 @@ impl Document {
         Ok(())
     }
 
+    /// Get a node's declared inline style.
+    ///
+    /// This is what was written with [`set_style`](Self::set_style), before inheritance,
+    /// defaults, pseudo-states, or animation overrides — so every property keeps its
+    /// [`StyleValue`](crate::style::StyleValue) state, and `Unset` stays distinguishable
+    /// from a value that happens to equal the default. That distinction is the whole
+    /// reason to read this rather than
+    /// [`resolved_style`](Self::resolved_style), which has collapsed it by construction.
+    ///
+    /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
+    pub fn style(&self, id: NodeId) -> Result<Style> {
+        match self.inner.nodes.get(&id) {
+            Some(data) => Ok(data.style.clone()),
+            None => Err(TuidomError::NodeNotFound { id }),
+        }
+    }
+
     /// Update a node's style in-place via a closure.
     ///
     /// Invalidates the resolved style cache, triggers a re-render, and signals

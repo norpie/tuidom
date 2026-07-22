@@ -81,7 +81,7 @@ impl Document {
     ///
     /// The scrollport needs the node's border and max scroll its overflow, both from
     /// the resolved style; a node whose style cannot resolve reports no layout.
-    fn layout_view(&self, id: NodeId, layout: NodeLayout) -> Option<LayoutView> {
+    pub(super) fn layout_view(&self, id: NodeId, layout: NodeLayout) -> Option<LayoutView> {
         let resolved = self.resolved_style_unlocked(id).ok()?;
         Some(LayoutView {
             rect: layout.rect,

@@ -79,6 +79,16 @@ impl Document {
     /// of a drag are included — the way terminals select. Returns `None` when nothing
     /// is selected.
     pub fn selection(&self) -> Option<(SelectionPoint, SelectionPoint)> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.selection_unlocked()
+    }
+
+    /// [`selection`](Self::selection) for callers already holding the tree guard.
+    ///
+    /// Ordering two points walks both their root paths, so the guard belongs around the
+    /// whole comparison rather than around each step of it — which is what taking it per
+    /// `get_parent` amounted to before.
+    pub(crate) fn selection_unlocked(&self) -> Option<(SelectionPoint, SelectionPoint)> {
         let state = (*lock::mutex(&self.inner.selection))?;
         self.ordered_selection(&state)
     }
@@ -627,8 +637,8 @@ impl Document {
             if step_a == step_b {
                 continue;
             }
-            let parent = self.get_parent(*step_a)?;
-            let children = self.get_children(parent);
+            let parent = self.get_parent_unlocked(*step_a)?;
+            let children = self.get_children_unlocked(parent);
             let index_a = children.iter().position(|child| child == step_a)?;
             let index_b = children.iter().position(|child| child == step_b)?;
             return Some(index_a.cmp(&index_b));
@@ -642,7 +652,7 @@ impl Document {
         }
         let mut path = vec![node];
         let mut current = node;
-        while let Some(parent) = self.get_parent(current) {
+        while let Some(parent) = self.get_parent_unlocked(current) {
             path.push(parent);
             current = parent;
         }

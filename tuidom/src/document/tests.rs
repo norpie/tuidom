@@ -16,7 +16,7 @@ use crate::performance::PerformanceDetail;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
     EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, ResolvedColor,
-    ScrollbarShow, Sides, Style,
+    ScrollbarShow, Sides, Style, StyleValue,
 };
 use crate::virtualize::Virtualizer;
 
@@ -6434,4 +6434,239 @@ fn node_count_includes_nodes_never_attached() {
 
     assert_eq!(doc.node_count(), 2);
     assert!(doc.get_children(doc.root()).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Snapshots
+// ---------------------------------------------------------------------------
+
+/// The property the whole API exists for. Every accessor is individually correct and
+/// individually locked; only a snapshot promises they agree with each other.
+///
+/// A mutating thread runs flat out while snapshots are taken in a loop, and each snapshot
+/// is checked for internal closure: every listed child present, every non-root parent
+/// present. Reading the same data through `get_node` per node would fail this, which is
+/// exactly why `snapshot` is not a convenience wrapper over it.
+#[test]
+fn snapshot_is_internally_consistent_under_concurrent_mutation() {
+    let doc = Document::new().unwrap();
+    let host = doc.create_box().unwrap();
+    doc.append_child(doc.root(), host).unwrap();
+
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mutator = {
+        let doc = doc.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let child = doc.create_box().unwrap();
+                doc.append_child(host, child).unwrap();
+                let grandchild = doc.create_text("x").unwrap();
+                doc.append_child(child, grandchild).unwrap();
+                doc.remove_child(host, child).unwrap();
+            }
+        })
+    };
+
+    for _ in 0..300 {
+        let snapshot = doc.snapshot();
+        let present: std::collections::HashSet<_> = snapshot.nodes.iter().map(|n| n.id).collect();
+
+        for node in &snapshot.nodes {
+            for child in &node.children {
+                assert!(
+                    present.contains(child),
+                    "node {:?} lists child {child:?}, which is missing from the same snapshot",
+                    node.id
+                );
+            }
+            if node.id != snapshot.root {
+                let parent = node
+                    .parent
+                    .expect("a non-root node in the tree has a parent");
+                assert!(
+                    present.contains(&parent),
+                    "node {:?} has parent {parent:?}, missing from the same snapshot",
+                    node.id
+                );
+            }
+        }
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    mutator.join().unwrap();
+}
+
+/// Declared and computed are different questions, and only the pair answers "where did
+/// this value come from". A node that sets nothing still resolves to something, and that
+/// gap is the one an inspector renders.
+#[test]
+fn snapshot_carries_declared_style_apart_from_resolved() {
+    let doc = Document::new().unwrap();
+    let parent = doc.create_box().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    doc.append_child(parent, child).unwrap();
+
+    doc.update_style(parent, |s| s.color(Color::red())).unwrap();
+    doc.update_style(child, |s| s.inherit_color()).unwrap();
+
+    let snapshot = doc.snapshot();
+    let node = |id| {
+        snapshot
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .expect("node is in the snapshot")
+    };
+
+    // The child declared *inheritance*, not a color — a fact `resolved` has thrown away.
+    assert!(matches!(node(child).style.color, StyleValue::Inherit));
+    assert!(matches!(node(parent).style.color, StyleValue::Set(_)));
+    assert_eq!(node(child).resolved.color, node(parent).resolved.color);
+
+    // And a node that declared nothing at all still resolves to a color.
+    assert!(matches!(node(doc.root()).style.color, StyleValue::Unset));
+}
+
+/// Orphans are the one place `snapshot` and `snapshot_node` deliberately disagree: a tree
+/// walk cannot reach a node with no parent, but addressing it directly can.
+#[test]
+fn snapshot_walks_the_tree_while_snapshot_node_reaches_orphans() {
+    let doc = Document::new().unwrap();
+    let attached = doc.create_box().unwrap();
+    doc.append_child(doc.root(), attached).unwrap();
+    let orphan = doc.create_box().unwrap();
+
+    let snapshot = doc.snapshot();
+    assert_eq!(snapshot.nodes.len(), 2);
+    assert!(!snapshot.nodes.iter().any(|n| n.id == orphan));
+
+    // The difference between the two counts is exactly the orphan.
+    assert_eq!(doc.node_count() - snapshot.nodes.len(), 1);
+
+    let node = doc.snapshot_node(orphan).expect("orphans are addressable");
+    assert_eq!(node.parent, None);
+
+    // And a node that has been destroyed is not addressable at all.
+    doc.remove_child(doc.root(), attached).unwrap();
+    assert!(doc.snapshot_node(attached).is_none());
+}
+
+/// Document order, not arena order: a node comes immediately before its own subtree, and
+/// siblings follow child order. An inspector renders this list top to bottom.
+#[test]
+fn snapshot_nodes_are_in_depth_first_document_order() {
+    let doc = Document::new().unwrap();
+    let first = doc.create_box().unwrap();
+    let second = doc.create_box().unwrap();
+    doc.append_child(doc.root(), first).unwrap();
+    doc.append_child(doc.root(), second).unwrap();
+    // Created after both, so arena order would put it last.
+    let nested = doc.create_text("deep").unwrap();
+    doc.append_child(first, nested).unwrap();
+
+    let order: Vec<_> = doc.snapshot().nodes.iter().map(|n| n.id).collect();
+    assert_eq!(order, vec![doc.root(), first, nested, second]);
+}
+
+/// The runtime state a snapshot joins onto nodes lives in five separate lock-guarded maps
+/// keyed by `NodeId`. This asserts the join lands on the right node rather than the right
+/// count of nodes.
+#[test]
+fn snapshot_joins_runtime_state_onto_the_right_nodes() {
+    let doc = Document::new().unwrap();
+    let scroller = doc.create_box().unwrap();
+    let focusable = doc.create_box().unwrap();
+    let disabled_parent = doc.create_box().unwrap();
+    let disabled_child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), scroller).unwrap();
+    doc.append_child(doc.root(), focusable).unwrap();
+    doc.append_child(doc.root(), disabled_parent).unwrap();
+    doc.append_child(disabled_parent, disabled_child).unwrap();
+
+    doc.update_style(scroller, |s| {
+        s.flex_direction(FlexDirection::Column);
+        s.overflow_y(Overflow::Scroll);
+    })
+    .unwrap();
+    for i in 0..8 {
+        let line = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(scroller, line).unwrap();
+    }
+    doc.compute_layout(10, 4).unwrap();
+    doc.scroll_to(scroller, 0, 2).unwrap();
+
+    doc.set_focusable(focusable, true).unwrap();
+    doc.focus(focusable).unwrap();
+    doc.set_disabled(disabled_parent, true).unwrap();
+
+    let snapshot = doc.snapshot();
+    let node = |id| {
+        snapshot
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .expect("node is in the snapshot")
+    };
+
+    assert_eq!(snapshot.focused, Some(focusable));
+    assert!(node(focusable).focused);
+    assert!(!node(scroller).focused);
+
+    assert_eq!(node(scroller).scroll.y, 2);
+    assert_eq!(node(focusable).scroll.y, 0);
+
+    // Disabled is declared on the parent only; effectively-disabled is inherited by the
+    // child, which is the distinction that decides whether it can be interacted with.
+    assert!(node(disabled_parent).disabled);
+    assert!(node(disabled_parent).effectively_disabled);
+    assert!(!node(disabled_child).disabled);
+    assert!(node(disabled_child).effectively_disabled);
+
+    // Nothing traps focus, so nothing is inert.
+    assert_eq!(snapshot.focus_context, doc.root());
+    assert_eq!(snapshot.focus_context_depth, 1);
+    assert!(snapshot.nodes.iter().all(|n| !n.inert));
+}
+
+/// Inert is derived during the descent rather than by walking rootward per node, so it is
+/// worth pinning that the derivation matches: everything outside the context subtree is
+/// inert, including the context's own ancestors.
+#[test]
+fn snapshot_marks_everything_outside_the_focus_context_inert() {
+    let doc = Document::new().unwrap();
+    let outside = doc.create_box().unwrap();
+    let modal = doc.create_box().unwrap();
+    let inside = doc.create_box().unwrap();
+    doc.append_child(doc.root(), outside).unwrap();
+    doc.append_child(doc.root(), modal).unwrap();
+    doc.append_child(modal, inside).unwrap();
+
+    doc.update_style(modal, |s| s.stacking_context(true))
+        .unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    let snapshot = doc.snapshot();
+    let inert = |id| {
+        snapshot
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .expect("node is in the snapshot")
+            .inert
+    };
+
+    assert_eq!(snapshot.focus_context, modal);
+    assert_eq!(snapshot.focus_context_depth, 2);
+    assert!(!inert(modal));
+    assert!(!inert(inside));
+    assert!(inert(outside));
+    // The root is an ancestor of the context, and is inert all the same.
+    assert!(inert(doc.root()));
+
+    // And it agrees with the per-node accessor it was derived instead of calling.
+    for node in &snapshot.nodes {
+        assert_eq!(node.inert, doc.is_inert(node.id).unwrap());
+    }
 }
