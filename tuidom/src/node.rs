@@ -134,6 +134,12 @@ pub(crate) struct InputState {
     pub cursor: usize,
     /// Selected byte range in `content`, normalized to grapheme boundaries.
     pub selection: Option<Range<usize>>,
+    /// The fixed end of the selection, which shift-extension grows and shrinks from.
+    ///
+    /// Stored rather than derived from which end the cursor sits on, because a mouse drag
+    /// extends its high end past the glyph under it — after a drag the cursor can match
+    /// neither end of the range, leaving a derivation nothing to read.
+    pub selection_anchor: Option<usize>,
     /// Whether Enter inserts newlines.
     pub multiline: bool,
     /// Optional display mask for password-like fields.
@@ -159,6 +165,7 @@ impl InputState {
             content,
             cursor,
             selection: None,
+            selection_anchor: None,
             multiline: false,
             mask: None,
             scroll_x: 0,

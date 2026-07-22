@@ -81,6 +81,7 @@ impl Document {
             let state = input_state_mut(&mut data.kind, node)?;
             state.cursor = clamp_to_grapheme_boundary(&state.content, cursor);
             state.selection = None;
+            state.selection_anchor = None;
             state.goal_column = None;
         }
         self.refresh_input_node(node)
@@ -118,6 +119,9 @@ impl Document {
                 .ok_or(TuidomError::NodeNotFound { id: node })?;
             let state = input_state_mut(&mut data.kind, node)?;
             state.selection = normalize_selection(&state.content, selection);
+            // Anchored at the start, since a programmatic range says nothing about which
+            // end a user was moving and the cursor was not touched.
+            state.selection_anchor = state.selection.as_ref().map(|range| range.start);
         }
         self.refresh_input_node(node)
     }
@@ -136,6 +140,7 @@ impl Document {
                 .ok_or(TuidomError::NodeNotFound { id: node })?;
             let state = input_state_mut(&mut data.kind, node)?;
             state.selection = None;
+            state.selection_anchor = None;
         }
         self.refresh_input_node(node)
     }
@@ -233,6 +238,10 @@ impl Document {
             };
             state.selection = normalize_selection(&state.content, low..high);
             state.cursor = clamp_to_grapheme_boundary(&state.content, focus);
+            // The drag's own anchor, recorded before the terminal-inclusive extension
+            // above obscures it — this is the offset a later shift+arrow must grow from,
+            // and the reason the anchor is stored rather than inferred.
+            state.selection_anchor = Some(clamp_to_grapheme_boundary(&state.content, anchor));
             state.goal_column = None;
         }
         self.refresh_input_node(node)
@@ -290,9 +299,22 @@ impl Document {
             let chorded = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
 
             let handled = if let Some(motion) = motion {
-                apply_motion(state, motion, page_rows)
+                // Shift only reaches here having already been masked out of the binding
+                // lookup, so it names the same motion either way and decides one thing:
+                // whether the selection follows the cursor or is discarded by it.
+                let extend = modifiers.contains(KeyModifiers::SHIFT);
+                apply_motion(state, motion, extend, page_rows)
             } else {
                 match code {
+                    // Ctrl+A arrives as a plain letter like every control chord, so it has
+                    // to be matched above the insert arm rather than beside it.
+                    KeyCode::Char('a') | KeyCode::Char('A')
+                        if modifiers.contains(KeyModifiers::CONTROL)
+                            && !modifiers.contains(KeyModifiers::ALT) =>
+                    {
+                        select_all(state);
+                        true
+                    }
                     // A control chord arrives as its plain letter — ctrl+a is `Char('a')`
                     // with control held, not a control character — so without this guard
                     // every ctrl and alt chord would type its letter into the input.
@@ -460,10 +482,19 @@ fn motion_for_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Motion> {
 /// An unapplied motion is not handled, so the key falls through to the document's own
 /// default actions — which is how a single-line input lets up and down reach focus
 /// navigation instead of eating them.
-fn apply_motion(state: &mut InputState, motion: Motion, page_rows: Option<usize>) -> bool {
+///
+/// With `extend`, the motion drags the selection's free end and leaves its anchor where
+/// it is; without, it collapses the selection and forgets the anchor entirely.
+fn apply_motion(
+    state: &mut InputState,
+    motion: Motion,
+    extend: bool,
+    page_rows: Option<usize>,
+) -> bool {
     // A collapsed motion out of a selection lands on the selection's edge rather than
     // moving from the cursor, matching how every editor leaves a selection.
-    if !motion.is_vertical()
+    if !extend
+        && !motion.is_vertical()
         && let Some(selection) = state.selection.clone()
     {
         let edge = match motion {
@@ -473,22 +504,43 @@ fn apply_motion(state: &mut InputState, motion: Motion, page_rows: Option<usize>
         };
         if let Some(edge) = edge {
             state.selection = None;
+            state.selection_anchor = None;
             state.goal_column = None;
             state.cursor = edge;
             return true;
         }
     }
 
+    // Read before the move: with no anchor yet, the cursor the motion is leaving *is* the
+    // fixed end, which is what makes shift+Left from a bare cursor select leftward.
+    let anchor = state.selection_anchor.unwrap_or(state.cursor);
+
     let Some(target) = motion_target(state, motion, page_rows) else {
         return false;
     };
 
-    state.selection = None;
+    if extend {
+        // A collapsed range clears the highlight but keeps the anchor, so shifting back
+        // past the starting point grows the other way instead of starting over.
+        state.selection = normalize_selection(&state.content, anchor..target);
+        state.selection_anchor = Some(anchor);
+    } else {
+        state.selection = None;
+        state.selection_anchor = None;
+    }
     state.cursor = target;
     if !motion.is_vertical() {
         state.goal_column = None;
     }
     true
+}
+
+/// Select the whole value, anchored at its start so shift-extension shrinks from the end.
+fn select_all(state: &mut InputState) {
+    state.selection = normalize_selection(&state.content, 0..state.content.len());
+    state.selection_anchor = state.selection.is_some().then_some(0);
+    state.cursor = state.content.len();
+    state.goal_column = None;
 }
 
 /// The byte offset a motion lands on, or `None` when it does not apply.
@@ -698,10 +750,11 @@ fn cursor_grapheme_width(suffix: &str, multiline: bool, mask: Option<char>) -> u
 }
 
 fn normalize_input_state(state: &mut InputState) {
-    // Every edit and every programmatic write funnels through here, and all of them end a
-    // run of vertical motion — the column the run was holding no longer describes content
-    // that still exists.
+    // Every edit and every programmatic write funnels through here, and all of them end
+    // both a run of vertical motion and a run of shift-extension — the column and the
+    // anchor each describe content that no longer exists as it did.
     state.goal_column = None;
+    state.selection_anchor = None;
     state.cursor = clamp_to_grapheme_boundary(&state.content, state.cursor);
     if let Some(selection) = state.selection.take() {
         state.selection = normalize_selection(&state.content, selection);

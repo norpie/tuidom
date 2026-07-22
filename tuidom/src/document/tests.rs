@@ -1570,6 +1570,104 @@ fn control_chords_move_by_word_and_to_the_value_ends() {
     assert_eq!(doc.input_cursor(input).unwrap(), "one ".len());
 }
 
+/// Shifting back past the starting point has to keep growing from the same anchor rather
+/// than starting over, which is why the anchor outlives the collapsed range in between.
+#[test]
+fn shift_extension_grows_from_a_fixed_anchor_in_both_directions() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abcdef").unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 3).unwrap();
+    let shift = KeyModifiers::SHIFT;
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Right, shift));
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Right, shift));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(3..5));
+    assert_eq!(doc.input_cursor(input).unwrap(), 5);
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Left, shift));
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Left, shift));
+    assert_eq!(doc.input_selection(input).unwrap(), None);
+    assert_eq!(doc.input_cursor(input).unwrap(), 3);
+
+    // Back through the anchor: the highlight returns on the other side of it.
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Left, shift));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(2..3));
+
+    // An unshifted motion drops the anchor, so the next extension starts where the
+    // cursor now is rather than reviving the old one.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Right));
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Right, shift));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(3..4));
+}
+
+/// The case that rules out deriving the anchor from which end the cursor sits on: a drag
+/// extends its high end past the glyph under it, so after a leftward drag the cursor
+/// matches the range's start while the real anchor is neither end.
+#[test]
+fn shift_extension_after_a_drag_grows_from_the_drags_own_anchor() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abcdef").unwrap();
+    doc.focus(input).unwrap();
+
+    doc.drive_input_drag(input, 5, 2).unwrap();
+    assert_eq!(doc.input_selection(input).unwrap(), Some(2..6));
+    assert_eq!(doc.input_cursor(input).unwrap(), 2);
+
+    // Anchored at 5, so moving the cursor to 3 leaves 3..5. Reading the anchor off the
+    // range instead would give 6, and this would be 3..6.
+    doc.dispatch_key_press(KeyEvent::with_modifiers(
+        KeyCode::Right,
+        KeyModifiers::SHIFT,
+    ));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(3..5));
+}
+
+/// Vertical and line-wise motions extend on the same rule as the horizontal ones, since
+/// shift is read once against the motion rather than per binding.
+#[test]
+fn shift_extension_covers_vertical_and_line_motions() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abc\ndef").unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 1).unwrap();
+    let shift = KeyModifiers::SHIFT;
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Down, shift));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(1.."abc\nd".len()));
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Home, shift));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(1.."abc\n".len()));
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::End, shift));
+    assert_eq!(
+        doc.input_selection(input).unwrap(),
+        Some(1.."abc\ndef".len())
+    );
+}
+
+/// Ctrl+A arrives as a plain letter with control held, so it has to be caught above the
+/// insert arm — the same collision that made the chord guard necessary in the first place.
+#[test]
+fn control_a_selects_all_and_the_next_keystroke_replaces_it() {
+    let doc = Document::new().unwrap();
+    let (input, seen) = input_with_recorder(&doc, "hello");
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    ));
+    assert_eq!(doc.input_selection(input).unwrap(), Some(0..5));
+    assert_eq!(doc.input_value(input).unwrap(), "hello");
+    assert!(seen.lock().unwrap().is_empty());
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+    assert_eq!(doc.input_value(input).unwrap(), "x");
+    assert_eq!(doc.input_cursor(input).unwrap(), 1);
+    assert_eq!(doc.input_selection(input).unwrap(), None);
+}
+
 /// Ctrl+Up is not a binding, so it must not act like a plain Up — an unmatched chord
 /// falls through instead of being quietly widened to its unmodified form.
 #[test]
