@@ -6398,3 +6398,40 @@ fn style_resolution_is_twice_per_node_per_frame() {
         );
     }
 }
+
+/// `node_count` is live where the `Debug` allocation counter is monotonic. Asserting both
+/// in one test is the point: they answer different questions and are easy to confuse.
+#[test]
+fn node_count_is_live_and_allocation_count_is_not() {
+    let doc = Document::new().unwrap();
+    // The permanent root is a node.
+    assert_eq!(doc.node_count(), 1);
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), child).unwrap();
+    let grandchild = doc.create_text("hi").unwrap();
+    doc.append_child(child, grandchild).unwrap();
+    assert_eq!(doc.node_count(), 3);
+
+    let allocated_before = format!("{doc:?}");
+
+    // Destroys the subtree, so both the child and its grandchild go.
+    doc.remove_child(doc.root(), child).unwrap();
+    assert_eq!(doc.node_count(), 1);
+    assert_eq!(
+        format!("{doc:?}"),
+        allocated_before,
+        "allocations are monotonic and must not follow the live count down"
+    );
+}
+
+/// An orphan is allocated and costs memory, so it counts. Worth pinning because "node
+/// count" reads like "nodes in the tree", and the arena is the source of truth instead.
+#[test]
+fn node_count_includes_nodes_never_attached() {
+    let doc = Document::new().unwrap();
+    let _orphan = doc.create_box().unwrap();
+
+    assert_eq!(doc.node_count(), 2);
+    assert!(doc.get_children(doc.root()).is_empty());
+}

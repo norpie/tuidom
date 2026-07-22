@@ -232,6 +232,24 @@ impl Document {
             .unwrap_or_default()
     }
 
+    /// Number of nodes alive in this document.
+    ///
+    /// Counts every node in the arena — the permanent root, everything attached under it,
+    /// and any node created but not yet appended to a parent. A node created and never
+    /// attached is still allocated and still costs memory, so it counts.
+    ///
+    /// This is a *live* count, unlike the `nodes_allocated` figure in the document's
+    /// `Debug` output: [`remove_child`](Self::remove_child) destroys its subtree, so this
+    /// falls, while the allocation counter is monotonic and never does.
+    ///
+    /// Reading it takes a read lock on each arena shard, so — like anything touching the
+    /// arena — it must not be called from inside a held node guard. Ordinary code is
+    /// nowhere near that; the constraint matters to engine internals, which is why
+    /// `Debug` reports allocations instead of calling this.
+    pub fn node_count(&self) -> usize {
+        self.inner.nodes.len()
+    }
+
     /// Check whether `id` is a descendant of `ancestor`.
     pub fn is_descendant_of(&self, id: NodeId, ancestor: NodeId) -> bool {
         let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
