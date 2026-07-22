@@ -68,11 +68,11 @@ after an Escape.
 All of these keys are configurable:
 
 ```rust
-use tuidom::event::{FocusKeys, KeyCode};
+use tuidom::event::{FocusKeys, KeyCode, KeyModifiers};
 
 let mut keys = FocusKeys::default();   // Tab / BackTab, arrows, Esc to blur
-keys.up.push(KeyCode::Char('k'));
-keys.down.push(KeyCode::Char('j'));
+keys.up.push((KeyCode::Char('k'), KeyModifiers::empty()));
+keys.down.push((KeyCode::Char('j'), KeyModifiers::empty()));
 doc.set_focus_keys(keys);
 ```
 
@@ -209,6 +209,34 @@ unmarked columns select browser-style — the tail of one plus the head of the o
 
 An Input is an **implicit boundary**. Dragging inside one drives that input's own selection
 rather than the document's, and a click positions its cursor.
+
+### Editing an Input from the keyboard
+
+A focused Input claims its own keys before anything else does, and every movement it
+understands is one **motion**:
+
+| Keys | Motion |
+|---|---|
+| Left / Right | one grapheme |
+| Ctrl+Left / Ctrl+Right | one word, skipping whitespace runs |
+| Home / End | the current line |
+| Ctrl+Home / Ctrl+End | the whole value |
+| Up / Down | one display row — multiline only |
+| PageUp / PageDown | one visible height, less a row — multiline only |
+
+**Shift extends instead of moving.** It is read once against the motion rather than bound
+per key, so shift works over every row of that table, and Ctrl+A selects the whole value.
+
+The selection grows from a fixed **anchor**, which is where the cursor was when the run of
+extension began. Shifting back past the anchor collapses the highlight and then grows the
+other way, rather than starting over — the anchor outlives the collapsed range in between.
+After a mouse drag, the anchor is the drag's own starting point.
+
+Two edges are worth knowing. Vertical motion holds a **goal column**, so moving down
+through a shorter line and onward returns to the column you started in instead of walking
+leftward. And a *single-line* Input has no row to move to, so it declines Up and Down and
+they reach focus navigation — which is what makes arrow keys move between the fields of a
+form. A multiline Input keeps them: Up on its first line stays put rather than jumping out.
 
 ### `SelectionPoint` is content-addressed
 

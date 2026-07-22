@@ -2069,6 +2069,208 @@ fn scroll_to_clamps_to_the_scrollable_range() {
     assert_eq!(doc.scroll_offset(container).y, 0);
 }
 
+/// An outer scroller, an inner one with nothing to scroll, and a focusable leaf inside
+/// the inner one — the shape that makes keyboard chaining observable.
+fn nested_scrolling_columns() -> (Document, NodeId, NodeId, NodeId) {
+    let doc = Document::new().unwrap();
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    column.overflow_y(Overflow::Scroll);
+
+    let outer = doc.create_box().unwrap();
+    doc.set_style(outer, &column).unwrap();
+    doc.append_child(doc.root(), outer).unwrap();
+
+    // Scrollable in principle with nothing to scroll: what routing must skip past. The
+    // explicit height matters — a Scroll axis drops the content-size floor, so left to
+    // size itself this box would collapse to zero and *gain* a scroll range.
+    let inner = doc.create_box().unwrap();
+    let mut inner_style = column.clone();
+    inner_style.height(Length::Cells(1));
+    inner_style.flex_shrink(0.0);
+    doc.set_style(inner, &inner_style).unwrap();
+    doc.append_child(outer, inner).unwrap();
+
+    let leaf = doc.create_text("leaf").unwrap();
+    doc.append_child(inner, leaf).unwrap();
+    doc.set_focusable(leaf, true).unwrap();
+
+    for i in 0..8 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(outer, text).unwrap();
+    }
+
+    doc.compute_layout(10, 4).unwrap();
+    (doc, outer, inner, leaf)
+}
+
+/// Page keys route the same way a wheel does: rootward to the nearest container that can
+/// still move, skipping one that is scrollable but has nowhere to go.
+#[test]
+fn page_keys_scroll_the_nearest_container_that_can_move() {
+    let (doc, outer, inner, leaf) = nested_scrolling_columns();
+    doc.focus(leaf).unwrap();
+
+    // Four visible rows means a page of three: one row is kept to read against.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageDown));
+    assert_eq!(doc.scroll_offset(outer).y, 3);
+    assert_eq!(doc.scroll_offset(inner).y, 0);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageUp));
+    assert_eq!(doc.scroll_offset(outer).y, 0);
+}
+
+/// Home and End take the whole range, clamped by `scroll_to` rather than by reading a
+/// maximum here — so the extreme cannot disagree with the layout that defines it.
+#[test]
+fn home_and_end_reach_the_ends_of_the_scroll_range() {
+    let (doc, container, lines) = scrolling_column();
+    doc.set_focusable(lines[0], true).unwrap();
+    doc.focus(lines[0]).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::End));
+    assert_eq!(doc.scroll_offset(container).y, 4);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Home));
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+/// The precedence that keeps the two halves of this feature from colliding: an input
+/// consumes its own page and line keys, so the container behind it never sees them.
+#[test]
+fn a_focused_input_takes_page_keys_before_the_container_behind_it() {
+    let doc = Document::new().unwrap();
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    column.overflow_y(Overflow::Scroll);
+
+    let container = doc.create_box().unwrap();
+    doc.set_style(container, &column).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let input = doc.create_input("l0\nl1\nl2\nl3\nl4\nl5").unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.append_child(container, input).unwrap();
+    for i in 0..8 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(container, text).unwrap();
+    }
+
+    doc.compute_layout(10, 4).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageDown));
+
+    assert!(doc.input_cursor(input).unwrap() > 0);
+    assert_eq!(doc.scroll_offset(container).y, 0);
+}
+
+/// Keyboard scrolling is a default action like any other, so a listener can refuse it.
+#[test]
+fn prevent_default_on_a_key_press_suppresses_the_scroll() {
+    let (doc, outer, _, leaf) = nested_scrolling_columns();
+    doc.focus(leaf).unwrap();
+    doc.on_key_press(leaf, |event| event.prevent_default())
+        .unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageDown));
+
+    assert_eq!(doc.scroll_offset(outer).y, 0);
+}
+
+/// A pane with nothing focusable inside it never receives focus by hovering, so without
+/// the pointer fallback its page keys would do nothing at all.
+#[test]
+fn page_keys_fall_back_to_the_pane_under_the_pointer() {
+    let doc = Document::new().unwrap();
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    column.overflow_y(Overflow::Scroll);
+
+    let pane = doc.create_box().unwrap();
+    doc.set_style(pane, &column).unwrap();
+    doc.append_child(doc.root(), pane).unwrap();
+    for i in 0..8 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(pane, text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    // An unmoved pointer is no pointer: the fallback must not invent a position.
+    runtime.simulate_key(KeyCode::PageDown);
+    assert_eq!(doc.scroll_offset(pane).y, 0);
+
+    runtime.simulate_mouse_move(2, 2);
+    assert_eq!(doc.focused(), None, "nothing in the pane is focusable");
+
+    runtime.simulate_key(KeyCode::PageDown);
+    assert_eq!(doc.scroll_offset(pane).y, 3);
+}
+
+/// The pointer is a fallback, not a priority. A parked mouse must not outrank a
+/// deliberate Tab, since a keyboard user has no reason to think about where it sits.
+#[test]
+fn focus_outranks_the_pointer_when_the_two_disagree() {
+    let doc = Document::new().unwrap();
+    let mut row = Style::new();
+    row.flex_direction(FlexDirection::Row);
+    doc.set_style(doc.root(), &row).unwrap();
+
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    column.overflow_y(Overflow::Scroll);
+    column.width(Length::Cells(5));
+
+    let mut panes = Vec::new();
+    for pane_index in 0..2 {
+        let pane = doc.create_box().unwrap();
+        doc.set_style(pane, &column).unwrap();
+        doc.append_child(doc.root(), pane).unwrap();
+        for line in 0..8 {
+            let text = doc.create_text(format!("p{pane_index}l{line}")).unwrap();
+            doc.append_child(pane, text).unwrap();
+            // Only the left pane holds anything focusable.
+            if pane_index == 0 && line == 0 {
+                doc.set_focusable(text, true).unwrap();
+                doc.focus(text).unwrap();
+            }
+        }
+        panes.push(pane);
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    // Pointer parked over the right pane, focus deliberately in the left one.
+    runtime.simulate_mouse_move(7, 2);
+    runtime.simulate_key(KeyCode::PageDown);
+
+    assert_eq!(doc.scroll_offset(panes[0]).y, 3);
+    assert_eq!(doc.scroll_offset(panes[1]).y, 0);
+
+    // Proves the assertion above was not vacuous: the same pointer position does reach
+    // the right pane, and that pane can scroll — it was outranked, not unreachable.
+    doc.blur();
+    runtime.simulate_key(KeyCode::PageDown);
+    assert_eq!(doc.scroll_offset(panes[1]).y, 3);
+}
+
+/// Arrows stay spatial focus navigation. A document where an arrow sometimes moves focus
+/// and sometimes scrolls has no rule a user can learn, so the defaults bind none.
+#[test]
+fn arrow_keys_are_not_bound_to_scrolling_by_default() {
+    let (doc, outer, _, leaf) = nested_scrolling_columns();
+    doc.focus(leaf).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Down));
+
+    assert_eq!(doc.scroll_offset(outer).y, 0);
+    assert!(doc.scroll_keys().down.is_empty());
+}
+
 #[test]
 fn only_scroll_overflow_is_scrollable() {
     let (doc, container, _) = scrolling_column();

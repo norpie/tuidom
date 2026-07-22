@@ -53,6 +53,51 @@ impl Default for FocusKeys {
     }
 }
 
+/// Keyboard bindings used by document-level scroll default actions.
+///
+/// Shaped like [`FocusKeys`]: each binding is a key plus the modifiers that must be held
+/// exactly. Scrolling routes from the keyboard target rootward to the nearest container
+/// that can still move on the axis, the same walk a wheel takes — but unlike a wheel, a
+/// key that finds no such container stops rather than doing nothing visible somewhere
+/// else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrollKeys {
+    /// Keys that scroll up by one cell.
+    pub up: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll down by one cell.
+    pub down: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll left by one cell.
+    pub left: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll right by one cell.
+    pub right: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll up by one visible page.
+    pub page_up: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll down by one visible page.
+    pub page_down: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll to the top of the vertical range.
+    pub start: Vec<(KeyCode, KeyModifiers)>,
+    /// Keys that scroll to the bottom of the vertical range.
+    pub end: Vec<(KeyCode, KeyModifiers)>,
+}
+
+impl Default for ScrollKeys {
+    fn default() -> Self {
+        // No arrows. They are spatial focus navigation, and a document where an arrow
+        // sometimes moves focus and sometimes scrolls has no rule a user can learn.
+        let plain = KeyModifiers::empty();
+        Self {
+            up: Vec::new(),
+            down: Vec::new(),
+            left: Vec::new(),
+            right: Vec::new(),
+            page_up: vec![(KeyCode::PageUp, plain)],
+            page_down: vec![(KeyCode::PageDown, plain)],
+            start: vec![(KeyCode::Home, plain)],
+            end: vec![(KeyCode::End, plain)],
+        }
+    }
+}
+
 /// Opaque handle returned when registering an event listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ListenerHandle {

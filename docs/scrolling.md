@@ -118,6 +118,46 @@ A shift that picked the axis is consumed by that normalization and does not appe
 event's `modifiers`, so both spellings report the same thing for the same gesture. Every
 other modifier passes through — see [modifiers](events.md#modifiers).
 
+## Keyboard scrolling
+
+PageUp/PageDown and Home/End scroll too, through the same rootward walk and the same
+chaining rule as the wheel. What differs is where the walk starts, tried in order:
+
+1. the **focused** node
+2. the node under the **pointer**
+3. the active focus context
+
+The pointer is a fallback rather than a priority, and the reason is that
+[hover is focus](focus-and-selection.md#hover-is-focus): mousing over a focusable node
+already focuses it, so the two only disagree over a subtree with nothing focusable in it —
+a log pane, a rendered document, a read-only list. Exactly the case that would otherwise
+have no way to scroll from the keyboard.
+
+Letting the pointer *outrank* focus would break the opposite case: Tab to a widget, press
+PageDown, and a mouse parked elsewhere decides what moves. A keyboard user has no reason
+to think about where the pointer is sitting.
+
+```rust
+use tuidom::event::{KeyCode, KeyModifiers, ScrollKeys};
+
+let mut keys = ScrollKeys::default();     // page keys, Home/End; no arrows
+keys.down.push((KeyCode::Char('j'), KeyModifiers::empty()));
+doc.set_scroll_keys(keys);
+```
+
+Arrows are unbound on purpose. They are spatial focus navigation, and a document where an
+arrow sometimes moves focus and sometimes scrolls has no rule a user can learn.
+
+A page is one scrollport height minus a row, so a page leaves a shared line to read
+against rather than replacing the whole view.
+
+Two differences from the wheel are worth knowing. Scrolling is the *last* of a key press's
+three default actions, so a focused Input consumes the page keys and Home/End before a
+container behind it can see them — see [default actions](events.md#a-key-press-has-three-defaults-in-order).
+And where a wheel chains between containers, a key does not chain out of an Input: PageDown
+with the cursor already at the end of a multiline Input does nothing, rather than paging the
+container behind it.
+
 ## Culling
 
 Painting drops any node whose translated rectangle lies entirely outside its clip. Where a

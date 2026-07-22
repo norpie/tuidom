@@ -34,7 +34,9 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Scrollport** — The padding box of a scrolling or clipping node, bounding its descendants' painting and hit-testing per clipped axis. See [the scrollport](scrolling.md#the-scrollport).
 
-**Scroll Chaining** — Wheel routing to the nearest ancestor scrollable on the wheel's axis that can still move in its direction. See [wheel routing and chaining](scrolling.md#wheel-routing-and-chaining).
+**Scroll Chaining** — Wheel routing to the nearest ancestor scrollable on the wheel's axis that can still move in its direction. Keyboard scrolling routes by the same rule. See [wheel routing and chaining](scrolling.md#wheel-routing-and-chaining).
+
+**ScrollKeys** — Keyboard bindings for the document's scroll default actions, shaped like `FocusKeys`. Binds no arrows by default, since those are focus navigation. See [keyboard scrolling](scrolling.md#keyboard-scrolling).
 
 **Stacking Context** — Marker set with `stacking_context: true`, making a node eligible to trap focus. Paint isolation is already universal, so that eligibility is all it grants. See [stacking contexts](rendering.md#stacking-contexts).
 
@@ -137,6 +139,10 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 **ListenerHandle** — Opaque, document-scoped handle for removing a registered listener. See [listener handles](events.md#listener-handles).
 
 **Propagation** — Event flow through the tree: target phase, then bubble phase rootward. There is no capture phase. See [propagation](events.md#propagation).
+
+**Motion** — A cursor movement an Input binding asks for — by grapheme, word, line, page, or to a line's or the value's end — named apart from the key that asked, so shift extends the selection over any of them. See [input editing](focus-and-selection.md#editing-an-input-from-the-keyboard).
+
+**Goal Column** — The display column a run of vertical motion in an Input holds onto, so moving through a shorter line does not walk the cursor leftward. See [input editing](focus-and-selection.md#editing-an-input-from-the-keyboard).
 
 **KeyModifiers** — Shift, control, and alt held during a key or mouse event. Super, hyper, and meta are dropped at conversion, since terminals report them only under the kitty keyboard protocol. See [modifiers](events.md#modifiers).
 

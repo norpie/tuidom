@@ -157,6 +157,13 @@ pub(crate) fn process_runtime_event(
     event: RuntimeEvent,
     state: &mut RuntimeEventState,
 ) {
+    // Recorded in one place rather than at each of the four pointer-bearing arms, so a
+    // new pointer event cannot quietly forget to update it. Keyboard scrolling falls back
+    // to whatever the pointer is over when nothing is focused.
+    if let Some(position) = pointer_position(&event) {
+        *lock::mutex(&doc.inner.last_pointer) = Some(position);
+    }
+
     match event {
         RuntimeEvent::KeyPress(key) => {
             doc.dispatch_key_press(key);
@@ -281,6 +288,16 @@ pub(crate) fn process_runtime_event(
         } => {
             doc.dispatch_animation_iteration_to(node, handle, iteration);
         }
+    }
+}
+
+/// The screen cell an event puts the pointer at, for events that carry one.
+fn pointer_position(event: &RuntimeEvent) -> Option<(i32, i32)> {
+    match event {
+        RuntimeEvent::MouseDown(mouse) | RuntimeEvent::MouseUp(mouse) => Some((mouse.x, mouse.y)),
+        RuntimeEvent::MouseMove { x, y, .. } => Some((*x, *y)),
+        RuntimeEvent::Wheel(wheel) => Some((wheel.x, wheel.y)),
+        _ => None,
     }
 }
 

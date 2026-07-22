@@ -424,10 +424,15 @@ impl Document {
             .focused()
             .unwrap_or_else(|| self.active_focus_context());
         self.dispatch_key_press_to(target, &mut event);
+        // Three defaults in precedence order. A focused input consumes its own editing
+        // keys first, so Home and PageDown reach a container only when the keyboard is
+        // not in an input. Scrolling runs last, so an established focus binding still
+        // wins if a downstream rebinding makes the two sets overlap.
         if !event.default_prevented()
             && !self.apply_input_default_action(event.code, event.modifiers)
         {
             self.apply_focus_default_action(event.code, event.modifiers);
+            self.apply_scroll_default_action(event.code, event.modifiers);
         }
     }
 

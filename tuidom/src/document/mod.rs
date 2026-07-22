@@ -9,7 +9,7 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 
 use crate::animation::driver::AnimationDriver;
 use crate::error::{Result, TuidomError};
-use crate::event::FocusKeys;
+use crate::event::{FocusKeys, ScrollKeys};
 use crate::event_loop;
 use rustc_hash::FxBuildHasher;
 
@@ -83,6 +83,8 @@ impl Document {
                 focus_contexts: Mutex::new(FocusStack::new(root)),
                 focusable_nodes: Mutex::new(NodeSet::default()),
                 focus_keys: Mutex::new(FocusKeys::default()),
+                scroll_keys: Mutex::new(ScrollKeys::default()),
+                last_pointer: Mutex::new(None),
                 pseudo_styles: Mutex::new(NodeMap::default()),
                 active_node: Mutex::new(None),
                 disabled_nodes: Mutex::new(NodeSet::default()),

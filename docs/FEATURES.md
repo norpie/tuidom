@@ -26,11 +26,19 @@
 - [x] `node_at(x, y)` for hit testing — returns topmost node at coordinates
 - [x] Child ordering: `insert_before(parent, child, before_sibling)`, `move_child()`
 - [x] Input (text input with cursor, selection, internal state)
-  - [ ] Full selection support:
+  - [x] Full selection support:
     - [x] mouse drag — an Input is an implicit selection boundary, so a drag inside it
           drives the input's own selection
-    - [ ] ctrl+a, shift+arrows — the event now carries the modifiers, but no default
-          action binds them yet; a control or alt chord is refused rather than typed
+    - [x] ctrl+a, and shift over every motion — shift is read once against the motion
+          rather than bound per key, so it extends anything the cursor can do
+    - [x] Extension grows from a stored anchor, so shifting back past the start point
+          collapses the range and then grows the other way instead of re-anchoring
+  - [x] Cursor motions: grapheme (arrows), word (ctrl+arrows), line (home/end), value
+        (ctrl+home/end), row and page (up/down, page keys — multiline only)
+    - [x] Vertical motion holds a goal column, so a shorter line in between does not
+          walk the cursor leftward
+    - [x] A single-line input declines up/down so they reach focus navigation; a
+          multiline one keeps them and stays put at its first and last line
   - [x] `multiline: bool` (default false) — single-line vs textarea
   - [x] `mask: Option<char>` (default None) — for password fields
   - [ ] `show_cursor: Always | WhenFocused | Never` (default WhenFocused)
@@ -103,6 +111,15 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Wheel routing: nearest scrollable ancestor on the wheel's axis that can still move (scroll chaining)
   - [x] `prevent_default()` on the wheel event suppresses the default scroll
   - [x] Horizontal wheel events (`ScrollLeft`/`ScrollRight`) route to `overflow_x` containers
+- [x] Keyboard scrolling, routed by the same chaining walk from the focused node, then
+      the node under the pointer, then the active focus context
+  - [x] The pointer is a fallback, not a priority — since hover is focus, the two only
+        disagree over a subtree with nothing focusable in it
+  - [x] `ScrollKeys` bindings, shaped like `FocusKeys`: page keys and home/end by default
+  - [x] No arrows bound by default — those are spatial focus navigation
+  - [x] A page is one scrollport height less a row, so a shared line survives the jump
+  - [x] Runs last of a key press's three default actions, so a focused input consumes
+        home/end and the page keys before a container behind it sees them
 - [x] Auto-cull at render time for any overflow-scrollable container:
   - [x] Skip painting nodes outside the visible scroll area
   - [x] Nodes still exist in DOM, just not rendered when off-screen
@@ -303,7 +320,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
           user to the node they left
     - [x] Terminals without focus reporting simply never send it; no capability check
 - [x] Listener registration returns handle for removal
-- [x] `prevent_default()` exists only where a document-level default action does: key presses (focus defaults), wheel (default scroll), and mouse down (selection start)
+- [x] `prevent_default()` exists only where a document-level default action does: key presses (input edit, focus, keyboard scroll), wheel (default scroll), and mouse down (selection start)
 
 ## Transitions & Animations
 

@@ -10,7 +10,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
 use crate::document::selection::SelectionState;
-use crate::event::{FocusKeys, Listener, TargetedEventKind};
+use crate::event::{FocusKeys, Listener, ScrollKeys, TargetedEventKind};
 use crate::id::{NodeId, NodeMap, NodeSet};
 use crate::layout::LayoutEngine;
 use crate::node::{NodeData, NodeLayout, ScrollOffset};
@@ -160,6 +160,16 @@ pub(crate) struct DocumentInner {
 
     /// Keyboard bindings for document-level focus default actions.
     pub focus_keys: Mutex<FocusKeys>,
+
+    /// Keyboard bindings for document-level scroll default actions.
+    pub scroll_keys: Mutex<ScrollKeys>,
+
+    /// The last screen cell the pointer was reported at, if it has ever moved.
+    ///
+    /// A position rather than the node under it: a cached `NodeId` goes stale when the
+    /// tree changes beneath a stationary pointer, while re-hit-testing a position at the
+    /// moment it is read cannot.
+    pub last_pointer: Mutex<Option<(i32, i32)>>,
 
     /// Per-node styles merged when the node enters a pseudo-state.
     pub pseudo_styles: Mutex<NodeMap<PseudoStyles>>,

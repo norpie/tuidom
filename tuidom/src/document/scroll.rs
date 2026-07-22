@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::document::Document;
 use crate::error::Result;
-use crate::event::{ScrollEvent, WheelAxis, WheelEvent};
+use crate::event::{KeyCode, KeyModifiers, ScrollEvent, ScrollKeys, WheelAxis, WheelEvent};
 use crate::id::NodeId;
 use crate::lock;
 use crate::node::ScrollOffset;
@@ -25,6 +25,55 @@ impl ScrollbarFadeSchedule {
     /// Whether the render loop has any scrollbar-driven frame to schedule.
     pub fn is_active(&self) -> bool {
         self.fading || self.next_deadline.is_some()
+    }
+}
+
+/// What a bound scroll key does, once its binding has matched.
+#[derive(Debug, Clone, Copy)]
+enum ScrollAction {
+    /// Move a fixed number of cells along one axis.
+    By {
+        /// The axis the movement is on.
+        axis: WheelAxis,
+        /// Cells to move, signed toward the end of the axis.
+        delta: i32,
+    },
+    /// Move one visible page vertically, sized on the container that takes it.
+    Page {
+        /// `-1` toward the start of the axis, `1` toward its end.
+        direction: i32,
+    },
+    /// Move to one end of the vertical range.
+    ToExtreme {
+        /// `-1` toward the start of the axis, `1` toward its end.
+        direction: i32,
+    },
+}
+
+impl ScrollAction {
+    fn by(axis: WheelAxis, delta: i32) -> Self {
+        ScrollAction::By { axis, delta }
+    }
+
+    /// The axis this action moves along.
+    fn axis(self) -> WheelAxis {
+        match self {
+            ScrollAction::By { axis, .. } => axis,
+            // Paging and jumping to an extreme are vertical by definition: they are sized
+            // and named after rows, and a horizontal spelling would need its own keys.
+            ScrollAction::Page { .. } | ScrollAction::ToExtreme { .. } => WheelAxis::Vertical,
+        }
+    }
+
+    /// A signed delta standing in for this action while routing.
+    ///
+    /// Routing only needs the direction, and asking for the real distance first would
+    /// mean sizing a page against a container that has not been chosen yet.
+    fn probe_delta(self) -> i32 {
+        match self {
+            ScrollAction::By { delta, .. } => delta,
+            ScrollAction::Page { direction } | ScrollAction::ToExtreme { direction } => direction,
+        }
     }
 }
 
@@ -110,6 +159,112 @@ impl Document {
         if let Err(err) = self.scroll_by(container, dx, dy) {
             tracing::error!("wheel default scroll failed: {err}");
         }
+    }
+
+    /// Replace the document-level scroll key bindings.
+    pub fn set_scroll_keys(&self, keys: ScrollKeys) {
+        *lock::mutex(&self.inner.scroll_keys) = keys;
+    }
+
+    /// Return the document-level scroll key bindings.
+    pub fn scroll_keys(&self) -> ScrollKeys {
+        lock::mutex(&self.inner.scroll_keys).clone()
+    }
+
+    /// Scroll the nearest container that can move, from the document's keyboard target.
+    ///
+    /// Runs after the focus default action, so an existing focus binding still wins if a
+    /// downstream rebinding makes the two sets overlap.
+    pub(crate) fn apply_scroll_default_action(&self, code: KeyCode, modifiers: KeyModifiers) {
+        let Some(action) = self.scroll_action_for_key(code, modifiers) else {
+            return;
+        };
+
+        // Routing has to precede sizing: a page is a page of whichever container ends up
+        // taking it, not of the node the key was aimed at.
+        let Some(container) = self
+            .scroll_route_start()
+            .into_iter()
+            .find_map(|start| self.scroll_target(start, action.axis(), action.probe_delta()))
+        else {
+            return;
+        };
+
+        let (dx, dy) = match action {
+            ScrollAction::By { axis, delta } => match axis {
+                WheelAxis::Vertical => (0, delta),
+                WheelAxis::Horizontal => (delta, 0),
+            },
+            ScrollAction::Page { direction } => {
+                let rows = i32::from(self.scroll_page_rows(container));
+                (0, rows * direction)
+            }
+            // The clamp in `scroll_by` does the work: no max is read here, so an extreme
+            // needs no layout of its own and cannot disagree with one.
+            ScrollAction::ToExtreme { direction } => (0, i32::MAX * direction),
+        };
+
+        if let Err(err) = self.scroll_by(container, dx, dy) {
+            tracing::error!("keyboard scroll default action failed: {err}");
+        }
+    }
+
+    /// Where keyboard scrolling starts its rootward walk, in preference order.
+    ///
+    /// Focus first, then the node under the pointer, then the active focus context. The
+    /// pointer is a *fallback* rather than a priority on purpose: hovering a focusable
+    /// node already focuses it, so the two only disagree over a subtree with nothing
+    /// focusable in it — and letting a parked mouse outrank a deliberate Tab would make
+    /// the key depend on something a keyboard user has no reason to think about.
+    fn scroll_route_start(&self) -> Vec<NodeId> {
+        let hovered = (*lock::mutex(&self.inner.last_pointer))
+            .and_then(|(x, y)| self.node_at(x, y))
+            .filter(|node| Some(*node) != self.focused());
+
+        [self.focused(), hovered, Some(self.active_focus_context())]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// How many rows one page covers in a container, per the last layout.
+    ///
+    /// One row of overlap is kept, matching page motion inside an input, so a page leaves
+    /// a shared line to read against. Falls back to a single row when the container has
+    /// not been laid out, rather than declining to move at all.
+    fn scroll_page_rows(&self, node: NodeId) -> u16 {
+        // The scrollport rather than the rect: content slides through the padding but
+        // never over the border, so the border's rows are not part of a page.
+        self.get_node(node)
+            .and_then(|view| view.layout)
+            .map(|layout| layout.scrollport.height.saturating_sub(1).max(1))
+            .unwrap_or(1)
+    }
+
+    fn scroll_action_for_key(
+        &self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<ScrollAction> {
+        // Modifiers match exactly, as focus bindings do, so PageDown and Ctrl+PageDown
+        // stay distinct rather than one shadowing the other.
+        let binding = (code, modifiers);
+        let keys = self.scroll_keys();
+        for (bindings, action) in [
+            (&keys.up, ScrollAction::by(WheelAxis::Vertical, -1)),
+            (&keys.down, ScrollAction::by(WheelAxis::Vertical, 1)),
+            (&keys.left, ScrollAction::by(WheelAxis::Horizontal, -1)),
+            (&keys.right, ScrollAction::by(WheelAxis::Horizontal, 1)),
+            (&keys.page_up, ScrollAction::Page { direction: -1 }),
+            (&keys.page_down, ScrollAction::Page { direction: 1 }),
+            (&keys.start, ScrollAction::ToExtreme { direction: -1 }),
+            (&keys.end, ScrollAction::ToExtreme { direction: 1 }),
+        ] {
+            if bindings.contains(&binding) {
+                return Some(action);
+            }
+        }
+        None
     }
 
     /// Restart a `WhenScrolling` container's auto-hide countdown from now.
@@ -205,7 +360,26 @@ impl Document {
     /// wheel to the next scrollable ancestor. Inert and disabled nodes are skipped the
     /// same way they swallow the wheel event itself.
     fn wheel_scroll_target(&self, target: NodeId, event: &WheelEvent) -> Option<NodeId> {
-        if event.delta == 0 || self.blocks_interaction(target) {
+        if event.delta == 0 {
+            return None;
+        }
+        // A wheel's delta is positive toward the start of the axis, the opposite of a
+        // scroll offset's direction.
+        self.scroll_target(target, event.axis, -i32::from(event.delta))
+    }
+
+    /// The nearest container rootward of `target` that can still scroll `delta` on `axis`.
+    ///
+    /// This is scroll chaining: a container at the end of its range hands the movement to
+    /// the ancestor beyond it rather than swallowing it. Shared by the wheel and by
+    /// keyboard scrolling, so both route by exactly the same rule.
+    pub(crate) fn scroll_target(
+        &self,
+        target: NodeId,
+        axis: WheelAxis,
+        delta: i32,
+    ) -> Option<NodeId> {
+        if delta == 0 || self.blocks_interaction(target) {
             return None;
         }
 
@@ -216,7 +390,7 @@ impl Document {
             let Ok(resolved) = self.resolved_style(node) else {
                 return false;
             };
-            let overflow = match event.axis {
+            let overflow = match axis {
                 WheelAxis::Vertical => resolved.overflow_y,
                 WheelAxis::Horizontal => resolved.overflow_x,
             };
@@ -225,11 +399,11 @@ impl Document {
             }
 
             let offset = self.scroll_offset(node);
-            let current = match event.axis {
+            let current = match axis {
                 WheelAxis::Vertical => offset.y,
                 WheelAxis::Horizontal => offset.x,
             };
-            if event.delta > 0 {
+            if delta < 0 {
                 return current > 0;
             }
 
@@ -237,7 +411,7 @@ impl Document {
             let Some(layout) = snapshot.get(&node) else {
                 return false;
             };
-            let max = match event.axis {
+            let max = match axis {
                 WheelAxis::Vertical => layout.max_scroll_y,
                 WheelAxis::Horizontal => layout.max_scroll_x,
             };
