@@ -317,7 +317,7 @@ impl Document {
             });
 
             if panicked {
-                log::error!("event listener {} panicked", listener.id);
+                tracing::error!("event listener {} panicked", listener.id);
             }
         }
     }
@@ -333,7 +333,7 @@ impl Document {
             });
 
             if panicked {
-                log::error!("event listener {} panicked", listener.id);
+                tracing::error!("event listener {} panicked", listener.id);
             }
         }
     }
@@ -541,7 +541,7 @@ impl Document {
             });
 
             if panicked {
-                log::error!("event listener {} panicked", listener.id);
+                tracing::error!("event listener {} panicked", listener.id);
             }
         }
     }
@@ -623,7 +623,7 @@ impl Document {
             });
 
             if panicked {
-                log::error!("event listener {} panicked", listener.id);
+                tracing::error!("event listener {} panicked", listener.id);
             }
         }
     }
@@ -638,7 +638,7 @@ impl Document {
             });
 
             if panicked {
-                log::error!("event listener {} panicked", listener.id);
+                tracing::error!("event listener {} panicked", listener.id);
             }
         }
     }
@@ -653,7 +653,7 @@ impl Document {
             });
 
             if panicked {
-                log::error!("event listener {} panicked", listener.id);
+                tracing::error!("event listener {} panicked", listener.id);
             }
         }
     }
@@ -721,7 +721,7 @@ impl Document {
                 });
 
                 if panicked {
-                    log::error!("event listener {} panicked", listener.id);
+                    tracing::error!("event listener {} panicked", listener.id);
                 }
             }
 

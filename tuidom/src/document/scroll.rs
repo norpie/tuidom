@@ -108,7 +108,7 @@ impl Document {
             WheelAxis::Horizontal => (step, 0),
         };
         if let Err(err) = self.scroll_by(container, dx, dy) {
-            log::error!("wheel default scroll failed: {err}");
+            tracing::error!("wheel default scroll failed: {err}");
         }
     }
 

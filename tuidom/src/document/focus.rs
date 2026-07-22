@@ -75,7 +75,7 @@ impl Document {
             .focused
             .take();
         if let Err(err) = self.transition_focus(previous, None) {
-            log::error!("failed to refresh focus style after blur: {err}");
+            tracing::error!("failed to refresh focus style after blur: {err}");
         }
     }
 
@@ -333,7 +333,7 @@ impl Document {
             return;
         };
         if let Err(err) = self.focus(next) {
-            log::error!("focus default action failed: {err}");
+            tracing::error!("focus default action failed: {err}");
         }
     }
 
@@ -343,7 +343,7 @@ impl Document {
             return;
         };
         if let Err(err) = self.focus(previous) {
-            log::error!("focus default action failed: {err}");
+            tracing::error!("focus default action failed: {err}");
         }
     }
 
@@ -396,7 +396,7 @@ impl Document {
             return;
         };
         if let Err(err) = self.focus(next) {
-            log::error!("spatial focus default action failed: {err}");
+            tracing::error!("spatial focus default action failed: {err}");
         }
     }
 

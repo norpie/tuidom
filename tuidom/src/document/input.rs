@@ -243,7 +243,7 @@ impl Document {
         match self.apply_input_default_action_to(node, code) {
             Ok(handled) => handled,
             Err(err) => {
-                log::error!("input default action failed: {err}");
+                tracing::error!("input default action failed: {err}");
                 false
             }
         }

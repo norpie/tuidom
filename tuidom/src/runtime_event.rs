@@ -351,7 +351,7 @@ fn update_scrollbar_drag(doc: &Document, drag: ScrollbarDrag, x: i32, y: i32) {
         (offset, current.y)
     };
     if let Err(err) = doc.scroll_to(drag.container, to_x, to_y) {
-        log::error!("scrollbar drag scroll failed: {err}");
+        tracing::error!("scrollbar drag scroll failed: {err}");
     }
 }
 
@@ -369,7 +369,7 @@ fn strip_span(layout: &LayoutRect, vertical: bool) -> u16 {
 
 fn set_active_node(doc: &Document, node: Option<NodeId>) {
     if let Err(err) = doc.set_active_node(node) {
-        log::error!("active state update failed: {err}");
+        tracing::error!("active state update failed: {err}");
     }
 }
 
@@ -383,7 +383,7 @@ fn focus_hover_target(doc: &Document, x: i32, y: i32) {
     if doc.focused() != Some(target)
         && let Err(err) = doc.focus(target)
     {
-        log::error!("hover focus failed: {err}");
+        tracing::error!("hover focus failed: {err}");
     }
 }
 

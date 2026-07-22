@@ -128,7 +128,7 @@ impl Document {
         };
 
         if let Err(err) = self.restore_focus_in_active_context(previous) {
-            log::error!("failed to settle focus contexts: {err}");
+            tracing::error!("failed to settle focus contexts: {err}");
         }
     }
 

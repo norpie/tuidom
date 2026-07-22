@@ -162,7 +162,7 @@ impl Document {
             DragBoundary::Input(node) => {
                 let anchor = self.input_offset_at(node, x, y)?;
                 if let Err(err) = self.set_input_cursor(node, anchor) {
-                    log::error!("input click positioning failed: {err}");
+                    tracing::error!("input click positioning failed: {err}");
                 }
                 Some(PendingSelection::Input { node, anchor })
             }
@@ -191,7 +191,7 @@ impl Document {
                     return;
                 };
                 if let Err(err) = self.drive_input_drag(*node, *anchor, focus) {
-                    log::error!("input drag selection failed: {err}");
+                    tracing::error!("input drag selection failed: {err}");
                 }
             }
         }

@@ -60,11 +60,11 @@ use tuidom::{Document, NodeId};
 fn init_logging() {
     // Best-effort file logging for the smoke test.
     if let Ok(file) = std::fs::File::create("/tmp/tuidom.log") {
-        let _ = simplelog::WriteLogger::init(
-            log::LevelFilter::Trace,
-            simplelog::Config::default(),
-            file,
-        );
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(Mutex::new(file))
+            .with_ansi(false)
+            .try_init();
     }
 }
 

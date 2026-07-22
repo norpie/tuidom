@@ -171,7 +171,7 @@ impl Document {
         let mut style = data.style.clone();
         let result = catch_unwind(AssertUnwindSafe(|| f(&mut style)));
         if let Err(payload) = result {
-            log::error!("style update callback panicked for {id:?}");
+            tracing::error!("style update callback panicked for {id:?}");
             resume_unwind(payload);
         }
         data.style = style;
