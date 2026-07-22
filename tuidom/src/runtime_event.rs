@@ -3,7 +3,9 @@ use tokio::sync::mpsc;
 use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::document::selection::PendingSelection;
-use crate::event::{KeyEvent, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent};
+use crate::event::{
+    KeyEvent, KeyModifiers, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent,
+};
 use crate::id::NodeId;
 use crate::lock;
 use crate::node::LayoutRect;
@@ -124,6 +126,9 @@ struct ClickCandidate {
     x: i32,
     y: i32,
     button: MouseButton,
+    /// Modifiers held at press time. A click reports these rather than the release's,
+    /// so letting go of ctrl before the button still reads as a ctrl+click.
+    modifiers: KeyModifiers,
 }
 
 /// An in-flight scrollbar drag: which bar is grabbed and where within the thumb.
@@ -187,6 +192,7 @@ pub(crate) fn process_runtime_event(
                     x: mouse.x,
                     y: mouse.y,
                     button: mouse.button,
+                    modifiers: mouse.modifiers,
                 });
 
                 // The mouse default action: a left press clears the selection and arms a
@@ -221,13 +227,15 @@ pub(crate) fn process_runtime_event(
             doc.set_scrollbar_grab(None);
             doc.dispatch_mouse_up_to(target, &mut mouse);
 
-            if state.pending_click.is_some_and(|down| {
+            let matched = state.pending_click.filter(|down| {
                 down.target == target
                     && down.x == mouse.x
                     && down.y == mouse.y
                     && down.button == mouse.button
-            }) {
-                let mut click = MouseEvent::new(mouse.x, mouse.y, mouse.button);
+            });
+            if let Some(down) = matched {
+                let mut click =
+                    MouseEvent::with_modifiers(mouse.x, mouse.y, mouse.button, down.modifiers);
                 doc.dispatch_click_to(target, &mut click);
             }
             state.pending_click = None;

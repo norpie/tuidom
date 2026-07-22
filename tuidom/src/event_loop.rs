@@ -13,7 +13,10 @@ use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
 
 use crate::document::Document;
-use crate::event::{MouseButton, MouseEvent, ResizeEvent, WheelEvent, convert_key_event};
+use crate::event::{
+    KeyModifiers as TuidomKeyModifiers, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
+    convert_key_event,
+};
 use crate::lock;
 use crate::render::Renderer;
 use crate::runtime_event::{
@@ -412,47 +415,57 @@ fn convert_terminal_event(event: CrosstermEvent) -> Option<RuntimeEvent> {
 }
 
 fn convert_mouse_event(mouse: CrosstermMouseEvent) -> Option<RuntimeEvent> {
+    let modifiers = TuidomKeyModifiers::from_crossterm(mouse.modifiers);
+    // Shift picks the axis on the two translating arms below, so it is spent there rather
+    // than reported. Everything else passes through.
+    let beyond_axis = modifiers.without(TuidomKeyModifiers::SHIFT);
     match mouse.kind {
         MouseEventKind::Down(button) => convert_mouse_button(button).map(|button| {
-            RuntimeEvent::MouseDown(MouseEvent::new(
+            RuntimeEvent::MouseDown(MouseEvent::with_modifiers(
                 i32::from(mouse.column),
                 i32::from(mouse.row),
                 button,
+                modifiers,
             ))
         }),
         MouseEventKind::Up(button) => convert_mouse_button(button).map(|button| {
-            RuntimeEvent::MouseUp(MouseEvent::new(
+            RuntimeEvent::MouseUp(MouseEvent::with_modifiers(
                 i32::from(mouse.column),
                 i32::from(mouse.row),
                 button,
+                modifiers,
             ))
         }),
         // Shift+wheel is the conventional horizontal scroll: terminals that forward it
         // send a vertical scroll with the shift modifier set, not ScrollLeft/ScrollRight.
         // Shift+up scrolls toward the start (left), matching the unshifted sign.
         MouseEventKind::ScrollUp if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
-            Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
+            Some(RuntimeEvent::Wheel(WheelEvent::horizontal_with_modifiers(
                 i32::from(mouse.column),
                 i32::from(mouse.row),
                 1,
+                beyond_axis,
             )))
         }
         MouseEventKind::ScrollDown if mouse.modifiers.contains(KeyModifiers::SHIFT) => {
-            Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
+            Some(RuntimeEvent::Wheel(WheelEvent::horizontal_with_modifiers(
                 i32::from(mouse.column),
                 i32::from(mouse.row),
                 -1,
+                beyond_axis,
             )))
         }
-        MouseEventKind::ScrollUp => Some(RuntimeEvent::Wheel(WheelEvent::new(
+        MouseEventKind::ScrollUp => Some(RuntimeEvent::Wheel(WheelEvent::with_modifiers(
             i32::from(mouse.column),
             i32::from(mouse.row),
             1,
+            modifiers,
         ))),
-        MouseEventKind::ScrollDown => Some(RuntimeEvent::Wheel(WheelEvent::new(
+        MouseEventKind::ScrollDown => Some(RuntimeEvent::Wheel(WheelEvent::with_modifiers(
             i32::from(mouse.column),
             i32::from(mouse.row),
             -1,
+            modifiers,
         ))),
         MouseEventKind::Moved => Some(RuntimeEvent::MouseMove {
             x: i32::from(mouse.column),
@@ -464,16 +477,23 @@ fn convert_mouse_event(mouse: CrosstermMouseEvent) -> Option<RuntimeEvent> {
             y: i32::from(mouse.row),
             held: convert_mouse_button(button),
         }),
-        MouseEventKind::ScrollLeft => Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
-            i32::from(mouse.column),
-            i32::from(mouse.row),
-            1,
-        ))),
-        MouseEventKind::ScrollRight => Some(RuntimeEvent::Wheel(WheelEvent::horizontal(
-            i32::from(mouse.column),
-            i32::from(mouse.row),
-            -1,
-        ))),
+        // Nothing was spent picking the axis here, so shift is a real modifier and stays.
+        MouseEventKind::ScrollLeft => {
+            Some(RuntimeEvent::Wheel(WheelEvent::horizontal_with_modifiers(
+                i32::from(mouse.column),
+                i32::from(mouse.row),
+                1,
+                modifiers,
+            )))
+        }
+        MouseEventKind::ScrollRight => {
+            Some(RuntimeEvent::Wheel(WheelEvent::horizontal_with_modifiers(
+                i32::from(mouse.column),
+                i32::from(mouse.row),
+                -1,
+                modifiers,
+            )))
+        }
     }
 }
 
@@ -522,5 +542,63 @@ mod tests {
         let wheel = converted_wheel(MouseEventKind::ScrollUp, KeyModifiers::NONE);
         assert_eq!(wheel.axis, WheelAxis::Vertical);
         assert_eq!(wheel.delta, 1);
+    }
+
+    /// The two spellings of a horizontal scroll must report the same modifiers, or
+    /// downstream reading them gets a terminal-dependent answer for one gesture.
+    #[test]
+    fn a_shift_spent_picking_the_axis_is_not_reported() {
+        let translated = converted_wheel(MouseEventKind::ScrollUp, KeyModifiers::SHIFT);
+        let native = converted_wheel(MouseEventKind::ScrollLeft, KeyModifiers::NONE);
+
+        assert_eq!(translated.axis, WheelAxis::Horizontal);
+        assert!(translated.modifiers.is_empty());
+        assert_eq!(translated.modifiers, native.modifiers);
+    }
+
+    #[test]
+    fn modifiers_beyond_the_axis_survive_translation() {
+        let wheel = converted_wheel(
+            MouseEventKind::ScrollDown,
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        );
+
+        assert_eq!(wheel.axis, WheelAxis::Horizontal);
+        assert_eq!(wheel.modifiers, TuidomKeyModifiers::CONTROL);
+    }
+
+    /// Shift on a wheel the terminal already spells horizontally was not spent on the
+    /// axis, so it is a real modifier and stays.
+    #[test]
+    fn shift_on_a_native_horizontal_wheel_is_kept() {
+        let wheel = converted_wheel(MouseEventKind::ScrollRight, KeyModifiers::SHIFT);
+
+        assert_eq!(wheel.axis, WheelAxis::Horizontal);
+        assert_eq!(wheel.modifiers, TuidomKeyModifiers::SHIFT);
+    }
+
+    #[test]
+    fn vertical_wheel_keeps_its_modifiers() {
+        let wheel = converted_wheel(MouseEventKind::ScrollUp, KeyModifiers::CONTROL);
+
+        assert_eq!(wheel.axis, WheelAxis::Vertical);
+        assert_eq!(wheel.modifiers, TuidomKeyModifiers::CONTROL);
+    }
+
+    #[test]
+    fn mouse_buttons_carry_their_modifiers() {
+        let event = CrosstermMouseEvent {
+            kind: MouseEventKind::Down(CrosstermMouseButton::Left),
+            column: 3,
+            row: 2,
+            modifiers: KeyModifiers::CONTROL,
+        };
+
+        match convert_mouse_event(event) {
+            Some(RuntimeEvent::MouseDown(mouse)) => {
+                assert_eq!(mouse.modifiers, TuidomKeyModifiers::CONTROL);
+            }
+            other => panic!("expected a mouse down event, got {other:?}"),
+        }
     }
 }

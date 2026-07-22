@@ -138,6 +138,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Propagation** — Event flow through the tree: target phase, then bubble phase rootward. There is no capture phase. See [propagation](events.md#propagation).
 
+**KeyModifiers** — Shift, control, and alt held during a key or mouse event. Super, hyper, and meta are dropped at conversion, since terminals report them only under the kitty keyboard protocol. See [modifiers](events.md#modifiers).
+
 **Event Loop** — The async runtime waiting on terminal events, document notifications, animation state, and shutdown. See [how a frame happens](architecture.md#how-a-frame-happens).
 
 **Input Event** — An `Input` node's value changed, reported by `on_input` after the key press default action that edited it. Targets the input and bubbles. See [events that report what the engine did](events.md#events-that-report-what-the-engine-did).

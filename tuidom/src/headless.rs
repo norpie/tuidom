@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 use crate::document::Document;
 use crate::error::Result;
-use crate::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, ResizeEvent, WheelEvent};
+use crate::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
+};
 use crate::lock;
 use crate::performance::{FlushMode, RenderMetrics};
 use crate::render::diff::diff_profiled_with_hints;
@@ -309,9 +311,19 @@ impl HeadlessRuntime {
 
     /// Dispatch a simulated key press through the shared runtime-event path.
     pub fn simulate_key(&mut self, code: KeyCode) {
+        self.simulate_key_with_modifiers(code, KeyModifiers::empty());
+    }
+
+    /// Dispatch a simulated key press with modifiers held.
+    ///
+    /// Terminals report a control chord as its plain letter plus
+    /// [`KeyModifiers::CONTROL`] — ctrl+a is `Char('a')`, not a control character — so
+    /// that is how a chord must be simulated for the default actions to see what they
+    /// would see in a real terminal.
+    pub fn simulate_key_with_modifiers(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         process_runtime_event(
             &self.doc,
-            RuntimeEvent::KeyPress(KeyEvent::new(code)),
+            RuntimeEvent::KeyPress(KeyEvent::with_modifiers(code, modifiers)),
             &mut self.event_state,
         );
     }
@@ -334,9 +346,20 @@ impl HeadlessRuntime {
     /// Mouse targeting uses the latest committed layout snapshot. Call
     /// [`render`](Self::render) first when the DOM or styles have changed.
     pub fn simulate_mouse_down(&mut self, x: i32, y: i32, button: MouseButton) {
+        self.simulate_mouse_down_with_modifiers(x, y, button, KeyModifiers::empty());
+    }
+
+    /// Dispatch a simulated mouse button press with modifiers held.
+    pub fn simulate_mouse_down_with_modifiers(
+        &mut self,
+        x: i32,
+        y: i32,
+        button: MouseButton,
+        modifiers: KeyModifiers,
+    ) {
         process_runtime_event(
             &self.doc,
-            RuntimeEvent::MouseDown(MouseEvent::new(x, y, button)),
+            RuntimeEvent::MouseDown(MouseEvent::with_modifiers(x, y, button, modifiers)),
             &mut self.event_state,
         );
     }
@@ -370,41 +393,92 @@ impl HeadlessRuntime {
     /// If it matches the previous simulated mouse down by target, cell, and
     /// button, this also synthesizes a click through the shared runtime path.
     pub fn simulate_mouse_up(&mut self, x: i32, y: i32, button: MouseButton) {
+        self.simulate_mouse_up_with_modifiers(x, y, button, KeyModifiers::empty());
+    }
+
+    /// Dispatch a simulated mouse button release with modifiers held.
+    ///
+    /// A synthesized click reports the *press's* modifiers, not these.
+    pub fn simulate_mouse_up_with_modifiers(
+        &mut self,
+        x: i32,
+        y: i32,
+        button: MouseButton,
+        modifiers: KeyModifiers,
+    ) {
         process_runtime_event(
             &self.doc,
-            RuntimeEvent::MouseUp(MouseEvent::new(x, y, button)),
+            RuntimeEvent::MouseUp(MouseEvent::with_modifiers(x, y, button, modifiers)),
             &mut self.event_state,
         );
     }
 
     /// Dispatch a left-button down/up pair at a screen coordinate.
     pub fn simulate_click(&mut self, x: i32, y: i32) {
-        self.simulate_mouse_down(x, y, MouseButton::Left);
-        self.simulate_mouse_up(x, y, MouseButton::Left);
+        self.simulate_click_with_modifiers(x, y, KeyModifiers::empty());
+    }
+
+    /// Dispatch a left-button down/up pair with modifiers held for both.
+    pub fn simulate_click_with_modifiers(&mut self, x: i32, y: i32, modifiers: KeyModifiers) {
+        self.simulate_mouse_down_with_modifiers(x, y, MouseButton::Left, modifiers);
+        self.simulate_mouse_up_with_modifiers(x, y, MouseButton::Left, modifiers);
     }
 
     /// Dispatch a simulated mouse wheel event at a screen coordinate.
     pub fn simulate_scroll(&mut self, x: i32, y: i32, delta: i16) {
+        self.simulate_scroll_with_modifiers(x, y, delta, KeyModifiers::empty());
+    }
+
+    /// Dispatch a simulated mouse wheel event with modifiers held.
+    pub fn simulate_scroll_with_modifiers(
+        &mut self,
+        x: i32,
+        y: i32,
+        delta: i16,
+        modifiers: KeyModifiers,
+    ) {
         process_runtime_event(
             &self.doc,
-            RuntimeEvent::Wheel(WheelEvent::new(x, y, delta)),
+            RuntimeEvent::Wheel(WheelEvent::with_modifiers(x, y, delta, modifiers)),
             &mut self.event_state,
         );
     }
 
     /// Dispatch a simulated horizontal mouse wheel event at a screen coordinate.
     pub fn simulate_horizontal_scroll(&mut self, x: i32, y: i32, delta: i16) {
+        self.simulate_horizontal_scroll_with_modifiers(x, y, delta, KeyModifiers::empty());
+    }
+
+    /// Dispatch a simulated horizontal mouse wheel event with modifiers held.
+    pub fn simulate_horizontal_scroll_with_modifiers(
+        &mut self,
+        x: i32,
+        y: i32,
+        delta: i16,
+        modifiers: KeyModifiers,
+    ) {
         process_runtime_event(
             &self.doc,
-            RuntimeEvent::Wheel(WheelEvent::horizontal(x, y, delta)),
+            RuntimeEvent::Wheel(WheelEvent::horizontal_with_modifiers(
+                x, y, delta, modifiers,
+            )),
             &mut self.event_state,
         );
     }
 
     /// Dispatch each character in `text` as a simulated key press.
+    ///
+    /// Uppercase characters carry [`KeyModifiers::SHIFT`], as a terminal reports them —
+    /// without it the suite would exercise the default actions against input they never
+    /// actually receive.
     pub fn simulate_text(&mut self, text: &str) {
         for ch in text.chars() {
-            self.simulate_key(KeyCode::Char(ch));
+            let modifiers = if ch.is_uppercase() {
+                KeyModifiers::SHIFT
+            } else {
+                KeyModifiers::empty()
+            };
+            self.simulate_key_with_modifiers(KeyCode::Char(ch), modifiers);
         }
     }
 
@@ -2218,6 +2292,169 @@ mod tests {
             &["h".to_string(), "he".to_string(), "hey".to_string()]
         );
         assert_eq!(doc.input_value(input).unwrap(), "hey");
+    }
+
+    /// A control chord reaches us as its plain letter, so without a modifier guard the
+    /// insert arm would type ctrl+a as `a`.
+    #[test]
+    fn control_chords_do_not_type_into_an_input() {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+        doc.focus(input).unwrap();
+
+        let edits = Arc::new(Mutex::new(0usize));
+        let sink = edits.clone();
+        doc.on_input(input, move |_| {
+            *sink.lock().unwrap() += 1;
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+        for chord in ['a', 'c', 'v', 'w', 'z'] {
+            runtime.simulate_key_with_modifiers(KeyCode::Char(chord), KeyModifiers::CONTROL);
+        }
+        runtime.simulate_key_with_modifiers(KeyCode::Char('b'), KeyModifiers::ALT);
+
+        assert_eq!(doc.input_value(input).unwrap(), "");
+        assert_eq!(*edits.lock().unwrap(), 0);
+    }
+
+    /// The counterpart to the guard above: terminals report a capital as its uppercase
+    /// char *plus* shift, so shift must not read as a chord.
+    #[test]
+    fn shifted_capitals_still_type_into_an_input() {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+        doc.focus(input).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 3);
+        runtime.simulate_text("Hello There");
+
+        assert_eq!(doc.input_value(input).unwrap(), "Hello There");
+    }
+
+    #[test]
+    fn key_listeners_observe_modifiers() {
+        let doc = Document::new().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        doc.on_key_press(doc.root(), move |event| {
+            sink.lock().unwrap().push((event.code, event.modifiers));
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.simulate_key_with_modifiers(KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+        // Ctrl+C has no default action and no signal behind it — raw mode clears ISIG —
+        // so a listener seeing the modifier is the only way it can be bound at all.
+        assert_eq!(
+            &*seen.lock().unwrap(),
+            &[(KeyCode::Char('c'), KeyModifiers::CONTROL)]
+        );
+    }
+
+    #[test]
+    fn a_chorded_tab_does_not_move_focus() {
+        let doc = Document::new().unwrap();
+        let first = doc.create_box().unwrap();
+        let second = doc.create_box().unwrap();
+        doc.append_child(doc.root(), first).unwrap();
+        doc.append_child(doc.root(), second).unwrap();
+        doc.set_focusable(first, true).unwrap();
+        doc.set_focusable(second, true).unwrap();
+        doc.focus(first).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 5);
+        runtime.simulate_key_with_modifiers(KeyCode::Tab, KeyModifiers::CONTROL);
+        assert_eq!(doc.focused(), Some(first));
+
+        runtime.simulate_key(KeyCode::Tab);
+        assert_eq!(doc.focused(), Some(second));
+    }
+
+    #[test]
+    fn mouse_listeners_observe_modifiers() {
+        let doc = Document::new().unwrap();
+        let target = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.width(Length::Cells(6));
+        style.height(Length::Cells(2));
+        doc.set_style(target, &style).unwrap();
+        doc.append_child(doc.root(), target).unwrap();
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        doc.on_mouse_down(target, move |event| {
+            sink.lock().unwrap().push(event.modifiers);
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 5);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_down_with_modifiers(1, 0, MouseButton::Left, KeyModifiers::CONTROL);
+
+        assert_eq!(&*seen.lock().unwrap(), &[KeyModifiers::CONTROL]);
+    }
+
+    /// A click is synthesized from the press/release pair, and reports the press's
+    /// modifiers — releasing ctrl before the button still reads as a ctrl+click.
+    #[test]
+    fn a_click_reports_the_press_modifiers_not_the_release() {
+        let doc = Document::new().unwrap();
+        let target = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.width(Length::Cells(6));
+        style.height(Length::Cells(2));
+        doc.set_style(target, &style).unwrap();
+        doc.append_child(doc.root(), target).unwrap();
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        doc.on_click(target, move |event| {
+            sink.lock().unwrap().push(event.modifiers);
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 5);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_down_with_modifiers(1, 0, MouseButton::Left, KeyModifiers::CONTROL);
+        runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+
+        assert_eq!(&*seen.lock().unwrap(), &[KeyModifiers::CONTROL]);
+    }
+
+    /// Modifiers are reported, not acted on: a chorded wheel still scrolls, leaving
+    /// downstream to `prevent_default` if it wants the chord for something else.
+    #[test]
+    fn a_chorded_wheel_still_scrolls_by_default() {
+        let doc = Document::new().unwrap();
+        let scroller = doc.create_box().unwrap();
+        let mut style = Style::new();
+        style.flex_direction(crate::style::FlexDirection::Column);
+        style.overflow_y(crate::style::Overflow::Scroll);
+        doc.set_style(scroller, &style).unwrap();
+        doc.append_child(doc.root(), scroller).unwrap();
+        for i in 0..10 {
+            let row = doc.create_text(format!("row{i}")).unwrap();
+            doc.append_child(scroller, row).unwrap();
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        doc.on_wheel(scroller, move |event| {
+            sink.lock().unwrap().push(event.modifiers);
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 5);
+        runtime.render().unwrap();
+        runtime.simulate_scroll_with_modifiers(1, 1, -1, KeyModifiers::CONTROL);
+
+        assert_eq!(&*seen.lock().unwrap(), &[KeyModifiers::CONTROL]);
+        assert!(doc.scroll_offset(scroller).y > 0);
     }
 
     const BEL: u8 = 0x07;

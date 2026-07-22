@@ -240,21 +240,53 @@ requires the kitty keyboard protocol, which most terminals do not implement. An 
 silently never fires on most terminals is worse than an absent one, so `Release` and
 `Repeat` are dropped at the source.
 
-Which keys move focus is configurable:
+Which keys move focus is configurable. A binding is a key *and* the modifiers that must be
+held exactly, so Tab and Ctrl+Tab are separate bindings and one never fires for the other:
 
 ```rust
-use tuidom::event::FocusKeys;
+use tuidom::event::{FocusKeys, KeyModifiers};
 
 let mut keys = FocusKeys::default();      // Tab/Shift-Tab, arrows, Esc to blur
-keys.up.push(KeyCode::Char('k'));
-keys.down.push(KeyCode::Char('j'));
+keys.up.push((KeyCode::Char('k'), KeyModifiers::empty()));
+keys.down.push((KeyCode::Char('j'), KeyModifiers::empty()));
 doc.set_focus_keys(keys);
 ```
 
+## Modifiers
+
+Key and mouse events carry the modifiers held at the time: `SHIFT`, `CONTROL`, `ALT`.
+
+```rust
+use tuidom::event::KeyModifiers;
+
+doc.on_key_press(doc.root(), move |key| {
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        d.quit();
+    }
+})?;
+```
+
+That example is the *only* way to handle Ctrl+C. Raw mode clears `ISIG`, so Ctrl+C raises
+no SIGINT and no signal handler will ever see it — it arrives as an ordinary key press.
+
+Two properties of terminal input make modifiers behave unlike a naive reading suggests:
+
+**A control chord keeps its plain letter.** Ctrl+A arrives as `Char('a')` with `CONTROL`
+held — not as a control character. The code alone cannot distinguish it from a typed `a`,
+which is why text entry checks the modifiers before inserting, and why a chord that no
+default action claims is refused rather than typed into a focused input.
+
+**Shift is set on every capital.** Terminals report `A` as `Char('A')` *plus* `SHIFT`, so
+shift being held does not mean a chord was pressed. Only control and alt do.
+
+Super, hyper, and meta are dropped at conversion. Terminals report them solely under the
+kitty keyboard protocol, so a binding on one would look correct and match on almost no
+terminal — the same reasoning that keeps key release out.
+
 ## Mouse
 
-`on_mouse_down`, `on_mouse_up`, and `on_click` all carry `x`, `y`, and `button`. Wheel
-events carry `delta` and an `axis`:
+`on_mouse_down`, `on_mouse_up`, and `on_click` all carry `x`, `y`, `button`, and
+`modifiers`. Wheel events carry `delta`, an `axis`, and `modifiers`:
 
 ```rust
 doc.on_wheel(node, |event| {
@@ -262,9 +294,20 @@ doc.on_wheel(node, |event| {
 })?;
 ```
 
+A click is synthesized from a matching press and release, and reports the modifiers held
+at **press** time. Letting go of ctrl before the mouse button still reads as a ctrl+click.
+
 Horizontal wheel arrives two ways, and tuidom normalizes both: terminals that send
 `ScrollLeft`/`ScrollRight` natively, and terminals that send a *vertical* scroll with the
 shift modifier set, which is the older convention. Both become `WheelAxis::Horizontal`.
+
+When shift is what selected the axis, it is spent there and not reported — otherwise
+`modifiers.contains(SHIFT)` on a horizontal wheel would answer differently per terminal
+for the same physical gesture. Control and alt pass through untouched, so Ctrl+Shift+wheel
+arrives horizontal with `CONTROL` set.
+
+Modifiers are reported, not acted on: a chorded wheel still scrolls and a ctrl+click still
+starts a selection. Use `prevent_default()` to claim the gesture for something else.
 
 **Hover is focus.** Mousing over a focusable node focuses it. There is no separate hover
 event or hover state — see [styling](styling.md#hover-is-focus) for why.

@@ -424,8 +424,10 @@ impl Document {
             .focused()
             .unwrap_or_else(|| self.active_focus_context());
         self.dispatch_key_press_to(target, &mut event);
-        if !event.default_prevented() && !self.apply_input_default_action(event.code) {
-            self.apply_focus_default_action(event.code);
+        if !event.default_prevented()
+            && !self.apply_input_default_action(event.code, event.modifiers)
+        {
+            self.apply_focus_default_action(event.code, event.modifiers);
         }
     }
 

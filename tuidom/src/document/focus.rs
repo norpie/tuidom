@@ -1,6 +1,6 @@
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
-use crate::event::{FocusKeys, KeyCode};
+use crate::event::{FocusKeys, KeyCode, KeyModifiers};
 use crate::id::{NodeId, NodeSet};
 use crate::inner::PseudoStyles;
 use crate::lock;
@@ -130,8 +130,8 @@ impl Document {
         Ok(())
     }
 
-    pub(crate) fn apply_focus_default_action(&self, code: KeyCode) {
-        let Some(action) = self.focus_action_for_key(code) else {
+    pub(crate) fn apply_focus_default_action(&self, code: KeyCode, modifiers: KeyModifiers) {
+        let Some(action) = self.focus_action_for_key(code, modifiers) else {
             return;
         };
 
@@ -306,21 +306,24 @@ impl Document {
         self.signal_animation(node, &old_resolved)
     }
 
-    fn focus_action_for_key(&self, code: KeyCode) -> Option<FocusAction> {
+    fn focus_action_for_key(&self, code: KeyCode, modifiers: KeyModifiers) -> Option<FocusAction> {
+        // Modifiers must match exactly, so a binding on Tab does not also fire for
+        // Ctrl+Tab and shadow whatever downstream meant that chord to do.
+        let binding = (code, modifiers);
         let keys = self.focus_keys();
-        if keys.next.contains(&code) {
+        if keys.next.contains(&binding) {
             Some(FocusAction::Next)
-        } else if keys.previous.contains(&code) {
+        } else if keys.previous.contains(&binding) {
             Some(FocusAction::Previous)
-        } else if keys.up.contains(&code) {
+        } else if keys.up.contains(&binding) {
             Some(FocusAction::Up)
-        } else if keys.down.contains(&code) {
+        } else if keys.down.contains(&binding) {
             Some(FocusAction::Down)
-        } else if keys.left.contains(&code) {
+        } else if keys.left.contains(&binding) {
             Some(FocusAction::Left)
-        } else if keys.right.contains(&code) {
+        } else if keys.right.contains(&binding) {
             Some(FocusAction::Right)
-        } else if keys.blur.contains(&code) {
+        } else if keys.blur.contains(&binding) {
             Some(FocusAction::Blur)
         } else {
             None

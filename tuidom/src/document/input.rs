@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
-use crate::event::{InputEvent, KeyCode};
+use crate::event::{InputEvent, KeyCode, KeyModifiers};
 use crate::id::NodeId;
 use crate::node::{InputState, NodeKind};
 
@@ -235,12 +235,16 @@ impl Document {
         self.refresh_input_node(node)
     }
 
-    pub(crate) fn apply_input_default_action(&self, code: KeyCode) -> bool {
+    pub(crate) fn apply_input_default_action(
+        &self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> bool {
         let Some(node) = self.focused() else {
             return false;
         };
 
-        match self.apply_input_default_action_to(node, code) {
+        match self.apply_input_default_action_to(node, code, modifiers) {
             Ok(handled) => handled,
             Err(err) => {
                 tracing::error!("input default action failed: {err}");
@@ -249,7 +253,12 @@ impl Document {
         }
     }
 
-    fn apply_input_default_action_to(&self, node: NodeId, code: KeyCode) -> Result<bool> {
+    fn apply_input_default_action_to(
+        &self,
+        node: NodeId,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Result<bool> {
         // An input measures on its content, so a value change is exactly what needs
         // relayout — and exactly what `on_input` reports. The two share one flag because
         // they are the same condition, not because they happen to coincide today.
@@ -262,8 +271,16 @@ impl Document {
                 return Ok(false);
             };
 
+            // Shift is excluded deliberately: terminals report a capital as its uppercase
+            // char *plus* shift, so treating any modifier as a chord would stop capital
+            // letters from typing. Control and alt are what make a chord.
+            let chorded = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+
             let handled = match code {
-                KeyCode::Char(ch) if !ch.is_control() => {
+                // A control chord arrives as its plain letter — ctrl+a is `Char('a')` with
+                // control held, not a control character — so without this guard every
+                // ctrl and alt chord would type its letter into the input.
+                KeyCode::Char(ch) if !ch.is_control() && !chorded => {
                     replace_selection_or_insert(state, &ch.to_string());
                     value_changed = true;
                     true

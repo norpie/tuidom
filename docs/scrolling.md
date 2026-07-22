@@ -114,6 +114,10 @@ Horizontal wheel input arrives two ways — `ScrollLeft`/`ScrollRight` from term
 send it natively, and shift+vertical from terminals using the older convention. Both are
 normalized to `WheelAxis::Horizontal` and routed to `overflow_x` containers.
 
+A shift that picked the axis is consumed by that normalization and does not appear in the
+event's `modifiers`, so both spellings report the same thing for the same gesture. Every
+other modifier passes through — see [modifiers](events.md#modifiers).
+
 ## Culling
 
 Painting drops any node whose translated rectangle lies entirely outside its clip. Where a

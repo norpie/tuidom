@@ -29,7 +29,8 @@
   - [ ] Full selection support:
     - [x] mouse drag — an Input is an implicit selection boundary, so a drag inside it
           drives the input's own selection
-    - [ ] ctrl+a, shift+arrows — the key default action handles no modifiers yet
+    - [ ] ctrl+a, shift+arrows — the event now carries the modifiers, but no default
+          action binds them yet; a control or alt chord is refused rather than typed
   - [x] `multiline: bool` (default false) — single-line vs textarea
   - [x] `mask: Option<char>` (default None) — for password fields
   - [ ] `show_cursor: Always | WhenFocused | Never` (default WhenFocused)
@@ -139,7 +140,11 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 ## Layout
 
 - [x] Use `taffy` for flexbox layout
-- [x] Padding, margin, flex direction (row/column and reverse), flex grow/shrink/basis, flex gap, align-self, flex wrap (including wrap-reverse), align-content
+- [x] Padding, margin, flex direction (row/column and reverse), flex grow/shrink/basis, flex gap, align-self, align-items, justify-content, flex wrap (including wrap-reverse), align-content
+- [x] Sizing in `Length`: `Cells(n)`, `Percent(p)`, or `Auto` (size to content)
+- [x] `display: None` — node and its subtree are neither laid out nor painted
+  - [x] Hiding the focused node — or any ancestor of it — blurs, so focus is never
+        stranded on something invisible
 - [x] 1:1 mapping from DOM nodes to taffy layout nodes
 - [x] Custom measure functions for text (terminal cell widths)
 - [x] Careful integer rounding of layout results to avoid gaps/overlaps
@@ -249,24 +254,38 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Use existing crates (`unicode-width`, etc.) for character width calculation
   - [x] Handle wide characters (CJK, emoji) transparently in text rendering
   - [x] Affects text measurement and rendering
-  - [ ] Affects cursor positioning in Input
-  - [ ] Investigate edge cases during implementation
+  - [x] Affects cursor positioning in Input — the cursor's cell column is the display
+        width of the line prefix, and it takes the width of the grapheme it sits on
   - [ ] Avoid hardcoding LTR assumptions — prepare for future bidi support
 
 ## Event System
 
-- [ ] Target + bubble propagation (no capture phase)
-- [ ] `stop_propagation()` to halt bubbling
+- [x] Target + bubble propagation (no capture phase)
+- [x] `stop_propagation()` to halt bubbling
 - [x] Sync handlers only — user spawns for async
 - [ ] Events:
   - [x] Keyboard: key press
+    - [x] Modifiers: shift, control, alt — held state on the event, so chords are
+          bindable downstream
+      - [x] Super/hyper/meta are **not planned**, for the same reason as key release:
+            terminals only report them under the kitty keyboard protocol, so a binding
+            would look right and match almost nowhere
+      - [x] A control chord keeps its plain letter — ctrl+a is `Char('a')` with control
+            held, not a control character — so the modifier is what distinguishes it
+      - [x] Shift is set on every capital, so it never counts as a chord for text entry
   - [x] Terminal resize
   - [ ] Keyboard: key down, key up — **not planned**: key release needs the kitty
         keyboard protocol, so the API would silently never fire on most terminals.
         `Repeat` is dropped alongside `Release` for the same reason.
-  - [ ] Mouse: click, mouse down, mouse up, wheel (raw input)
-  - [ ] Focus: focus, blur
-    - [ ] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
+  - [x] Mouse: click, mouse down, mouse up, wheel (raw input)
+    - [x] Modifiers on button, click, and wheel events
+      - [x] A click reports the modifiers held at *press* time, not release
+      - [x] A shift spent selecting the wheel's axis is not reported, so both terminal
+            spellings of a horizontal scroll carry the same modifiers
+  - [x] Focus: focus, blur
+    - [x] Hover = focus: mousing over a focusable node focuses it (no separate hover state)
+    - [x] Hover-to-focus applies to unpressed movement only, so a drag never drags focus
+          along with it
   - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
   - [x] Input: `on_input` fires on an `Input` node when its value changes (target, then
         bubbles — like the DOM's, so a form-shaped container observes every field)
@@ -342,7 +361,10 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Keys, presses, releases, and wheel ticks are never dropped or reordered
   - [x] Coalescing engages only when the event task is already behind — nothing is
         ever delayed to build a batch
-- [x] No built-in Ctrl+C or signal handling — user's responsibility (use `tokio::signal`, etc.)
+- [x] No built-in Ctrl+C or signal handling — user's responsibility
+  - [x] Bind it as an ordinary key press: raw mode clears `ISIG`, so Ctrl+C raises no
+        SIGINT and never reaches a signal handler. It arrives as `Char('c')` with control
+        held, and quitting on it is a listener calling `doc.quit()`.
 - [x] `doc.bell()` — trigger terminal bell
   - [x] Emitted by the next flush, never written from the calling thread
   - [x] Schedules a frame, so it rings when nothing on screen changed
@@ -371,6 +393,8 @@ What stays true here regardless of the macro:
 ## Debugging & Developer Tools
 
 - [ ] Tracing integration (`tracing` crate) for internal insight:
+  - [x] `tracing` is the logging dependency — but only as `error!` on caught handler
+        panics and failed default actions. None of the instrumentation below exists yet.
   - [ ] Event dispatch
   - [ ] Layout calculations
   - [ ] Render cycles
@@ -382,7 +406,7 @@ What stays true here regardless of the macro:
   - [ ] Captures: DOM structure, styles, text content, computed layout, focus/selection state
 - [x] Public performance metrics API:
   - [x] FPS / frame time
-  - [ ] Node count
+  - [ ] Node count — `layout_node_count` exists but is crate-internal, for tests
   - [x] Render latency
   - [x] Layout latency
   - [ ] Event latency
@@ -390,17 +414,28 @@ What stays true here regardless of the macro:
 
 ## Testing
 
-- [ ] Headless mode — run without real terminal (for CI, tests)
-  - [ ] Still computes layout, fills virtual screen buffer
-- [ ] Simulated input:
-  - [ ] `simulate_click(x, y)`
-  - [ ] `simulate_key(key)`
-  - [ ] `simulate_text("hello")`
-  - [ ] `simulate_mouse_drag(start, end)`
-  - [ ] `simulate_scroll(delta)`
-- [ ] Screen buffer inspection:
-  - [ ] `get_cell(x, y) -> Cell`
-  - [ ] `get_screen_region(x, y, w, h) -> Vec<Vec<Cell>>`
+- [x] Headless mode — run without real terminal (for CI, tests)
+  - [x] Still computes layout, fills virtual screen buffer
+  - [x] `render()` for the buffer alone; `render_flushed()` drives the real diff and flush
+        stages, with `flush_output()` exposing the bytes a terminal would have received
+  - [x] `advance_time(delta)` drives animations, transitions, and frames nodes without
+        sleeping, so timing-dependent behavior is asserted rather than waited on
+  - [x] `resize(w, h)` dispatches the resize event and drops the buffers; the next
+        `render()` re-lays out, as with a real terminal
+  - [x] Frames record performance metrics and dispatch post-frame through the shared
+        runtime path, so both are observable in tests
+- [x] Simulated input:
+  - [x] `simulate_key(code)`, `simulate_text("hello")`
+  - [x] `simulate_click(x, y)`, `simulate_mouse_down/up(x, y, button)`
+  - [x] `simulate_mouse_move(x, y)`, `simulate_mouse_drag_move(x, y, button)`,
+        `simulate_mouse_drag(start, end)`
+  - [x] `simulate_scroll(x, y, delta)` and `simulate_horizontal_scroll(x, y, delta)` —
+        positional, so wheel routing and scroll chaining are exercised for real
+  - [x] `simulate_window_focus()` / `simulate_window_blur()`
+- [x] Screen buffer inspection:
+  - [x] `get_cell(x, y) -> Option<ScreenCell>`
+  - [x] `get_screen_region(x, y, w, h) -> ScreenRegion`
+  - [x] `cursor() -> Option<ScreenCursor>` — position, shape, color, clipped visibility
 - [ ] Recording/playback:
   - [ ] `start_recording()` / `stop_recording() -> EventLog`
   - [ ] `replay(log)` — replay with timing via simulated input

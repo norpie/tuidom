@@ -48,7 +48,7 @@ use tuidom::animation::{
     AnimatableProperty, AnimationDirection, Easing, KeyframeAnimation, TransitionConfig,
     TransitionProperty,
 };
-use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode};
+use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode, KeyModifiers};
 use tuidom::style::{
     AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
     FlexGap, JustifyContent, Length, Overflow, Position, ScrollbarCharset, ScrollbarShow, Sides,
@@ -792,10 +792,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(doc.root(), container)?;
 
     let mut focus_keys = FocusKeys::default();
-    focus_keys.up.push(KeyCode::Char('k'));
-    focus_keys.down.push(KeyCode::Char('j'));
-    focus_keys.left.push(KeyCode::Char('h'));
-    focus_keys.right.push(KeyCode::Char('l'));
+    let plain = KeyModifiers::empty();
+    focus_keys.up.push((KeyCode::Char('k'), plain));
+    focus_keys.down.push((KeyCode::Char('j'), plain));
+    focus_keys.left.push((KeyCode::Char('h'), plain));
+    focus_keys.right.push((KeyCode::Char('l'), plain));
     doc.set_focus_keys(focus_keys);
 
     // --- Transition config — opacity changes animate over 1000ms -------

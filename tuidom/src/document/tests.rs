@@ -7,8 +7,8 @@ use super::*;
 use crate::TuidomError;
 use crate::animation::{Easing, TransitionConfig};
 use crate::event::{
-    EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, MouseButton, MouseEvent,
-    ResizeEvent, WheelEvent,
+    EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, KeyModifiers, MouseButton,
+    MouseEvent, ResizeEvent, WheelEvent,
 };
 use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
@@ -2388,13 +2388,13 @@ fn focus_keys_default_to_standard_navigation_keys() {
     assert_eq!(
         doc.focus_keys(),
         FocusKeys {
-            next: vec![KeyCode::Tab],
-            previous: vec![KeyCode::BackTab],
-            up: vec![KeyCode::Up],
-            down: vec![KeyCode::Down],
-            left: vec![KeyCode::Left],
-            right: vec![KeyCode::Right],
-            blur: vec![KeyCode::Esc],
+            next: vec![(KeyCode::Tab, KeyModifiers::empty())],
+            previous: vec![(KeyCode::BackTab, KeyModifiers::empty())],
+            up: vec![(KeyCode::Up, KeyModifiers::empty())],
+            down: vec![(KeyCode::Down, KeyModifiers::empty())],
+            left: vec![(KeyCode::Left, KeyModifiers::empty())],
+            right: vec![(KeyCode::Right, KeyModifiers::empty())],
+            blur: vec![(KeyCode::Esc, KeyModifiers::empty())],
         }
     );
 }
@@ -2402,14 +2402,15 @@ fn focus_keys_default_to_standard_navigation_keys() {
 #[test]
 fn focus_keys_are_configurable() {
     let doc = Document::new().unwrap();
+    let plain = KeyModifiers::empty();
     let keys = FocusKeys {
-        next: vec![KeyCode::Char('n')],
-        previous: vec![KeyCode::Char('p')],
-        up: vec![KeyCode::Char('k')],
-        down: vec![KeyCode::Char('j')],
-        left: vec![KeyCode::Char('h')],
-        right: vec![KeyCode::Char('l')],
-        blur: vec![KeyCode::Char('q')],
+        next: vec![(KeyCode::Char('n'), plain)],
+        previous: vec![(KeyCode::Char('p'), plain)],
+        up: vec![(KeyCode::Char('k'), plain)],
+        down: vec![(KeyCode::Char('j'), plain)],
+        left: vec![(KeyCode::Char('h'), plain)],
+        right: vec![(KeyCode::Char('l'), plain)],
+        blur: vec![(KeyCode::Char('q'), plain)],
     };
 
     doc.set_focus_keys(keys.clone());
@@ -2565,13 +2566,13 @@ fn configured_focus_keys_drive_default_actions() {
     doc.set_focusable(second, true).unwrap();
 
     let keys = FocusKeys {
-        next: vec![KeyCode::Char('n')],
-        previous: vec![KeyCode::Char('p')],
+        next: vec![(KeyCode::Char('n'), KeyModifiers::empty())],
+        previous: vec![(KeyCode::Char('p'), KeyModifiers::empty())],
         up: Vec::new(),
         down: Vec::new(),
         left: Vec::new(),
         right: Vec::new(),
-        blur: vec![KeyCode::Char('q')],
+        blur: vec![(KeyCode::Char('q'), KeyModifiers::empty())],
     };
     doc.set_focus_keys(keys);
 

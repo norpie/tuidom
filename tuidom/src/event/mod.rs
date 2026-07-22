@@ -7,7 +7,7 @@ use std::sync::Arc;
 mod key;
 
 pub(crate) use key::convert_key_event;
-pub use key::{KeyCode, MediaKeyCode, ModifierKeyCode};
+pub use key::{KeyCode, KeyModifiers, MediaKeyCode, ModifierKeyCode};
 
 use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::SelectionPoint;
@@ -15,34 +15,40 @@ use crate::id::NodeId;
 use crate::performance::FrameMetrics;
 
 /// Keyboard bindings used by document-level focus default actions.
+///
+/// Each binding is a key plus the modifiers that must be held exactly, so Tab and
+/// Ctrl+Tab can be bound apart from one another.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusKeys {
     /// Keys that move focus to the next focusable node in DOM order.
-    pub next: Vec<KeyCode>,
+    pub next: Vec<(KeyCode, KeyModifiers)>,
     /// Keys that move focus to the previous focusable node in DOM order.
-    pub previous: Vec<KeyCode>,
+    pub previous: Vec<(KeyCode, KeyModifiers)>,
     /// Keys that move focus spatially upward.
-    pub up: Vec<KeyCode>,
+    pub up: Vec<(KeyCode, KeyModifiers)>,
     /// Keys that move focus spatially downward.
-    pub down: Vec<KeyCode>,
+    pub down: Vec<(KeyCode, KeyModifiers)>,
     /// Keys that move focus spatially left.
-    pub left: Vec<KeyCode>,
+    pub left: Vec<(KeyCode, KeyModifiers)>,
     /// Keys that move focus spatially right.
-    pub right: Vec<KeyCode>,
+    pub right: Vec<(KeyCode, KeyModifiers)>,
     /// Keys that clear the current focus.
-    pub blur: Vec<KeyCode>,
+    pub blur: Vec<(KeyCode, KeyModifiers)>,
 }
 
 impl Default for FocusKeys {
     fn default() -> Self {
+        // Back-tab is its own key code rather than Tab plus shift, so the default
+        // bindings all take an empty modifier set.
+        let plain = KeyModifiers::empty();
         Self {
-            next: vec![KeyCode::Tab],
-            previous: vec![KeyCode::BackTab],
-            up: vec![KeyCode::Up],
-            down: vec![KeyCode::Down],
-            left: vec![KeyCode::Left],
-            right: vec![KeyCode::Right],
-            blur: vec![KeyCode::Esc],
+            next: vec![(KeyCode::Tab, plain)],
+            previous: vec![(KeyCode::BackTab, plain)],
+            up: vec![(KeyCode::Up, plain)],
+            down: vec![(KeyCode::Down, plain)],
+            left: vec![(KeyCode::Left, plain)],
+            right: vec![(KeyCode::Right, plain)],
+            blur: vec![(KeyCode::Esc, plain)],
         }
     }
 }
@@ -120,14 +126,27 @@ impl TargetedMetadata {
 pub struct KeyEvent {
     /// The key that was pressed.
     pub code: KeyCode,
+    /// Modifier keys held during the press.
+    ///
+    /// Terminals report a capital letter as its uppercase [`KeyCode::Char`] *and*
+    /// [`KeyModifiers::SHIFT`], so shift being set does not imply a chord.
+    pub modifiers: KeyModifiers,
     metadata: TargetedMetadata,
     default_prevented: bool,
 }
 
 impl KeyEvent {
+    /// An unmodified key press. Test-only: every runtime path knows its modifiers and
+    /// goes through [`with_modifiers`](Self::with_modifiers).
+    #[cfg(test)]
     pub(crate) fn new(code: KeyCode) -> Self {
+        Self::with_modifiers(code, KeyModifiers::empty())
+    }
+
+    pub(crate) fn with_modifiers(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self {
             code,
+            modifiers,
             metadata: TargetedMetadata::pending(),
             default_prevented: false,
         }
@@ -227,17 +246,27 @@ pub struct MouseEvent {
     pub y: i32,
     /// Mouse button involved in the event.
     pub button: MouseButton,
+    /// Modifier keys held during the event.
+    ///
+    /// On a click these are the modifiers held at press time, not release.
+    pub modifiers: KeyModifiers,
     metadata: TargetedMetadata,
     default_prevented: bool,
 }
 
 impl MouseEvent {
-    /// Create a mouse button event.
+    /// Create a mouse button event with no modifiers held.
     pub fn new(x: i32, y: i32, button: MouseButton) -> Self {
+        Self::with_modifiers(x, y, button, KeyModifiers::empty())
+    }
+
+    /// Create a mouse button event with modifiers held.
+    pub fn with_modifiers(x: i32, y: i32, button: MouseButton, modifiers: KeyModifiers) -> Self {
         Self {
             x,
             y,
             button,
+            modifiers,
             metadata: TargetedMetadata::pending(),
             default_prevented: false,
         }
@@ -306,28 +335,45 @@ pub struct WheelEvent {
     pub delta: i16,
     /// The axis this event scrolls along.
     pub axis: WheelAxis,
+    /// Modifier keys held during the event.
+    ///
+    /// Terminals spell horizontal scrolling either as a native horizontal wheel or as
+    /// shift plus a vertical one. A shift consumed to pick the axis is not reported here,
+    /// so the same gesture carries the same modifiers under both spellings.
+    pub modifiers: KeyModifiers,
     metadata: TargetedMetadata,
     default_prevented: bool,
 }
 
 impl WheelEvent {
-    /// Create a vertical wheel event.
+    /// Create a vertical wheel event with no modifiers held.
     pub fn new(x: i32, y: i32, delta: i16) -> Self {
+        Self::with_modifiers(x, y, delta, KeyModifiers::empty())
+    }
+
+    /// Create a vertical wheel event with modifiers held.
+    pub fn with_modifiers(x: i32, y: i32, delta: i16, modifiers: KeyModifiers) -> Self {
         Self {
             x,
             y,
             delta,
             axis: WheelAxis::Vertical,
+            modifiers,
             metadata: TargetedMetadata::pending(),
             default_prevented: false,
         }
     }
 
-    /// Create a horizontal wheel event.
+    /// Create a horizontal wheel event with no modifiers held.
     pub fn horizontal(x: i32, y: i32, delta: i16) -> Self {
+        Self::horizontal_with_modifiers(x, y, delta, KeyModifiers::empty())
+    }
+
+    /// Create a horizontal wheel event with modifiers held.
+    pub fn horizontal_with_modifiers(x: i32, y: i32, delta: i16, modifiers: KeyModifiers) -> Self {
         Self {
             axis: WheelAxis::Horizontal,
-            ..Self::new(x, y, delta)
+            ..Self::with_modifiers(x, y, delta, modifiers)
         }
     }
 
