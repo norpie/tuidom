@@ -513,12 +513,12 @@ impl Grid {
 
         self.touch_rect(x_start, x_end, y_start, y_end);
 
-        if alpha >= 1.0 && matches!(cell.content, CellContent::Empty) {
-            if let Some(bg) = cell.bg {
-                if bg.a == 255 {
-                    return self.fill_opaque_empty_bg_rect(x_start, y_start, x_end, y_end, bg);
-                }
-            }
+        if alpha >= 1.0
+            && matches!(cell.content, CellContent::Empty)
+            && let Some(bg) = cell.bg
+            && bg.a == 255
+        {
+            return self.fill_opaque_empty_bg_rect(x_start, y_start, x_end, y_end, bg);
         }
 
         let replaces_content = !matches!(cell.content, CellContent::Empty)

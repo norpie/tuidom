@@ -30,12 +30,19 @@ pub(crate) struct CellChange {
     pub cell: Cell,
 }
 
+/// Per-row touched-span hints for the old and new grids, narrowing the diff scan.
+type DirtySpanHints<'a> = (&'a [Option<TouchedSpan>], &'a [Option<TouchedSpan>]);
+
 /// Compare old and new grids with optional dirty row hints and instrumentation.
+///
+/// The two `None`s mean opposite things, which is easy to misread. `dirty_spans` of `None`
+/// means no hints are usable at all, so every row is scanned in full. A row's *entry* being
+/// `None` within supplied hints means that row went untouched and is skipped entirely.
 pub(crate) fn diff_profiled_with_hints(
     old: &Grid,
     new: &Grid,
     instrument: bool,
-    dirty_spans: Option<(&[Option<TouchedSpan>], &[Option<TouchedSpan>])>,
+    dirty_spans: Option<DirtySpanHints<'_>>,
 ) -> DiffOutput {
     let width = new.width as usize;
     let height = new.height as usize;
