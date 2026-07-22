@@ -6,6 +6,7 @@
 //! for building sophisticated TUI applications.
 
 #![warn(missing_docs)]
+#![warn(missing_debug_implementations)]
 
 /// Animation driver and types.
 pub mod animation;

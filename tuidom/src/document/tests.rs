@@ -5984,3 +5984,49 @@ fn only_shifted_arrows_extend_a_selection() {
         .simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT | KeyModifiers::CONTROL);
     assert_eq!(doc.get_selection().as_deref(), Some("ab"));
 }
+
+/// `Debug` must not read the arena.
+///
+/// It is reachable from inside a held `nodes` guard — a `tracing::error!("{doc:?}")` in a
+/// listener does exactly that — so an impl printing node count would take shard locks
+/// under that guard and deadlock instead of returning. Formatting under a real guard is
+/// the only way to assert it does not, and the failure mode is a hang, so the format runs
+/// on another thread against a timeout.
+#[test]
+fn debug_does_not_touch_the_arena() {
+    let doc = Document::new().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), child).unwrap();
+
+    let guard = doc.inner.nodes.get_mut(&child).unwrap();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let probe = doc.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(format!("{probe:?}"));
+    });
+
+    let rendered = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Debug deadlocked against a held arena guard");
+    drop(guard);
+
+    assert!(rendered.starts_with("Document {"), "got {rendered}");
+    assert!(rendered.contains("nodes_allocated"), "got {rendered}");
+}
+
+/// The count is allocations, not live nodes, and the field name has to keep saying so —
+/// `NodeId` indices come from a monotonic counter and are never reused, so removing a
+/// subtree cannot decrement it.
+#[test]
+fn debug_reports_allocations_not_live_nodes() {
+    let doc = Document::new().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), child).unwrap();
+    let before = format!("{doc:?}");
+
+    doc.remove_child(doc.root(), child).unwrap();
+
+    assert!(doc.get_node(child).is_none());
+    assert_eq!(format!("{doc:?}"), before);
+}

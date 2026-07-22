@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -61,6 +62,30 @@ const DEFAULT_ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_6
 #[derive(Clone)]
 pub struct Document {
     pub(crate) inner: Arc<DocumentInner>,
+}
+
+/// Deliberately lock-free, and deliberately not a view of the tree.
+///
+/// `Debug` is reachable wherever a `Document` is, which includes inside a held
+/// `nodes.get_mut` guard — a `tracing::error!("{doc:?}")` in a listener does exactly that.
+/// Reading the arena here would take a shard lock under that guard and deadlock, the same
+/// hazard the crate's "never dispatch while holding a guard" rule exists to prevent. So
+/// this reads only plain and atomic fields, and never `nodes`. Use
+/// [`get_node`](Document::get_node) to inspect the tree.
+impl fmt::Debug for Document {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Document")
+            .field("id", &self.inner.document_id)
+            .field("root", &self.inner.root)
+            // Monotonic and never reused, so this counts nodes *allocated* over the
+            // document's life, not nodes alive now — removing a subtree does not
+            // decrement it.
+            .field(
+                "nodes_allocated",
+                &self.inner.next_id.load(Ordering::Relaxed),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl Document {

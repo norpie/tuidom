@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,22 @@ pub struct HeadlessRuntime {
     cursor: Option<RenderCursor>,
     rgb_cache: RgbCache,
     event_state: RuntimeEventState,
+}
+
+/// Reports the harness's configuration, not its buffers.
+///
+/// A rendered grid is `width × height` cells, so printing one would dwarf whatever it was
+/// printed beside. [`get_cell`](HeadlessRuntime::get_cell) and
+/// [`get_screen_region`](HeadlessRuntime::get_screen_region) are how a test inspects cells.
+impl fmt::Debug for HeadlessRuntime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HeadlessRuntime")
+            .field("doc", &self.doc)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("rendered", &self.grid.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl HeadlessRuntime {
