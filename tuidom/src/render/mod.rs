@@ -72,6 +72,10 @@ fn render_grid(
     rgb_cache: &mut RgbCache,
     clear_grid: bool,
 ) -> RenderGridOutput {
+    // Sits here rather than on `Renderer::render_frame` so the headless runtime, which
+    // reaches paint without going through a `Renderer`, is instrumented by the same span.
+    let _span = tracing::debug_span!("render", clear_grid).entered();
+
     let instrument_paint = lock::mutex(&doc.inner.performance).detail().is_detailed();
     let dom_output = paint::paint(doc, grid, rgb_cache, instrument_paint, clear_grid);
 

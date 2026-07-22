@@ -262,6 +262,11 @@ async fn recv_runtime_batch(doc: &Document) -> Option<Vec<RuntimeEvent>> {
 
 /// Render a diffed frame with timing for the performance API.
 fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
+    // The frame span lives here rather than in `render/`, because a frame is layout *then*
+    // paint and the renderer is only entered for the second half. This is the one place
+    // both are in scope, so it is the only place that can parent them.
+    let _span = tracing::debug_span!("frame", mode = "diffed").entered();
+
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
@@ -278,6 +283,8 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
 
 /// Render a full redraw with timing for the performance API.
 fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
+    let _span = tracing::debug_span!("frame", mode = "full").entered();
+
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();

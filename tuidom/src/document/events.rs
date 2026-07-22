@@ -677,6 +677,9 @@ impl Document {
     ) where
         E: TargetedEvent,
     {
+        let _span =
+            tracing::debug_span!("dispatch", kind = ?event_kind, target = ?target).entered();
+
         // A disabled or inert node swallows input instead of letting it bubble to an
         // interactive ancestor, matching how disabled controls behave in HTML.
         //

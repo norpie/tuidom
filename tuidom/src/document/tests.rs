@@ -6030,3 +6030,276 @@ fn debug_reports_allocations_not_live_nodes() {
     assert!(doc.get_node(child).is_none());
     assert_eq!(format!("{doc:?}"), before);
 }
+
+// ---------------------------------------------------------------------------
+// Instrumentation — roadmap §17, `.plans/21-devtools.md` phase 2
+// ---------------------------------------------------------------------------
+
+/// Flattens a span's fields to `name=value` strings, whatever their type.
+#[derive(Default)]
+struct SpanFields(Vec<String>);
+
+impl tracing::field::Visit for SpanFields {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0.push(format!("{}={value:?}", field.name()));
+    }
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.0.push(format!("{}={value}", field.name()));
+    }
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.0.push(format!("{}={value}", field.name()));
+    }
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.0.push(format!("{}={value}", field.name()));
+    }
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.0.push(format!("{}={value}", field.name()));
+    }
+}
+
+/// A span's name paired with its flattened fields.
+type RecordedSpan = (String, Vec<String>);
+
+/// Collects closed spans with their fields.
+///
+/// Fields set after creation — `layout`'s `skipped` and `nodes`, `animation_upkeep`'s
+/// counts — arrive through `on_record` rather than `on_new_span`, so a span is only
+/// published once it closes and every field has landed.
+#[derive(Clone, Default)]
+struct SpanRecorder {
+    open: Arc<Mutex<HashMap<tracing::span::Id, RecordedSpan>>>,
+    closed: Arc<Mutex<Vec<RecordedSpan>>>,
+}
+
+impl SpanRecorder {
+    /// The recorded field lists of every span with `name`, in close order.
+    fn named(&self, name: &str) -> Vec<Vec<String>> {
+        let closed = match self.closed.lock() {
+            Ok(closed) => closed,
+            Err(_) => return Vec::new(),
+        };
+        closed
+            .iter()
+            .filter(|(span, _)| span == name)
+            .map(|(_, fields)| fields.clone())
+            .collect()
+    }
+}
+
+thread_local! {
+    /// The recorder collecting on this thread, if a span test is running here.
+    static ACTIVE_RECORDER: std::cell::RefCell<Option<SpanRecorder>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Routes spans to whichever recorder is active on the *current* thread.
+///
+/// A global subscriber rather than a scoped one, because `tracing` evaluates a callsite's
+/// `Interest` once, globally, against the global dispatcher — a `with_default` subscriber
+/// is never consulted for a callsite already cached as `never`, which is what hundreds of
+/// unrelated rendering tests cache it as before a span test starts. Testing instrumentation
+/// therefore requires owning the global subscriber for the whole binary.
+struct ForwardingLayer;
+
+impl<S> tracing_subscriber::Layer<S> for ForwardingLayer
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    /// Never cache. Whether a span is wanted depends on which thread asks and on whether a
+    /// test is running there, so the answer cannot be a per-callsite constant.
+    fn register_callsite(&self, _meta: &tracing::Metadata<'_>) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+
+    /// Keeps the cost off the other ~500 tests: with no recorder on this thread no span is
+    /// ever constructed, so instrumenting the render path does not tax the whole suite.
+    fn enabled(
+        &self,
+        _meta: &tracing::Metadata<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        ACTIVE_RECORDER.with(|active| active.borrow().is_some())
+    }
+
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut fields = SpanFields::default();
+        attrs.record(&mut fields);
+        let name = attrs.metadata().name().to_string();
+        ACTIVE_RECORDER.with(|active| {
+            if let Some(recorder) = &*active.borrow()
+                && let Ok(mut open) = recorder.open.lock()
+            {
+                open.insert(id.clone(), (name, fields.0));
+            }
+        });
+    }
+
+    fn on_record(
+        &self,
+        id: &tracing::span::Id,
+        values: &tracing::span::Record<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut fields = SpanFields::default();
+        values.record(&mut fields);
+        ACTIVE_RECORDER.with(|active| {
+            if let Some(recorder) = &*active.borrow()
+                && let Ok(mut open) = recorder.open.lock()
+                && let Some(entry) = open.get_mut(id)
+            {
+                entry.1.extend(fields.0);
+            }
+        });
+    }
+
+    fn on_close(&self, id: tracing::span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        ACTIVE_RECORDER.with(|active| {
+            if let Some(recorder) = &*active.borrow() {
+                let entry = recorder.open.lock().ok().and_then(|mut o| o.remove(&id));
+                if let Some(entry) = entry
+                    && let Ok(mut closed) = recorder.closed.lock()
+                {
+                    closed.push(entry);
+                }
+            }
+        });
+    }
+}
+
+/// Run `body` with span recording enabled on this thread.
+fn recording_spans(body: impl FnOnce()) -> SpanRecorder {
+    use tracing_subscriber::prelude::*;
+
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let _ = tracing_subscriber::registry()
+            .with(ForwardingLayer)
+            .try_init();
+    });
+
+    let recorder = SpanRecorder::default();
+    ACTIVE_RECORDER.with(|active| *active.borrow_mut() = Some(recorder.clone()));
+    body();
+    ACTIVE_RECORDER.with(|active| *active.borrow_mut() = None);
+    recorder
+}
+
+fn instrumented_scene() -> (Document, HeadlessRuntime) {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("hello").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+    let runtime = HeadlessRuntime::new(doc.clone(), 20, 5);
+    (doc, runtime)
+}
+
+/// One layout and one render span per frame — and neither on a per-node path, which is
+/// what the counts assert: a span per node would make these scale with the tree.
+#[test]
+fn a_frame_emits_one_layout_and_one_render_span() {
+    let recorder = recording_spans(|| {
+        let (_doc, mut runtime) = instrumented_scene();
+        runtime.render().unwrap();
+    });
+
+    assert_eq!(recorder.named("layout").len(), 1);
+    assert_eq!(recorder.named("render").len(), 1);
+}
+
+/// The layout span reports the fast path it took, so a frame that skipped relayout is
+/// distinguishable from one that did the work — the single most useful thing to know
+/// when a frame is slower than expected.
+#[test]
+fn layout_span_reports_the_skipped_fast_path() {
+    let recorder = recording_spans(|| {
+        let (_doc, mut runtime) = instrumented_scene();
+        runtime.render().unwrap();
+        runtime.render().unwrap();
+    });
+
+    let layouts = recorder.named("layout");
+    assert_eq!(layouts.len(), 2);
+    assert!(
+        layouts[0].contains(&"skipped=false".to_string()),
+        "{layouts:?}"
+    );
+    assert!(layouts[0].contains(&"nodes=2".to_string()), "{layouts:?}");
+    // Nothing changed, so the second frame takes the fast path and never walks the tree.
+    assert!(
+        layouts[1].contains(&"skipped=true".to_string()),
+        "{layouts:?}"
+    );
+    assert!(
+        !layouts[1].iter().any(|f| f.starts_with("nodes=")),
+        "a skipped pass must not report a node count: {layouts:?}"
+    );
+}
+
+/// Dispatch carries the event kind and target, so a span tells you *which* event ran
+/// rather than only that one did.
+#[test]
+fn dispatch_span_carries_kind_and_target() {
+    let recorder = recording_spans(|| {
+        let doc = Document::new().unwrap();
+        let input = doc.create_input("").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 5);
+        runtime.render().unwrap();
+        doc.focus(input).unwrap();
+        runtime.simulate_key(KeyCode::Char('a'));
+    });
+
+    let dispatches = recorder.named("dispatch");
+    assert!(
+        dispatches
+            .iter()
+            .any(|fields| fields.iter().any(|f| f == "kind=KeyPress")),
+        "{dispatches:?}"
+    );
+    assert!(
+        dispatches
+            .iter()
+            .all(|fields| fields.iter().any(|f| f.starts_with("target="))),
+        "{dispatches:?}"
+    );
+}
+
+/// The animation span counts what a tick *settled*, so a frame where a transition
+/// finished is distinguishable from the overwhelmingly common frame where none did.
+#[test]
+fn animation_upkeep_span_counts_what_it_settled() {
+    let recorder = recording_spans(|| {
+        let doc = Document::new().unwrap();
+        let child = doc.create_box().unwrap();
+        doc.append_child(doc.root(), child).unwrap();
+        doc.set_transition(
+            child,
+            TransitionConfig::opacity(Duration::from_millis(100), Easing::Linear),
+        )
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 5);
+        runtime.render().unwrap();
+        doc.update_style(child, |style| style.opacity(0.0)).unwrap();
+
+        // Mid-flight: the transition is running, so this tick settles nothing.
+        runtime.advance_time(Duration::from_millis(50));
+        // Past the end: this tick settles it.
+        runtime.advance_time(Duration::from_millis(100));
+    });
+
+    let ticks = recorder.named("animation_upkeep");
+    assert_eq!(ticks.len(), 2, "{ticks:?}");
+    assert!(
+        ticks[0].contains(&"finished_transitions=0".to_string()),
+        "{ticks:?}"
+    );
+    assert!(
+        ticks[1].contains(&"finished_transitions=1".to_string()),
+        "{ticks:?}"
+    );
+}

@@ -312,6 +312,17 @@ fn measure_context_for(kind: &NodeKind) -> Option<MeasureContext> {
 
 /// Compute layout for the permanent document root using persistent taffy state.
 pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> Result<()> {
+    // `skipped` and `nodes` are recorded rather than passed: which one applies is not
+    // known until the fast path below has been tested.
+    let span = tracing::debug_span!(
+        "layout",
+        width = screen_width,
+        height = screen_height,
+        skipped = tracing::field::Empty,
+        nodes = tracing::field::Empty,
+    );
+    let _guard = span.enter();
+
     // A clean engine at unchanged dimensions would rebuild a bit-identical
     // snapshot, so the whole pass is skipped — including the visible-tree walk,
     // which resolves every node, and the snapshot rebuild, which clears and
@@ -323,8 +334,10 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
     // catch a relayout shrinking content out from under a stored offset. No
     // relayout, nothing to catch.
     if !lock::mutex(&doc.inner.layout).needs_compute(screen_width, screen_height) {
+        span.record("skipped", true);
         return Ok(());
     }
+    span.record("skipped", false);
 
     let reclamped = {
         let _tree_guard = lock::rw_read(&doc.inner.tree_mutation);
@@ -333,6 +346,7 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
         let mut visible = HashSet::new();
         let mut visible_children = HashMap::new();
         collect_visible_tree(doc, root, &mut visible, &mut visible_children)?;
+        span.record("nodes", visible.len());
 
         let mut engine = lock::mutex(&doc.inner.layout);
         let layouts = if visible.contains(&root) {

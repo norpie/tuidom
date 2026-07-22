@@ -359,11 +359,23 @@ impl Document {
     /// finished layout transition or animation pushes the settled style once
     /// more so layout rests exactly on the underlying value.
     pub(crate) fn run_animation_upkeep(&self) -> Vec<RuntimeEvent> {
+        // Counts what this tick *settled*, not what is live: the driver exposes no live
+        // counts, and "finished two transitions this frame" is the more useful number
+        // anyway — a tick that settles nothing is the common, uninteresting case.
+        let span = tracing::debug_span!(
+            "animation_upkeep",
+            finished_transitions = tracing::field::Empty,
+            keyframe_events = tracing::field::Empty,
+        );
+        let _guard = span.enter();
+
         let now = self.now();
         let (finished, keyframe_events) = {
             let mut driver = lock::mutex(&self.inner.animation);
             (driver.cleanup(now), driver.keyframe_upkeep(now))
         };
+        span.record("finished_transitions", finished.len());
+        span.record("keyframe_events", keyframe_events.len());
 
         let mut events = Vec::new();
         let mut settle = Vec::new();
