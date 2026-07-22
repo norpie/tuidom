@@ -166,9 +166,52 @@ impl Document {
 
     /// Whether a node is allowed to take focus right now.
     pub(super) fn can_focus(&self, node: NodeId) -> bool {
-        self.inner.nodes.contains_key(&node)
-            && lock::mutex(&self.inner.focusable_nodes).contains(&node)
-            && !self.blocks_interaction(node)
+        if !self.inner.nodes.contains_key(&node) {
+            return false;
+        }
+        // Scoped rather than chained: resolving styles below would otherwise hold this
+        // lock across the whole ancestor walk.
+        if !lock::mutex(&self.inner.focusable_nodes).contains(&node) {
+            return false;
+        }
+        !self.blocks_interaction(node) && !self.is_effectively_hidden(node)
+    }
+
+    /// Whether a node is hidden, either by its own `display` or by an ancestor's.
+    ///
+    /// Hiding prunes a subtree at the ancestor, so a descendant of a hidden node still
+    /// resolves `Display::Flex` itself — this has to walk up rather than read one style,
+    /// the same way [`Document::is_effectively_disabled`] does.
+    pub(super) fn is_effectively_hidden(&self, node: NodeId) -> bool {
+        let mut current = Some(node);
+        while let Some(id) = current {
+            if self
+                .resolved_style_arc(id)
+                .is_ok_and(|resolved| resolved.display == Display::None)
+            {
+                return true;
+            }
+            current = self.get_parent(id);
+        }
+        false
+    }
+
+    /// Blur the focused node if a style change just hid it.
+    ///
+    /// Only *tree* mutation settles focus otherwise, so without this, hiding the screen a
+    /// user is typing in strands focus on an invisible node and keys keep routing to it.
+    /// A change at `changed` can only hide nodes in its own subtree, so the parent walk
+    /// dismisses the common case before any style is resolved.
+    pub(super) fn settle_focus_if_hidden(&self, changed: NodeId) {
+        let Some(focused) = self.focused() else {
+            return;
+        };
+        if !self.is_self_or_descendant(changed, focused) {
+            return;
+        }
+        if self.is_effectively_hidden(focused) {
+            self.blur();
+        }
     }
 
     /// Move focus from `previous` to `next`, refreshing both styles and dispatching blur

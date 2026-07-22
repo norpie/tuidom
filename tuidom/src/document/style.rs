@@ -148,7 +148,11 @@ impl Document {
         self.sync_layout_subtree_styles(id)?;
         self.inner.notify.notify_one();
 
-        self.signal_animation(id, &old_resolved)
+        self.signal_animation(id, &old_resolved)?;
+        // After the change's own effects, so a blur listener sees the settled style. The
+        // node guard is long dropped, so dispatching from here is safe.
+        self.settle_focus_if_hidden(id);
+        Ok(())
     }
 
     /// Update a node's style in-place via a closure.
@@ -177,7 +181,9 @@ impl Document {
         self.sync_layout_subtree_styles(id)?;
         self.inner.notify.notify_one();
 
-        self.signal_animation(id, &old_resolved)
+        self.signal_animation(id, &old_resolved)?;
+        self.settle_focus_if_hidden(id);
+        Ok(())
     }
 
     /// Get the fully resolved style for a node, including animation overrides.

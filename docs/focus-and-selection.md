@@ -21,6 +21,21 @@ let current = doc.focused();         // Option<NodeId>
 `focus()` fails if the node is not in the active focus context — you cannot focus something
 behind a modal, and the error says so rather than silently doing nothing.
 
+### Hidden nodes cannot hold focus
+
+A node under `display: none` — its own, or any ancestor's — is not a focus target. `focus()`
+fails on it, tab and arrow navigation skip it, and hiding the subtree a focused node lives
+in **blurs it**, firing blur listeners like any other focus change.
+
+That last part is the whole point. Focus is runtime state keyed by `NodeId`, so without it,
+hiding the screen someone was typing in would strand focus on an invisible node and keep
+routing their keystrokes to it. Style changes settle focus for the same reason tree changes
+do.
+
+`opacity: 0` is deliberately *not* included, matching CSS: it hides a node visually without
+removing it from layout, and treating it as unfocusable would make focus flicker in and out
+across an opacity transition.
+
 ### Hover is focus
 
 Mousing over a focusable node focuses it. There is no separate hover state, no hover event,

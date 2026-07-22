@@ -5253,3 +5253,128 @@ fn disabling_a_focused_input_blurs_it_so_later_keys_fire_nothing() {
     assert!(seen.lock().unwrap().is_empty());
     assert_eq!(doc.input_value(input).unwrap(), "");
 }
+
+// ---------------------------------------------------------------------------
+// Hiding a focused node
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hiding_an_ancestor_blurs_the_focused_node_and_stops_its_keys() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let input = doc.create_input("").unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, input).unwrap();
+    doc.focus(input).unwrap();
+
+    doc.update_style(panel, |style| style.display(Display::None))
+        .unwrap();
+
+    // The input's own display is still Flex — hiding prunes the subtree at the ancestor,
+    // which is why this cannot be answered by reading one style.
+    assert_eq!(doc.focused(), None);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+    assert_eq!(doc.input_value(input).unwrap(), "");
+}
+
+#[test]
+fn hiding_the_focused_node_itself_blurs_it() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    doc.focus(node).unwrap();
+
+    let keys = Arc::new(AtomicUsize::new(0));
+    let sink = keys.clone();
+    doc.on_key_press(node, move |_| {
+        sink.fetch_add(1, Ordering::SeqCst);
+    })
+    .unwrap();
+
+    doc.update_style(node, |style| style.display(Display::None))
+        .unwrap();
+    assert_eq!(doc.focused(), None);
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Char('x')));
+    assert_eq!(keys.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hiding_the_focused_node_dispatches_blur() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    doc.focus(node).unwrap();
+
+    let blurred = Arc::new(Mutex::new(Vec::new()));
+    let sink = blurred.clone();
+    doc.on_blur(node, move |event| {
+        sink.lock().unwrap().push(event.target());
+    })
+    .unwrap();
+
+    doc.update_style(node, |style| style.display(Display::None))
+        .unwrap();
+
+    // Focus does not just vanish: downstream that tracks it by event stays in sync.
+    assert_eq!(&*blurred.lock().unwrap(), &[node]);
+}
+
+#[test]
+fn hiding_an_unrelated_subtree_leaves_focus_alone() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    let other = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    doc.append_child(doc.root(), other).unwrap();
+    doc.set_focusable(node, true).unwrap();
+    doc.focus(node).unwrap();
+
+    doc.update_style(other, |style| style.display(Display::None))
+        .unwrap();
+
+    assert_eq!(doc.focused(), Some(node));
+}
+
+#[test]
+fn a_node_under_a_hidden_ancestor_cannot_be_focused() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(panel, node).unwrap();
+    doc.set_focusable(node, true).unwrap();
+
+    doc.update_style(panel, |style| style.display(Display::None))
+        .unwrap();
+
+    assert_eq!(
+        doc.focus(node),
+        Err(TuidomError::NodeNotFocusable { id: node })
+    );
+    assert_eq!(doc.focused(), None);
+}
+
+#[test]
+fn popping_a_context_does_not_restore_focus_to_a_node_hidden_meanwhile() {
+    let doc = Document::new().unwrap();
+    let panel = doc.create_box().unwrap();
+    let outer = focusable_child(&doc, panel);
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), panel).unwrap();
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(outer).unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    // Hiding what the outer context remembers, while it is not the active context.
+    doc.update_style(panel, |style| style.display(Display::None))
+        .unwrap();
+
+    doc.pop_focus_context().unwrap();
+    assert_eq!(doc.focused(), None);
+}
