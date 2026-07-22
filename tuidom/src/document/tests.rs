@@ -6303,3 +6303,98 @@ fn animation_upkeep_span_counts_what_it_settled() {
         "{ticks:?}"
     );
 }
+
+/// The counters that replaced a per-node span.
+///
+/// A steady-state frame must miss the cache **zero** times: the cache holds every resolved
+/// style until something invalidates it. This is the property the whole "counters, not
+/// spans" decision rests on, and the number a devtools consumer is meant to watch.
+#[test]
+fn steady_state_frames_never_miss_the_style_cache() {
+    let doc = Document::new().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), child).unwrap();
+    let text = doc.create_text("hello").unwrap();
+    doc.append_child(child, text).unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 5);
+
+    // The first frame populates a cold cache, so it misses by construction.
+    runtime.render().unwrap();
+
+    for frame in 0..5 {
+        runtime.render().unwrap();
+        let metrics = doc.performance_snapshot().latest.unwrap();
+        assert_eq!(
+            metrics.style_cache_misses, 0,
+            "frame {frame} missed the style cache"
+        );
+    }
+}
+
+/// A style change invalidates the subtree, so the next frame recomputes — and the frame
+/// after that is clean again. A miss count that stayed high would mean the cache never
+/// re-warmed, which is the failure this number exists to surface.
+#[test]
+fn a_style_change_costs_exactly_one_missing_frame() {
+    let doc = Document::new().unwrap();
+    let child = doc.create_box().unwrap();
+    doc.append_child(doc.root(), child).unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 5);
+
+    runtime.render().unwrap();
+    runtime.render().unwrap();
+    assert_eq!(
+        doc.performance_snapshot()
+            .latest
+            .unwrap()
+            .style_cache_misses,
+        0
+    );
+
+    doc.update_style(child, |style| style.opacity(0.5)).unwrap();
+    runtime.render().unwrap();
+    assert!(
+        doc.performance_snapshot()
+            .latest
+            .unwrap()
+            .style_cache_misses
+            > 0,
+        "a style change must show up as a cache miss"
+    );
+
+    runtime.render().unwrap();
+    assert_eq!(
+        doc.performance_snapshot()
+            .latest
+            .unwrap()
+            .style_cache_misses,
+        0,
+        "the cache must re-warm after one frame"
+    );
+}
+
+/// Resolution is twice per node per frame — the paint-order walk once, the visible-tree
+/// walk once. Pinning the ratio is what would catch a change that silently reintroduced a
+/// second resolve per node, which is the regression `paint_order.rs` is written to avoid.
+#[test]
+fn style_resolution_is_twice_per_node_per_frame() {
+    for extra_nodes in [0, 4, 20] {
+        let doc = Document::new().unwrap();
+        for _ in 0..extra_nodes {
+            let node = doc.create_box().unwrap();
+            doc.append_child(doc.root(), node).unwrap();
+        }
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 20, 5);
+
+        runtime.render().unwrap();
+        runtime.render().unwrap();
+
+        // Root plus the children, all visible.
+        let nodes = (extra_nodes + 1) as u64;
+        assert_eq!(
+            doc.performance_snapshot().latest.unwrap().style_resolves,
+            nodes * 2,
+            "{nodes} nodes"
+        );
+    }
+}

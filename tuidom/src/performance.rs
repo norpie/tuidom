@@ -3,6 +3,7 @@
 //! Metrics are collected as data so applications can decide whether to log,
 //! graph, or render a small subset of them in their own UI.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::id::NodeId;
@@ -48,6 +49,56 @@ pub struct FrameMetrics {
     pub layout_time: Duration,
     /// Renderer metrics for this frame.
     pub render: RenderMetrics,
+    /// Style resolutions requested since the previous frame.
+    ///
+    /// Counted rather than traced. Style resolution runs about twice per node per frame —
+    /// the paint-order walk once and the visible-tree walk once — so a span here would
+    /// cost more than the work it measured once anything was listening, and thousands of
+    /// indistinguishable spans a frame answer no question anyone has.
+    ///
+    /// "Since the previous frame" rather than "during it": a resolution triggered by a
+    /// style change between frames is counted against the frame that follows it.
+    pub style_resolves: u64,
+    /// Style resolutions that missed the cache and recomputed, of [`Self::style_resolves`].
+    ///
+    /// The load-bearing number. In a steady state this is **zero** — the cache holds every
+    /// resolved style until something invalidates it — so a frame-after-frame nonzero value
+    /// means something is invalidating every frame, which is the one style-resolution
+    /// pathology worth catching.
+    pub style_cache_misses: u64,
+}
+
+/// Lock-free counters for style resolution.
+///
+/// Deliberately not inside [`PerformanceState`]'s mutex: these are incremented thousands
+/// of times per frame, and taking a lock at that rate would cost far more than the work
+/// being measured. Relaxed ordering throughout is correct because nothing branches on
+/// these — they are diagnostic totals, read once per frame, and a count that lands one
+/// frame late is not a correctness problem.
+#[derive(Debug, Default)]
+pub(crate) struct StyleCounters {
+    resolves: AtomicU64,
+    misses: AtomicU64,
+}
+
+impl StyleCounters {
+    /// Record one style resolution request, hit or miss.
+    pub(crate) fn record_resolve(&self) {
+        self.resolves.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record one resolution that missed the cache and had to recompute.
+    pub(crate) fn record_miss(&self) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Read and reset both counters, returning `(resolves, misses)`.
+    pub(crate) fn take(&self) -> (u64, u64) {
+        (
+            self.resolves.swap(0, Ordering::Relaxed),
+            self.misses.swap(0, Ordering::Relaxed),
+        )
+    }
 }
 
 /// Running average performance metrics.
@@ -281,11 +332,15 @@ impl PerformanceState {
         frame_time: Duration,
         layout_time: Duration,
         render: RenderMetrics,
+        style: (u64, u64),
     ) {
+        let (style_resolves, style_cache_misses) = style;
         let frame = FrameMetrics {
             frame_time,
             layout_time,
             render,
+            style_resolves,
+            style_cache_misses,
         };
         self.latest = Some(frame);
 

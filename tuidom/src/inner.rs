@@ -14,7 +14,7 @@ use crate::event::{FocusKeys, Listener, ScrollKeys, TargetedEventKind};
 use crate::id::{NodeId, NodeMap, NodeSet};
 use crate::layout::LayoutEngine;
 use crate::node::{NodeData, NodeLayout, ScrollOffset};
-use crate::performance::PerformanceState;
+use crate::performance::{PerformanceState, StyleCounters};
 use crate::runtime_event::RuntimeEvent;
 use crate::style::{Color, Style};
 
@@ -277,6 +277,12 @@ pub(crate) struct DocumentInner {
 
     /// Color variables declared on the document — the root of every node's variable scope.
     pub color_vars: Mutex<HashMap<String, Color>>,
+
+    /// Style-resolution counters, read and reset once per frame.
+    ///
+    /// Outside [`Self::performance`]'s mutex on purpose — style resolution runs thousands
+    /// of times a frame, and locking at that rate would cost more than it measures.
+    pub style_counters: StyleCounters,
 
     /// The terminal background color the document assumes.
     ///

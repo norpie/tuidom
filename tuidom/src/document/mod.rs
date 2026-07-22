@@ -19,7 +19,9 @@ use crate::inner::{DocumentInner, FocusStack};
 use crate::layout::LayoutEngine;
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
-use crate::performance::{PerformanceDetail, PerformanceSnapshot, PerformanceState, RenderMetrics};
+use crate::performance::{
+    PerformanceDetail, PerformanceSnapshot, PerformanceState, RenderMetrics, StyleCounters,
+};
 use crate::style::Color;
 
 mod animation;
@@ -135,6 +137,7 @@ impl Document {
                 selection: Mutex::new(None),
                 selection_listeners: Mutex::new(Vec::new()),
                 performance: Mutex::new(PerformanceState::new()),
+                style_counters: StyleCounters::default(),
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
                 post_frame_listeners: Mutex::new(Vec::new()),
@@ -392,7 +395,11 @@ impl Document {
         layout: Duration,
         stats: RenderMetrics,
     ) {
-        lock::mutex(&self.inner.performance).record(frame, layout, stats);
+        // Taken here rather than inside the lock so the counters are read and reset at
+        // exactly one point per frame, whichever runtime drove it — the event loop and the
+        // headless harness both land here.
+        let style = self.inner.style_counters.take();
+        lock::mutex(&self.inner.performance).record(frame, layout, stats, style);
     }
 
     /// Run the render + event loop until [`quit`](Self::quit) is called.

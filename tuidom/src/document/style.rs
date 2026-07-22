@@ -259,6 +259,12 @@ impl Document {
     }
 
     pub(crate) fn resolved_base_style_unlocked(&self, id: NodeId) -> Result<Arc<ResolvedStyle>> {
+        // Counted here rather than at the `resolved_style_unlocked` entry point so the
+        // recursive walk to an uncached parent is counted too — on a cold cache that walk
+        // is most of the work, and a count that hid it would understate the cost it exists
+        // to expose.
+        self.inner.style_counters.record_resolve();
+
         // Check cache
         {
             let Some(node) = self.inner.nodes.get(&id) else {
@@ -270,6 +276,7 @@ impl Document {
         }
 
         // Cache miss — compute
+        self.inner.style_counters.record_miss();
         let parent = self.get_parent_unlocked(id);
         let parent_resolved = parent
             .map(|pid| self.resolved_base_style_unlocked(pid))
