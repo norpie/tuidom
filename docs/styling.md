@@ -39,6 +39,74 @@ The difference matters for animation, not just ergonomics: both go through the s
 change detection, and a property whose *resolved* value moved is what triggers a
 transition.
 
+## The `style!` macro
+
+`style!` builds the same `Style` the setters do — it expands to `Style::new()` and a setter
+call per entry, and nothing about the value it produces is special:
+
+```rust
+use tuidom::style;
+
+let panel = style! {
+    width: 100%,
+    padding: 1 2,
+    flex_direction: column,
+    background: --surface.darken(0.05),
+    color: inherit,
+};
+
+doc.set_style(node, &panel)?;
+```
+
+Values are sugared according to the property's own type, and **any Rust expression is
+accepted wherever the sugar does not fit** — `gap: FlexGap::new(1, 0)` is as valid as
+`gap: 1 0`.
+
+| Property type | Sugar |
+|---|---|
+| `Length` | `auto`, `12` (cells), `50%` |
+| `EdgeInsets` | `1`, `1 2`, `1 2 3`, `1 2 3 4` — CSS edge order |
+| `FlexGap` | `1`, or `1 0` for row and column |
+| `Color` | `--name`, `white`, `oklch(l, c, h)`, `current_bg`, and `.darken(..)`-style chains over any of them |
+| `Sides` | `all`, `none`, or a subset: `top left` |
+| `Border` | `none`, `rounded`, or `double top bottom` |
+| `Position` | `flow`, `absolute(15, -1)` |
+| `Duration` | `300ms`, `2s` |
+| enums | the variant in snake_case: `flex_start`, `space_between` |
+| numbers | a bare literal takes the property's own type, so `opacity: 1` is not a type error |
+
+Enum variants are not a list the macro carries — it resolves `flex_start` through the
+property's own type, so a variant the engine gains works immediately, and one that does not
+exist is a compiler error pointing at what you wrote.
+
+Three entry forms are not properties:
+
+```rust
+let derived = style! {
+    ..base,                             // start from a copy of another style
+    --accent: oklch(0.8, 0.15, 60),     // declare a color variable
+    "data-role": "primary",             // a custom property
+};
+```
+
+`..base` **copies**, so the base stays usable — it is the `base.clone()` above, spelled
+shorter. It has to come first, since later entries override it.
+
+One rule is worth knowing before it surprises you: **a bare lowercase ident is always a
+keyword or a variant, never a local variable.** `flex_direction: column` means
+`FlexDirection::Column` even if a `column` variable is in scope. Parenthesize to mean the
+variable:
+
+```rust
+let column = pick_direction();
+let s = style! { flex_direction: (column) };
+```
+
+A parenthesized value is never sugared, which makes it the general escape hatch.
+
+`style!` comes from `tuidom-macros`, which the engine re-exports. It is deliberately usable
+without any framework layer on top, and it never gains anything that needs one.
+
 ## Three states per property: `StyleValue`
 
 Every property on `Style` is a **StyleValue**, which is one of three things:

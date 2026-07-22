@@ -1,0 +1,5 @@
+error: unknown style property `colour` — did you mean `color`?
+ --> tests/ui/unknown_property.rs:5:9
+  |
+5 |         colour: white,
+  |         ^^^^^^

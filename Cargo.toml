@@ -1,5 +1,5 @@
 [workspace]
-members = ["tuidom"]
+members = ["tuidom", "tuidom-macros"]
 resolver = "2"
 
 # Benchmarks are profiled with perf/flamegraph, which needs symbols to attribute

@@ -70,6 +70,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Style** — A node's user-provided style, holding a `StyleValue<T>` per property. See [style is a struct, not a builder](styling.md#style-is-a-struct-not-a-builder).
 
+**`style!`** — Macro building a plain `Style` from a property list, with sugar chosen by each property's type. Lives in `tuidom-macros` and needs no framework layer. See [the `style!` macro](styling.md#the-style-macro).
+
 **StyleValue** — A property's three states: `Unset` (use the default), `Set(v)`, or `Inherit` (take the parent's resolved value). See [three states per property](styling.md#three-states-per-property-stylevalue).
 
 **ResolvedStyle** — A `Style` with every value collapsed to a concrete one: inheritance walked, defaults applied, colors still in OKLCH. See [what the engine actually uses](styling.md#resolvedstyle-what-the-engine-actually-uses).

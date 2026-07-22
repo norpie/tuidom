@@ -8,6 +8,10 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 
+// `style!` expands to absolute `::tuidom::…` paths, which are not otherwise a valid way to
+// name this crate from inside itself. The engine's own tests use the macro, so it has to be.
+extern crate self as tuidom;
+
 /// Animation driver and types.
 pub mod animation;
 /// Error types returned by tuidom APIs.
@@ -48,3 +52,4 @@ pub use document::{Document, DocumentSnapshot, NodeSnapshot, SelectionPoint};
 pub use error::{Result, TuidomError};
 pub use id::NodeId;
 pub use node::{LayoutRect, LayoutView, NodeKindView, NodeView, ScrollOffset};
+pub use tuidom_macros::style;

@@ -1,0 +1,5 @@
+error: `..base` must come first, since later entries override it
+ --> tests/ui/spread_not_first.rs:7:9
+  |
+7 |         ..base,
+  |         ^

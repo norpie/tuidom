@@ -1,0 +1,5 @@
+error: `--name` is a color variable, and this property does not take a color
+ --> tests/ui/color_var_in_non_color.rs:5:16
+  |
+5 |         width: --primary,
+  |                ^^^^^^^^^

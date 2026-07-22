@@ -40,6 +40,9 @@ tuidom/
   examples/demo.rs    human-facing smoke test
   benches/frame.rs    criterion frame benchmark
   tests/              empty on purpose — tests live in-crate
+tuidom-macros/  proc macros usable against the engine alone — today, `style!`
+  src/style/          property table, value sugar, expansion
+  tests/ui/           trybuild compile-fail cases for the macro's own diagnostics
 docs/           guides, glossary, features, style
 .plans/         plans + roadmaps (gitignored)
 ```

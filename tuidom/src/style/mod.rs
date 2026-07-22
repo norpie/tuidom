@@ -2,6 +2,8 @@
 pub mod border;
 /// Color types and OKLCH → RGB conversion.
 pub mod color;
+#[cfg(test)]
+mod macro_tests;
 /// Resolved style computation and caching.
 pub(crate) mod resolution;
 /// Scrollbar visibility and drawing characters.
