@@ -25,6 +25,12 @@ impl Document {
             }
         }
 
+        // Nothing here changes how the node paints, so this schedules a frame that draws
+        // the same cells. It is scheduled anyway so the change is *observable*: a document
+        // that never renders never fires `on_post_frame`, and an inspector polling on that
+        // would report stale focusability for as long as nothing else happened to move.
+        // `set_attr` makes the same trade for the same reason.
+        self.inner.notify.notify_one();
         Ok(())
     }
 

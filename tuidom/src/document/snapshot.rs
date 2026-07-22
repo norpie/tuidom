@@ -90,6 +90,13 @@ pub struct NodeSnapshot {
     pub resolved: Arc<ResolvedStyle>,
     /// Current scroll offset. `(0, 0)` for anything never scrolled.
     pub scroll: ScrollOffset,
+    /// Whether this node can receive focus at all.
+    ///
+    /// Independent of whether it *could* right now — a focusable node that is
+    /// [`effectively_disabled`](Self::effectively_disabled) or [`inert`](Self::inert) still
+    /// reads `true` here, since this is the property that was set on it rather than the
+    /// verdict those two produce.
+    pub focusable: bool,
     /// Whether this node holds focus in the active focus context.
     pub focused: bool,
     /// Whether this node is the one currently being pressed.
@@ -141,6 +148,7 @@ impl Document {
         let selection = self.selection_unlocked();
         let scroll_offsets = lock::mutex(&self.inner.scroll_offsets).clone();
         let disabled_nodes = lock::mutex(&self.inner.disabled_nodes).clone();
+        let focusable_nodes = lock::mutex(&self.inner.focusable_nodes).clone();
         let layouts = lock::rw_read(&self.inner.layout_snapshot).clone();
 
         let now = self.now();
@@ -195,6 +203,7 @@ impl Document {
                 style,
                 resolved,
                 scroll: scroll_offsets.get(&id).copied().unwrap_or_default(),
+                focusable: focusable_nodes.contains(&id),
                 focused: focused == Some(id),
                 active: active == Some(id),
                 disabled,
@@ -253,6 +262,7 @@ impl Document {
             style,
             resolved,
             scroll: self.scroll_offset(id),
+            focusable: lock::mutex(&self.inner.focusable_nodes).contains(&id),
             focused: self.focused() == Some(id),
             active: *lock::mutex(&self.inner.active_node) == Some(id),
             disabled: lock::mutex(&self.inner.disabled_nodes).contains(&id),

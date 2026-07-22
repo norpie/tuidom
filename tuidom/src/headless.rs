@@ -2560,4 +2560,38 @@ mod tests {
         assert_eq!(bells_in(runtime.flush_output()), 1);
         assert_eq!(runtime.flush_output().first(), Some(&BEL));
     }
+
+    /// The devtools observation loop, end to end: a post-frame listener snapshots the
+    /// document, a mutation lands between frames, and the next snapshot sees it.
+    ///
+    /// This is the evidence that `on_post_frame` plus `snapshot` is a complete change
+    /// observation story, rather than a claim that one. It also pins something load-bearing
+    /// and easy to break: `snapshot` takes the tree lock, so this only works because
+    /// listeners are dispatched with no node guard held. A change that started dispatching
+    /// post-frame from inside a guard would hang here rather than fail somewhere subtler.
+    #[test]
+    fn a_post_frame_listener_can_snapshot_the_document_it_was_told_about() {
+        let doc = Document::new().unwrap();
+        let host = doc.create_box().unwrap();
+        doc.append_child(doc.root(), host).unwrap();
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_for_handler = seen.clone();
+        let doc_for_handler = doc.clone();
+        doc.on_post_frame(move |_| {
+            let snapshot = doc_for_handler.snapshot();
+            seen_for_handler.lock().unwrap().push(snapshot.nodes.len());
+        });
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+        runtime.render().unwrap();
+
+        let text = doc.create_text("added").unwrap();
+        doc.append_child(host, text).unwrap();
+        runtime.render().unwrap();
+
+        // Root + host, then root + host + text: the listener observed the mutation without
+        // being told anything about it beyond "a frame happened".
+        assert_eq!(*seen.lock().unwrap(), vec![2, 3]);
+    }
 }

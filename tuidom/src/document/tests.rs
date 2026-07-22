@@ -6614,6 +6614,21 @@ fn snapshot_joins_runtime_state_onto_the_right_nodes() {
     assert!(node(focusable).focused);
     assert!(!node(scroller).focused);
 
+    // Focusable is the property that was set, not the verdict — the disabled node was
+    // made focusable and stays so, even though it can no longer actually take focus.
+    doc.set_focusable(disabled_parent, true).unwrap();
+    let snapshot = doc.snapshot();
+    let node = |id| {
+        snapshot
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .expect("node is in the snapshot")
+    };
+    assert!(node(disabled_parent).focusable);
+    assert!(node(disabled_parent).effectively_disabled);
+    assert!(!node(scroller).focusable);
+
     assert_eq!(node(scroller).scroll.y, 2);
     assert_eq!(node(focusable).scroll.y, 0);
 
@@ -6669,4 +6684,31 @@ fn snapshot_marks_everything_outside_the_focus_context_inert() {
     for node in &snapshot.nodes {
         assert_eq!(node.inert, doc.is_inert(node.id).unwrap());
     }
+}
+
+/// `set_focusable` paints nothing, so not scheduling a frame would be defensible — and
+/// would make the change invisible to every `on_post_frame` observer until something
+/// unrelated happened to render. It schedules one deliberately, and this is the only place
+/// that can prove it: the headless runtime renders on demand rather than on notification,
+/// so no headless test can tell the two apart.
+#[tokio::test]
+async fn set_focusable_notifies_so_the_change_is_observable() {
+    let doc = Document::new().unwrap();
+    let button = doc.create_box().unwrap();
+    doc.append_child(doc.root(), button).unwrap();
+
+    // Drain the permit the append left behind, so the next wait can only be woken by
+    // `set_focusable` itself.
+    let notified = doc.inner.notify.notified();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_focusable(button, true).unwrap();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .expect("set_focusable schedules a frame so the change can be observed");
+
+    assert!(doc.snapshot_node(button).unwrap().focusable);
 }
