@@ -1376,6 +1376,215 @@ fn input_default_action_moves_cursor_by_grapheme_and_line() {
     assert_eq!(doc.input_cursor(input).unwrap(), "a\u{301}".len());
 }
 
+/// The goal column is the whole reason vertical motion carries state: without it the
+/// short middle line would clamp the column and the second Down could not recover it,
+/// so a run of Downs would walk leftward through the content.
+#[test]
+fn vertical_motion_holds_its_column_across_a_shorter_line() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abcdef\nxy\nghijkl").unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 6).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Down));
+    assert_eq!(doc.input_cursor(input).unwrap(), "abcdef\nxy".len());
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Down));
+    assert_eq!(doc.input_cursor(input).unwrap(), "abcdef\nxy\nghijkl".len());
+
+    // Moving horizontally ends the run, so the next Up starts from where the cursor
+    // actually is rather than from a column it no longer occupies.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Home));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Up));
+    assert_eq!(doc.input_cursor(input).unwrap(), "abcdef\n".len());
+}
+
+/// Up on the first line is handled but unmoved: a key does not chain out to focus
+/// navigation the way a wheel chains to an ancestor scroller.
+#[test]
+fn vertical_motion_in_a_multiline_input_does_not_escape_to_focus() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let input = doc.create_input("ab\ncd").unwrap();
+    let sibling = doc.create_box().unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.append_child(root, input).unwrap();
+    doc.append_child(root, sibling).unwrap();
+    doc.set_focusable(sibling, true).unwrap();
+    set_layout(
+        &doc,
+        root,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 8,
+        },
+    );
+    set_layout(
+        &doc,
+        input,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 2,
+        },
+    );
+    set_layout(
+        &doc,
+        sibling,
+        LayoutRect {
+            x: 0,
+            y: 4,
+            width: 4,
+            height: 1,
+        },
+    );
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 1).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Up));
+
+    assert_eq!(doc.focused(), Some(input));
+    assert_eq!(doc.input_cursor(input).unwrap(), 1);
+}
+
+/// A single-line input has no line to move to, so Up and Down are not its keys — they
+/// reach focus navigation instead of being swallowed for nothing.
+#[test]
+fn vertical_motion_in_a_single_line_input_moves_focus() {
+    let doc = Document::new().unwrap();
+    let root = doc.root();
+    let input = doc.create_input("abc").unwrap();
+    let below = doc.create_box().unwrap();
+    doc.append_child(root, input).unwrap();
+    doc.append_child(root, below).unwrap();
+    doc.set_focusable(below, true).unwrap();
+    set_layout(
+        &doc,
+        root,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        },
+    );
+    set_layout(
+        &doc,
+        input,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 1,
+        },
+    );
+    set_layout(
+        &doc,
+        below,
+        LayoutRect {
+            x: 0,
+            y: 2,
+            width: 4,
+            height: 1,
+        },
+    );
+    doc.focus(input).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Down));
+
+    assert_eq!(doc.focused(), Some(below));
+}
+
+/// Page motion sizes itself on the input's laid-out height, keeping one row of overlap,
+/// and stops at the end rather than paging whatever is behind it.
+#[test]
+fn page_motion_moves_by_the_visible_height_and_stops_at_the_end() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("l0\nl1\nl2\nl3\nl4\nl5").unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.focus(input).unwrap();
+    // Four visible rows means a page of three: one row is kept to read against.
+    set_layout(
+        &doc,
+        input,
+        LayoutRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        },
+    );
+    doc.set_input_cursor(input, 0).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageDown));
+    assert_eq!(doc.input_cursor(input).unwrap(), "l0\nl1\nl2\n".len());
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageDown));
+    assert_eq!(
+        doc.input_cursor(input).unwrap(),
+        "l0\nl1\nl2\nl3\nl4\n".len()
+    );
+
+    // Already on the last line: handled, unmoved.
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageDown));
+    assert_eq!(
+        doc.input_cursor(input).unwrap(),
+        "l0\nl1\nl2\nl3\nl4\n".len()
+    );
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::PageUp));
+    assert_eq!(doc.input_cursor(input).unwrap(), "l0\nl1\n".len());
+}
+
+/// Control turns the line-wise pair into value-wise ends, and the arrows into word
+/// motion. Plain Home and End keep their line scope in between.
+#[test]
+fn control_chords_move_by_word_and_to_the_value_ends() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("one two\nthree four").unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+
+    let ctrl = KeyModifiers::CONTROL;
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::End, ctrl));
+    assert_eq!(
+        doc.input_cursor(input).unwrap(),
+        "one two\nthree four".len()
+    );
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Home, ctrl));
+    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+
+    // Whitespace between words is skipped rather than counted as a word of its own.
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Right, ctrl));
+    assert_eq!(doc.input_cursor(input).unwrap(), "one ".len());
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Right, ctrl));
+    assert_eq!(doc.input_cursor(input).unwrap(), "one two\n".len());
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Left, ctrl));
+    assert_eq!(doc.input_cursor(input).unwrap(), "one ".len());
+}
+
+/// Ctrl+Up is not a binding, so it must not act like a plain Up — an unmatched chord
+/// falls through instead of being quietly widened to its unmodified form.
+#[test]
+fn an_unbound_control_chord_does_not_act_as_its_plain_key() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("ab\ncd").unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, "ab\nc".len()).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::with_modifiers(KeyCode::Up, KeyModifiers::CONTROL));
+
+    assert_eq!(doc.input_cursor(input).unwrap(), "ab\nc".len());
+}
+
 #[test]
 fn input_default_action_handles_enter_by_multiline_flag() {
     let doc = Document::new().unwrap();

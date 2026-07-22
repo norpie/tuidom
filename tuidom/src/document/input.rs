@@ -4,6 +4,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
+use crate::document::selection::display_to_value_offset;
 use crate::error::{Result, TuidomError};
 use crate::event::{InputEvent, KeyCode, KeyModifiers};
 use crate::id::NodeId;
@@ -80,6 +81,7 @@ impl Document {
             let state = input_state_mut(&mut data.kind, node)?;
             state.cursor = clamp_to_grapheme_boundary(&state.content, cursor);
             state.selection = None;
+            state.goal_column = None;
         }
         self.refresh_input_node(node)
     }
@@ -231,6 +233,7 @@ impl Document {
             };
             state.selection = normalize_selection(&state.content, low..high);
             state.cursor = clamp_to_grapheme_boundary(&state.content, focus);
+            state.goal_column = None;
         }
         self.refresh_input_node(node)
     }
@@ -259,6 +262,16 @@ impl Document {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<bool> {
+        let motion = motion_for_key(code, modifiers);
+
+        // Page motion sizes itself on the visible box, so it needs layout and a resolved
+        // style — both read here, above the node borrow. Resolving a style takes locks of
+        // its own, and doing that under a `get_mut` guard is the deadlock this repo's
+        // rule exists for.
+        let page_rows = matches!(motion, Some(Motion::PageUp | Motion::PageDown))
+            .then(|| self.input_page_rows(node))
+            .flatten();
+
         // An input measures on its content, so a value change is exactly what needs
         // relayout — and exactly what `on_input` reports. The two share one flag because
         // they are the same condition, not because they happen to coincide today.
@@ -276,48 +289,35 @@ impl Document {
             // letters from typing. Control and alt are what make a chord.
             let chorded = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
 
-            let handled = match code {
-                // A control chord arrives as its plain letter — ctrl+a is `Char('a')` with
-                // control held, not a control character — so without this guard every
-                // ctrl and alt chord would type its letter into the input.
-                KeyCode::Char(ch) if !ch.is_control() && !chorded => {
-                    replace_selection_or_insert(state, &ch.to_string());
-                    value_changed = true;
-                    true
-                }
-                KeyCode::Backspace => {
-                    value_changed = delete_selection_or_previous_grapheme(state);
-                    true
-                }
-                KeyCode::Delete => {
-                    value_changed = delete_selection_or_next_grapheme(state);
-                    true
-                }
-                KeyCode::Left => {
-                    move_cursor_left(state);
-                    true
-                }
-                KeyCode::Right => {
-                    move_cursor_right(state);
-                    true
-                }
-                KeyCode::Home => {
-                    move_cursor_to_line_start(state);
-                    true
-                }
-                KeyCode::End => {
-                    move_cursor_to_line_end(state);
-                    true
-                }
-                KeyCode::Up | KeyCode::Down => true,
-                KeyCode::Enter => {
-                    if state.multiline {
-                        replace_selection_or_insert(state, "\n");
+            let handled = if let Some(motion) = motion {
+                apply_motion(state, motion, page_rows)
+            } else {
+                match code {
+                    // A control chord arrives as its plain letter — ctrl+a is `Char('a')`
+                    // with control held, not a control character — so without this guard
+                    // every ctrl and alt chord would type its letter into the input.
+                    KeyCode::Char(ch) if !ch.is_control() && !chorded => {
+                        replace_selection_or_insert(state, &ch.to_string());
                         value_changed = true;
+                        true
                     }
-                    true
+                    KeyCode::Backspace => {
+                        value_changed = delete_selection_or_previous_grapheme(state);
+                        true
+                    }
+                    KeyCode::Delete => {
+                        value_changed = delete_selection_or_next_grapheme(state);
+                        true
+                    }
+                    KeyCode::Enter => {
+                        if state.multiline {
+                            replace_selection_or_insert(state, "\n");
+                            value_changed = true;
+                        }
+                        true
+                    }
+                    _ => false,
                 }
-                _ => false,
             };
 
             // Cloned inside the borrow, dispatched outside it: a handler is downstream
@@ -338,6 +338,17 @@ impl Document {
         }
 
         Ok(handled)
+    }
+
+    /// How many content rows one page motion covers in an input, per the last layout.
+    ///
+    /// One row of overlap is kept, so a page leaves a shared line to read against rather
+    /// than replacing the whole view. Returns `None` before the input has been laid out,
+    /// which makes page motion a no-op rather than a guess.
+    fn input_page_rows(&self, node: NodeId) -> Option<usize> {
+        let layout = self.get_node(node).and_then(|view| view.layout)?;
+        let content = layout.rect.content_rect(&self.resolved_style(node).ok()?);
+        Some(usize::from(content.height.saturating_sub(1)).max(1))
     }
 
     fn refresh_input_node(&self, node: NodeId) -> Result<()> {
@@ -370,6 +381,202 @@ impl Document {
         keep_cursor_visible(state, content.width, content.height);
         Ok(())
     }
+}
+
+/// A cursor movement an input binding asks for, independent of the key that asked.
+///
+/// Separating the request from the key is what keeps the binding table from having to
+/// spell out every motion twice once shift-extension arrives — the motion is the same
+/// either way, only what happens to the selection differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Motion {
+    /// One grapheme back.
+    Left,
+    /// One grapheme forward.
+    Right,
+    /// Start of the current line.
+    LineStart,
+    /// End of the current line.
+    LineEnd,
+    /// One display row up, holding the goal column. Multiline only.
+    LineUp,
+    /// One display row down, holding the goal column. Multiline only.
+    LineDown,
+    /// A visible page up, holding the goal column. Multiline only.
+    PageUp,
+    /// A visible page down, holding the goal column. Multiline only.
+    PageDown,
+    /// Start of the whole value.
+    ValueStart,
+    /// End of the whole value.
+    ValueEnd,
+    /// Start of the previous word.
+    WordLeft,
+    /// Start of the next word.
+    WordRight,
+}
+
+impl Motion {
+    /// Whether this motion moves between display rows, and so maintains the goal column.
+    fn is_vertical(self) -> bool {
+        matches!(
+            self,
+            Motion::LineUp | Motion::LineDown | Motion::PageUp | Motion::PageDown
+        )
+    }
+}
+
+/// The motion a key press asks an input for, if any.
+///
+/// Shift is masked off rather than matched: a terminal reports a capital as its uppercase
+/// char plus shift, and until shift means "extend the selection" it must not change which
+/// motion a key names. Control chords are matched exactly, so ctrl+up stays unbound and
+/// reaches focus navigation instead of silently acting like a plain up.
+fn motion_for_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Motion> {
+    let control = modifiers.contains(KeyModifiers::CONTROL);
+    if modifiers.contains(KeyModifiers::ALT) {
+        return None;
+    }
+
+    match (code, control) {
+        (KeyCode::Left, false) => Some(Motion::Left),
+        (KeyCode::Right, false) => Some(Motion::Right),
+        (KeyCode::Home, false) => Some(Motion::LineStart),
+        (KeyCode::End, false) => Some(Motion::LineEnd),
+        (KeyCode::Up, false) => Some(Motion::LineUp),
+        (KeyCode::Down, false) => Some(Motion::LineDown),
+        (KeyCode::PageUp, false) => Some(Motion::PageUp),
+        (KeyCode::PageDown, false) => Some(Motion::PageDown),
+        (KeyCode::Left, true) => Some(Motion::WordLeft),
+        (KeyCode::Right, true) => Some(Motion::WordRight),
+        (KeyCode::Home, true) => Some(Motion::ValueStart),
+        (KeyCode::End, true) => Some(Motion::ValueEnd),
+        _ => None,
+    }
+}
+
+/// Move an input's cursor, reporting whether the motion applied.
+///
+/// An unapplied motion is not handled, so the key falls through to the document's own
+/// default actions — which is how a single-line input lets up and down reach focus
+/// navigation instead of eating them.
+fn apply_motion(state: &mut InputState, motion: Motion, page_rows: Option<usize>) -> bool {
+    // A collapsed motion out of a selection lands on the selection's edge rather than
+    // moving from the cursor, matching how every editor leaves a selection.
+    if !motion.is_vertical()
+        && let Some(selection) = state.selection.clone()
+    {
+        let edge = match motion {
+            Motion::Left => Some(selection.start),
+            Motion::Right => Some(selection.end),
+            _ => None,
+        };
+        if let Some(edge) = edge {
+            state.selection = None;
+            state.goal_column = None;
+            state.cursor = edge;
+            return true;
+        }
+    }
+
+    let Some(target) = motion_target(state, motion, page_rows) else {
+        return false;
+    };
+
+    state.selection = None;
+    state.cursor = target;
+    if !motion.is_vertical() {
+        state.goal_column = None;
+    }
+    true
+}
+
+/// The byte offset a motion lands on, or `None` when it does not apply.
+///
+/// Vertical motions update the goal column as a side effect, since the column a run of
+/// them holds is established by the first one and has to outlive it.
+fn motion_target(
+    state: &mut InputState,
+    motion: Motion,
+    page_rows: Option<usize>,
+) -> Option<usize> {
+    // A motion that has run out of room lands where it is rather than declining, so the
+    // key stays handled and an arrow at the end of the value cannot fall through to focus
+    // navigation. Declining is reserved for motions that do not apply at all.
+    //
+    // An unmeasured input pages by a single row: the same degradation an editor makes
+    // before it knows its own height, and better than leaving the key unhandled.
+    let rows = page_rows
+        .and_then(|rows| i64::try_from(rows).ok())
+        .unwrap_or(1);
+
+    match motion {
+        Motion::Left => Some(previous_grapheme_boundary(&state.content, state.cursor).unwrap_or(0)),
+        Motion::Right => Some(
+            next_grapheme_boundary(&state.content, state.cursor).unwrap_or(state.content.len()),
+        ),
+        Motion::LineStart => Some(line_start(&state.content, state.cursor)),
+        Motion::LineEnd => Some(line_end(&state.content, state.cursor)),
+        Motion::ValueStart => Some(0),
+        Motion::ValueEnd => Some(state.content.len()),
+        Motion::WordLeft => Some(previous_word_boundary(&state.content, state.cursor)),
+        Motion::WordRight => Some(next_word_boundary(&state.content, state.cursor)),
+        Motion::LineUp => vertical_target(state, -1),
+        Motion::LineDown => vertical_target(state, 1),
+        Motion::PageUp => vertical_target(state, -rows),
+        Motion::PageDown => vertical_target(state, rows),
+    }
+}
+
+/// The offset `rows` display rows away, holding the goal column.
+///
+/// Single-line inputs have one row and so no vertical motion at all; they return `None`
+/// rather than clamping to the same offset, so the key stays unhandled.
+fn vertical_target(state: &mut InputState, rows: i64) -> Option<usize> {
+    if !state.multiline {
+        return None;
+    }
+
+    let display = crate::node::input_display_content(&state.content, true, state.mask);
+    let lines: Vec<&str> = display.split('\n').collect();
+    let position = input_cursor_position(state);
+
+    let target_line = i64::from(position.y).saturating_add(rows);
+    let target_line = target_line.clamp(0, (lines.len() as i64).saturating_sub(1)) as usize;
+    if target_line == usize::from(position.y) {
+        // Already on the edge row. Handled, but unmoved: a key does not chain to the
+        // container behind it the way a wheel does.
+        return Some(state.cursor);
+    }
+
+    let column = state.goal_column.unwrap_or(position.x);
+    state.goal_column = Some(column);
+
+    let line = lines.get(target_line)?;
+    let line_start: usize = lines.get(..target_line)?.iter().map(|l| l.len() + 1).sum();
+    Some(display_to_value_offset(
+        &state.content,
+        &display,
+        line_start + column_offset_in_line(line, column),
+    ))
+}
+
+/// The byte offset into a display line at `column` cells, clamped to the line's end.
+fn column_offset_in_line(line: &str, column: u16) -> usize {
+    let mut col = 0u16;
+    for (offset, grapheme) in line.grapheme_indices(true) {
+        let width = UnicodeWidthStr::width(grapheme).min(2) as u16;
+        if width == 0 {
+            continue;
+        }
+        // A wide glyph straddling the goal column counts as containing it, so a run of
+        // vertical motion cannot land between a glyph's two cells.
+        if column < col + width {
+            return offset;
+        }
+        col += width;
+    }
+    line.len()
 }
 
 fn input_state(kind: &NodeKind, node: NodeId) -> Result<&InputState> {
@@ -424,36 +631,6 @@ fn delete_selection_or_next_grapheme(state: &mut InputState) -> bool {
     state.content.replace_range(state.cursor..next, "");
     normalize_input_state(state);
     true
-}
-
-fn move_cursor_left(state: &mut InputState) {
-    if let Some(selection) = state.selection.take() {
-        state.cursor = selection.start;
-        return;
-    }
-    if let Some(previous) = previous_grapheme_boundary(&state.content, state.cursor) {
-        state.cursor = previous;
-    }
-}
-
-fn move_cursor_right(state: &mut InputState) {
-    if let Some(selection) = state.selection.take() {
-        state.cursor = selection.end;
-        return;
-    }
-    if let Some(next) = next_grapheme_boundary(&state.content, state.cursor) {
-        state.cursor = next;
-    }
-}
-
-fn move_cursor_to_line_start(state: &mut InputState) {
-    state.selection = None;
-    state.cursor = line_start(&state.content, state.cursor);
-}
-
-fn move_cursor_to_line_end(state: &mut InputState) {
-    state.selection = None;
-    state.cursor = line_end(&state.content, state.cursor);
 }
 
 fn keep_cursor_visible(state: &mut InputState, width: u16, height: u16) {
@@ -521,6 +698,10 @@ fn cursor_grapheme_width(suffix: &str, multiline: bool, mask: Option<char>) -> u
 }
 
 fn normalize_input_state(state: &mut InputState) {
+    // Every edit and every programmatic write funnels through here, and all of them end a
+    // run of vertical motion — the column the run was holding no longer describes content
+    // that still exists.
+    state.goal_column = None;
     state.cursor = clamp_to_grapheme_boundary(&state.content, state.cursor);
     if let Some(selection) = state.selection.take() {
         state.selection = normalize_selection(&state.content, selection);
@@ -573,6 +754,33 @@ fn next_grapheme_boundary(content: &str, cursor: usize) -> Option<usize> {
         .map(|(index, _)| index)
         .find(|index| *index > cursor)
         .or(Some(content.len()))
+}
+
+/// The start of the word before `cursor`, or 0.
+///
+/// Whitespace-only runs are skipped rather than treated as words, so a run of spaces
+/// between two words costs one press rather than two.
+fn previous_word_boundary(content: &str, cursor: usize) -> usize {
+    let cursor = clamp_to_grapheme_boundary(content, cursor);
+    content
+        .split_word_bound_indices()
+        .rfind(|(index, word)| *index < cursor && is_word_like(word))
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+/// The start of the word after `cursor`, or the end of the content.
+fn next_word_boundary(content: &str, cursor: usize) -> usize {
+    let cursor = clamp_to_grapheme_boundary(content, cursor);
+    content
+        .split_word_bound_indices()
+        .find(|(index, word)| *index > cursor && is_word_like(word))
+        .map(|(index, _)| index)
+        .unwrap_or(content.len())
+}
+
+fn is_word_like(word: &str) -> bool {
+    !word.chars().all(char::is_whitespace)
 }
 
 fn line_start(content: &str, cursor: usize) -> usize {

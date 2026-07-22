@@ -142,6 +142,12 @@ pub(crate) struct InputState {
     pub scroll_x: u16,
     /// Vertical scroll offset in terminal rows.
     pub scroll_y: u16,
+    /// Display column a run of vertical motion is trying to hold, in terminal cells.
+    ///
+    /// Set by the first vertical motion and cleared by anything else. Without it, moving
+    /// up through a short line would clamp the column and moving back down could not
+    /// recover it, so the cursor would walk leftward down the content.
+    pub goal_column: Option<u16>,
 }
 
 impl InputState {
@@ -157,6 +163,7 @@ impl InputState {
             mask: None,
             scroll_x: 0,
             scroll_y: 0,
+            goal_column: None,
         }
     }
 
