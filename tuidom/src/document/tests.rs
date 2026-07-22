@@ -5888,3 +5888,99 @@ fn popping_a_context_does_not_restore_focus_to_a_node_hidden_meanwhile() {
     doc.pop_focus_context().unwrap();
     assert_eq!(doc.focused(), None);
 }
+
+// -- Keyboard selection extension ---------------------------------------------
+
+/// Two stacked Text nodes on a 10×4 screen, so extension has both a within-node step
+/// and a node boundary to cross.
+fn selection_extension_setup() -> (Document, HeadlessRuntime) {
+    let doc = Document::new().unwrap();
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    doc.set_style(doc.root(), &column).unwrap();
+
+    for content in ["abcd", "efgh"] {
+        let text = doc.create_text(content).unwrap();
+        doc.append_child(doc.root(), text).unwrap();
+    }
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+    (doc, runtime)
+}
+
+/// Extend-only: with nothing selected there is no anchor to grow from, so the key is
+/// declined outright rather than inventing a starting point.
+#[test]
+fn shift_arrows_do_nothing_without_an_existing_selection() {
+    let (doc, mut runtime) = selection_extension_setup();
+    assert_eq!(doc.get_selection(), None);
+
+    runtime.simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT);
+    runtime.simulate_key_with_modifiers(KeyCode::Down, KeyModifiers::SHIFT);
+
+    assert_eq!(doc.get_selection(), None);
+}
+
+/// Horizontal extension steps by a grapheme and keeps going into the next Text node —
+/// a selection is a range in the document, not in one node.
+#[test]
+fn shift_right_extends_by_a_grapheme_and_crosses_into_the_next_node() {
+    let (doc, mut runtime) = selection_extension_setup();
+
+    runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+    runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+    assert_eq!(doc.get_selection().as_deref(), Some("ab"));
+
+    runtime.simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT);
+    assert_eq!(doc.get_selection().as_deref(), Some("abc"));
+
+    runtime.simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT);
+    runtime.simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT);
+    assert_eq!(doc.get_selection().as_deref(), Some("abcd"));
+
+    // Off the end of the first node: the next step lands in the second one.
+    runtime.simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT);
+    assert_eq!(doc.get_selection().as_deref(), Some("abcd\ne"));
+
+    // And shrinks back the same way, since the anchor never moved.
+    runtime.simulate_key_with_modifiers(KeyCode::Left, KeyModifiers::SHIFT);
+    assert_eq!(doc.get_selection().as_deref(), Some("abcd"));
+}
+
+/// Vertical extension re-snaps through the same screen-cell mapping a drag uses, so it
+/// lands on the column it started from.
+#[test]
+fn shift_down_extends_to_the_row_below() {
+    let (doc, mut runtime) = selection_extension_setup();
+
+    runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+    runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+    assert_eq!(doc.get_selection().as_deref(), Some("ab"));
+
+    runtime.simulate_key_with_modifiers(KeyCode::Down, KeyModifiers::SHIFT);
+    assert_eq!(doc.get_selection().as_deref(), Some("abcd\nef"));
+
+    runtime.simulate_key_with_modifiers(KeyCode::Up, KeyModifiers::SHIFT);
+    assert_eq!(doc.get_selection().as_deref(), Some("ab"));
+}
+
+/// A plain arrow is still focus navigation, and a control chord is unbound here rather
+/// than widened to its plain form.
+#[test]
+fn only_shifted_arrows_extend_a_selection() {
+    let (doc, mut runtime) = selection_extension_setup();
+
+    runtime.simulate_mouse_down(0, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+    runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+
+    runtime.simulate_key(KeyCode::Right);
+    assert_eq!(doc.get_selection().as_deref(), Some("ab"));
+
+    runtime
+        .simulate_key_with_modifiers(KeyCode::Right, KeyModifiers::SHIFT | KeyModifiers::CONTROL);
+    assert_eq!(doc.get_selection().as_deref(), Some("ab"));
+}

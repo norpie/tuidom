@@ -246,6 +246,12 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
         under it, so both endpoint cells are included
   - [x] A point on a non-text cell snaps to the nearest character in the boundary
   - [x] Selection survives scrolling (content-addressed) and is pruned on node removal
+  - [x] Keyboard extension: shift+arrows by a grapheme or a screen row, shift+page keys by
+        a document height, moving the focus end and leaving the anchor put
+    - [x] Extend-only — with nothing selected there is no anchor, and seeding one would
+          need a document caret, which the model cannot represent
+    - [x] Screen-based, so it reaches only text currently painted; it does not scroll to
+          reveal more
         and clamped on text content changes
 - [x] API:
   - [x] `doc.get_selection() -> Option<String>` — returns selected text in reading order

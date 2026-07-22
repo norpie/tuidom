@@ -238,6 +238,33 @@ leftward. And a *single-line* Input has no row to move to, so it declines Up and
 they reach focus navigation — which is what makes arrow keys move between the fields of a
 form. A multiline Input keeps them: Up on its first line stays put rather than jumping out.
 
+### Extending a selection from the keyboard
+
+Shift plus an arrow or a page key moves the selection's **focus** end, leaving its anchor
+where the drag put it:
+
+| Keys | Extends by |
+|---|---|
+| Shift+Left / Shift+Right | one grapheme, crossing into the neighbouring Text node at a node's edge |
+| Shift+Up / Shift+Down | one screen row, re-snapped through the same mapping a drag uses |
+| Shift+PageUp / Shift+PageDown | one document height, less a row |
+
+Two limits are deliberate, and both are worth knowing before you build on this.
+
+**It extends only.** With nothing selected, shift+arrow does nothing — there is no anchor
+to grow from, and the engine has no document caret to seed one. A collapsed selection is
+not representable here: `selection()` runs every pair through the end-extension that makes
+a drag's last cell inclusive, so an anchor equal to its focus means *one character
+selected*, not a caret. A keyboard-only path to a document selection would be a change to
+the model, not another binding.
+
+**It reaches only what is painted.** Vertical extension moves a screen row and re-snaps,
+so a row past the last visible one lands on the nearest painted line instead of scrolling
+to reveal more. Selecting beyond the viewport means scrolling there first.
+
+Inside an Input this does not apply: an Input is an implicit boundary and claims shift+arrow
+for [its own selection](#editing-an-input-from-the-keyboard) before the document sees it.
+
 ### `SelectionPoint` is content-addressed
 
 A **SelectionPoint** is a Text node plus a byte offset on a grapheme boundary — not a screen

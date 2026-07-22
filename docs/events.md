@@ -100,23 +100,24 @@ a document-level default action to suppress:
 
 | Event | Default action suppressed |
 |---|---|
-| key press | the Input edit, focus movement, and keyboard scrolling |
+| key press | the Input edit, selection extension, focus movement, and keyboard scrolling |
 | wheel | scrolling the nearest scrollable ancestor |
 | mouse down | starting a text selection, or grabbing a scrollbar |
 
 Everywhere else, there is nothing to prevent, and an API offering it would be a lie.
 
-### A key press has three defaults, in order
+### A key press has four defaults, in order
 
 They are tried in sequence, and the first one that claims the key ends it:
 
 ```
 1. the focused Input edits or moves its cursor
-2. focus movement (Tab, arrows, Esc)
-3. scrolling (PageUp/PageDown, Home/End)
+2. shift-extension of a document selection
+3. focus movement (Tab, arrows, Esc)
+4. scrolling (PageUp/PageDown, Home/End)
 ```
 
-The order is what keeps the three from colliding. A focused multiline Input consumes Home,
+The order is what keeps the four from colliding. A focused multiline Input consumes Home,
 End and the page keys itself, so a scroll container only ever sees them when the keyboard
 is not in an Input. And scrolling runs last, so if a rebinding makes the focus and scroll
 sets overlap, the established focus binding still wins.

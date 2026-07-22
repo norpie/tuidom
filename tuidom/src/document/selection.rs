@@ -8,7 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
 use crate::document::input::clamp_to_grapheme_boundary;
-use crate::event::SelectionChangeEvent;
+use crate::event::{KeyCode, KeyModifiers, SelectionChangeEvent};
 use crate::id::NodeId;
 use crate::lock;
 use crate::node::{NodeKind, NodeKindView};
@@ -287,6 +287,157 @@ impl Document {
             current = self.get_parent(node);
         }
         DragBoundary::Document(self.root())
+    }
+
+    /// Extend an existing document selection from the keyboard.
+    ///
+    /// Extend-only by design: with nothing selected there is no anchor to grow from, and
+    /// seeding one would need a document caret — a collapsed selection is unrepresentable
+    /// here, since [`Document::selection`] runs every pair through the same end-extension
+    /// that makes a drag's last cell inclusive.
+    ///
+    /// Returns whether the key was claimed, so an unclaimed one still reaches focus
+    /// navigation and scrolling.
+    pub(crate) fn apply_selection_default_action(
+        &self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> bool {
+        // Shift is what distinguishes extension from navigation. Control and alt chords
+        // are unbound rather than widened to their plain form.
+        if !modifiers.contains(KeyModifiers::SHIFT)
+            || modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return false;
+        }
+        // Copied out, so no selection lock is held while the change below dispatches to
+        // handlers that may read or clear the selection themselves.
+        let Some(state) = *lock::mutex(&self.inner.selection) else {
+            return false;
+        };
+
+        let focus = match code {
+            KeyCode::Left => self.horizontal_focus(&state, false),
+            KeyCode::Right => self.horizontal_focus(&state, true),
+            KeyCode::Up => self.vertical_focus(&state, -1),
+            KeyCode::Down => self.vertical_focus(&state, 1),
+            KeyCode::PageUp => self.vertical_focus(&state, -self.selection_page_rows()),
+            KeyCode::PageDown => self.vertical_focus(&state, self.selection_page_rows()),
+            _ => return false,
+        };
+
+        // Claimed but with nowhere to go: the selection is at the edge of its boundary.
+        // Still handled, so the key does not fall through to moving focus instead.
+        if let Some(focus) = focus {
+            self.set_selection_state(Some(SelectionState { focus, ..state }));
+        }
+        true
+    }
+
+    /// The focus point one grapheme along, crossing Text nodes at their edges.
+    fn horizontal_focus(&self, state: &SelectionState, forward: bool) -> Option<SelectionPoint> {
+        let content = self.text_content_of(state.focus.node)?;
+        let offset = clamp_to_grapheme_boundary(&content, state.focus.offset);
+
+        // `None` here means the offset is already at the node's edge, which is what sends
+        // the walk into the neighbouring node below.
+        let within = if forward {
+            content[offset..]
+                .graphemes(true)
+                .next()
+                .map(|grapheme| offset + grapheme.len())
+        } else {
+            content[..offset]
+                .grapheme_indices(true)
+                .next_back()
+                .map(|(index, _)| index)
+        };
+        if let Some(offset) = within {
+            return Some(SelectionPoint {
+                node: state.focus.node,
+                offset,
+            });
+        }
+
+        // At the node's edge, so the next position lives in the neighbouring Text node —
+        // a selection is a range in the document, not in one node.
+        let nodes = self.selectable_text_nodes(state.boundary);
+        let index = nodes.iter().position(|node| *node == state.focus.node)?;
+        let neighbour = if forward {
+            *nodes.get(index + 1)?
+        } else {
+            *nodes.get(index.checked_sub(1)?)?
+        };
+        let neighbour_content = self.text_content_of(neighbour)?;
+        Some(SelectionPoint {
+            node: neighbour,
+            offset: if forward { 0 } else { neighbour_content.len() },
+        })
+    }
+
+    /// The focus point `rows` screen rows away, re-snapped through the same mapping a
+    /// drag uses.
+    ///
+    /// Screen-based, so it reaches only text that is currently painted: a row beyond the
+    /// last visible one snaps back to the nearest painted line rather than scrolling to
+    /// reveal more.
+    fn vertical_focus(&self, state: &SelectionState, rows: i32) -> Option<SelectionPoint> {
+        let (x, y) = self.selection_point_cell(state.focus)?;
+        self.selection_point_at(x, y.saturating_add(rows), state.boundary)
+    }
+
+    /// How many rows one page of selection extension covers.
+    ///
+    /// The document's own height, less a row of overlap — a selection spans the screen
+    /// rather than any one container, so no container's scrollport is the right measure.
+    fn selection_page_rows(&self) -> i32 {
+        self.get_node(self.root())
+            .and_then(|view| view.layout)
+            .map(|layout| i32::from(layout.rect.height.saturating_sub(1)).max(1))
+            .unwrap_or(1)
+    }
+
+    /// The screen cell a selection point sits on, per the current layout.
+    ///
+    /// The inverse of [`Self::selection_point_at`], and the reason vertical extension can
+    /// reuse that snapping instead of needing its own geometry.
+    fn selection_point_cell(&self, point: SelectionPoint) -> Option<(i32, i32)> {
+        let entries = paint_order(self);
+        let entry = entries
+            .iter()
+            .find(|entry| entry.id == point.node && entry.scrollbar.is_none())?;
+        let NodeKindView::Text { content } = &entry.kind else {
+            return None;
+        };
+
+        let rect = entry.layout.content_rect(&entry.resolved);
+        let prefix = content.get(..point.offset.min(content.len()))?;
+        let line = prefix.matches('\n').count() as i32;
+        let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+        let column: i32 = prefix[line_start..]
+            .graphemes(true)
+            .map(|grapheme| unicode_width::UnicodeWidthStr::width(grapheme).min(2) as i32)
+            .sum();
+        Some((rect.x + column, rect.y + line))
+    }
+
+    /// Text nodes in `boundary`'s subtree in document order, skipping the ones a drag
+    /// would also skip: empty content, and anything inert or disabled.
+    fn selectable_text_nodes(&self, boundary: NodeId) -> Vec<NodeId> {
+        let mut nodes = Vec::new();
+        let mut stack = vec![boundary];
+        while let Some(node) = stack.pop() {
+            if self
+                .text_content_of(node)
+                .is_some_and(|content| !content.is_empty())
+                && !self.blocks_interaction(node)
+            {
+                nodes.push(node);
+            }
+            let children = self.get_children(node);
+            stack.extend(children.iter().rev());
+        }
+        nodes
     }
 
     /// Map a screen cell to the nearest character position within `boundary`.

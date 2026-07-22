@@ -152,8 +152,8 @@ A page is one scrollport height minus a row, so a page leaves a shared line to r
 against rather than replacing the whole view.
 
 Two differences from the wheel are worth knowing. Scrolling is the *last* of a key press's
-three default actions, so a focused Input consumes the page keys and Home/End before a
-container behind it can see them — see [default actions](events.md#a-key-press-has-three-defaults-in-order).
+four default actions, so a focused Input consumes the page keys and Home/End before a
+container behind it can see them — see [default actions](events.md#a-key-press-has-four-defaults-in-order).
 And where a wheel chains between containers, a key does not chain out of an Input: PageDown
 with the cursor already at the end of a multiline Input does nothing, rather than paging the
 container behind it.
