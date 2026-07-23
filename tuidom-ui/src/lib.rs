@@ -1,9 +1,10 @@
 //! `tuidom-ui` — the reactive layer built on top of the tuidom engine.
 //!
-//! This crate currently delivers the **signal runtime** (framework milestone F2): `Copy`,
-//! `Send + Sync` signal handles with automatic dependency tracking. Nothing here touches a
-//! `Document` — the runtime is a self-contained reactive graph, and the view layer that
-//! binds it to real nodes lands in a later milestone.
+//! Two layers live here. The **signal runtime** (framework milestone F2) is a self-contained
+//! reactive graph — `Copy`, `Send + Sync` signal handles with automatic dependency tracking —
+//! that touches no `Document`. The **view layer** (F3) binds that runtime to real engine
+//! nodes: a [`View`] mounts under a parent, its signal reads become subscriptions, and a
+//! change reruns only the affected binding.
 //!
 //! ```
 //! use tuidom_ui::{state, derived, effect, batch};
@@ -25,5 +26,7 @@
 
 mod lock;
 mod runtime;
+mod view;
 
 pub use runtime::{Derived, Scope, Signal, batch, derived, effect, state};
+pub use view::{Children, Element, Mounted, View, boxed, dyn_text, dynamic, fragment, mount, text};

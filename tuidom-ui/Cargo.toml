@@ -13,6 +13,7 @@ description = "Reactive signal runtime and view layer for tuidom"
 doctest = false
 
 [dependencies]
+tuidom = { path = "../tuidom" }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1.44"
 
