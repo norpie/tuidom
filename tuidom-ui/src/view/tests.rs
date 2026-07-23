@@ -871,3 +871,88 @@ fn view_macro_each_item_keeps_its_own_reactive_holes() {
     // Three item text nodes plus the block's anchor marker, all under the container box.
     assert_eq!(doc.get_children(container).len(), 4);
 }
+
+// ---- F5 step 1: component skeleton and signal-backed props ------------------------------
+
+/// A minimal component: one prop, read as a signal, painted through a text hole.
+#[crate::component]
+fn Labelled(n: i32) -> View {
+    // `n` is a `Signal<i32>` here — the macro wrapped the declared `i32`.
+    crate::view! { text(n.get()) }
+}
+
+/// A component whose body is a fragment, to prove instantiation adds no wrapper node.
+#[crate::component]
+fn TwoBits() -> View {
+    fragment([text("x"), text("y")])
+}
+
+/// A component owning internal state driven by a key handler, to prove the body runs under a
+/// live scope where effects and listeners work.
+#[crate::component]
+fn Counter(start: i32) -> View {
+    let count = state(start.get());
+    crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |ev| {
+                if ev.code == KeyCode::Char('+') {
+                    count.update(|c| *c += 1);
+                }
+            },
+            text(count.get()),
+        }
+    }
+}
+
+#[test]
+fn component_mounts_and_reads_a_prop_as_a_signal() {
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { Labelled { n: 7 } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "7");
+}
+
+#[test]
+fn component_adds_no_wrapper_node() {
+    // The body's two texts mount directly under the root — the component boundary is a
+    // fragment, not a phantom flex level.
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { TwoBits {} }).unwrap();
+
+    assert_eq!(doc.get_children(doc.root()).len(), 2);
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "xy");
+}
+
+#[test]
+fn component_unmount_disposes_its_child_scope() {
+    // The component runs under a child of the mount scope, so disposing the mount cascades to
+    // it: the subtree is removed and the body's signals freed.
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), crate::view! { Labelled { n: 1 } }).unwrap();
+    assert_eq!(doc.get_children(doc.root()).len(), 1);
+
+    mounted.unmount();
+    assert_eq!(doc.get_children(doc.root()).len(), 0);
+}
+
+#[test]
+fn component_body_owns_working_reactive_state() {
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), crate::view! { Counter { start: 0 } }).unwrap();
+    let node = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "0");
+
+    doc.focus(node).unwrap();
+    rt.simulate_key(KeyCode::Char('+'));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "1");
+}

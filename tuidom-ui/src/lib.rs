@@ -36,7 +36,11 @@ mod runtime;
 mod view;
 
 pub use runtime::{Derived, Scope, Signal, batch, derived, effect, state};
-pub use tuidom_ui_macros::view;
+// `component` names two things in two namespaces: the attribute macro (macro namespace) that
+// rewrites a component function, and the `view::component` value (below) it lowers to. They
+// coexist under one path — `#[component]` finds the macro, `component(..)` the function.
+pub use tuidom_ui_macros::{component, view};
 pub use view::{
-    Children, Element, Mounted, View, boxed, dyn_text, dynamic, fragment, input, mount, text,
+    Children, Element, Mounted, View, boxed, component, dyn_text, dynamic, fragment, input, mount,
+    text,
 };

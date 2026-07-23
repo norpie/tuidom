@@ -51,7 +51,14 @@ enum ViewKind {
     Text(TextView),
     Fragment(Vec<View>),
     Dynamic(DynamicView),
+    Component(ComponentBuild),
 }
+
+/// A component's deferred body. Unlike a [`DynamicView`]'s closure it runs exactly **once**,
+/// at mount, under the component's own child scope — so props flowing in as signals update the
+/// body's bindings without ever re-running it, and unmounting the component tears its signals,
+/// effects, and nodes down together. `FnOnce`, since the body is built a single time.
+type ComponentBuild = Box<dyn FnOnce() -> View + Send + Sync>;
 
 /// A text node description, static or reactive.
 struct TextView {
@@ -152,6 +159,25 @@ where
         kind: ViewKind::Dynamic(DynamicView {
             produce: Box::new(f),
         }),
+    }
+}
+
+/// A component instance: a body that runs once at mount, under its own child scope.
+///
+/// This is the primitive the `#[component]` macro lowers to. `build` runs when the component
+/// mounts, with a fresh child scope of the mount entered, so every signal and effect it creates
+/// is owned by that scope and freed when the component unmounts. It runs **once** — props arrive
+/// as signals, so a prop change reruns the affected binding rather than the whole body, and the
+/// component node keeps its identity (scroll offset, focus, running transitions) across it.
+///
+/// A component adds no wrapper node: its body's top-level nodes mount directly under the parent,
+/// exactly as a [`fragment`] would.
+pub fn component<F>(build: F) -> View
+where
+    F: FnOnce() -> View + Send + Sync + 'static,
+{
+    View {
+        kind: ViewKind::Component(Box::new(build)),
     }
 }
 
@@ -442,6 +468,15 @@ fn mount_view(
             });
 
             Ok(vec![marker])
+        }
+        ViewKind::Component(build) => {
+            // The body runs under a child of the mount scope, so its signals, effects, and
+            // nodes belong to `child` and are freed when the mount is disposed — the child is
+            // registered under `scope`, so disposal cascades without an explicit hook. Running
+            // `build` with `child` entered is what attaches the body's reactive state there;
+            // mounting the produced view under the same scope keeps its bindings owned there too.
+            let child = scope.child();
+            child.run(|| mount_view(doc, parent, before, build(), &child))
         }
     }
 }

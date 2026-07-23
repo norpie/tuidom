@@ -13,10 +13,12 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
-use syn::{Expr, ExprLit, Ident, Lit, LitStr, Pat, Token, braced, parenthesized};
+use syn::{
+    Expr, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, PatType, Token, braced, parenthesized,
+};
 
 /// Build a [`View`] from a Rust-like template.
 ///
@@ -77,6 +79,107 @@ pub fn view(input: TokenStream) -> TokenStream {
     quote! { ::tuidom_ui::View::from(#expr) }.into()
 }
 
+/// Turn a function into a reusable component.
+///
+/// A component is a `fn Name(props…) -> View` whose body builds a subtree. `#[component]`
+/// rewrites it into a props struct plus a constructor the [`view!`] macro instantiates when it
+/// sees the component by name — PascalCase dispatches to a component, lowercase (`box`, `input`,
+/// `text`) stays an engine element.
+///
+/// ```ignore
+/// # use tuidom_ui::{component, view, state};
+/// #[component]
+/// fn Counter(start: i32) -> View {
+///     // Each parameter arrives as a `Signal`: `start` is `Signal<i32>` inside the body.
+///     let count = state(start.get());
+///     view! {
+///         box {
+///             focusable: true,
+///             text(count.get()),
+///         }
+///     }
+/// }
+///
+/// // Instantiated in another template by name:
+/// let ui = view! { Counter { start: 0 } };
+/// ```
+///
+/// # Props are signals
+///
+/// Every parameter surfaces inside the body as a [`Signal`] of its declared type, not the plain
+/// value. This is deliberate: a later milestone keeps a component's layout mounted across prop
+/// changes rather than re-running its body, so a prop holding a plain value would render the one
+/// it was first given forever. As a signal, a prop change reruns only the bindings that read it.
+///
+/// [`view!`]: macro.view.html
+/// [`Signal`]: ../tuidom_ui/struct.Signal.html
+#[proc_macro_attribute]
+pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let func = syn::parse_macro_input!(item as ItemFn);
+    match expand_component(func) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Rewrite a component function into its props struct and a constructor taking that struct.
+///
+/// Each parameter `name: T` becomes a `Signal<T>` field on `NameProps` and a binding of the
+/// same name destructured at the top of the body, so the body reads props as signals. The body
+/// is otherwise untouched — this is a pure source transform, no reactivity analysis.
+fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
+    let sig = &func.sig;
+    if let Some(param) = sig.generics.params.first() {
+        return Err(syn::Error::new_spanned(
+            param,
+            "generic components are not supported yet",
+        ));
+    }
+
+    let attrs = &func.attrs;
+    let vis = &func.vis;
+    let name = &sig.ident;
+    let output = &sig.output;
+    let block = &func.block;
+    let props_name = format_ident!("{}Props", name);
+
+    let mut fields = Vec::new();
+    let mut binds = Vec::new();
+    for input in &sig.inputs {
+        let PatType { pat, ty, .. } = match input {
+            FnArg::Typed(typed) => typed,
+            FnArg::Receiver(recv) => {
+                return Err(syn::Error::new_spanned(
+                    recv,
+                    "a component cannot take `self`",
+                ));
+            }
+        };
+        let Pat::Ident(pat_ident) = pat.as_ref() else {
+            return Err(syn::Error::new_spanned(
+                pat,
+                "a component parameter must be a plain identifier",
+            ));
+        };
+        let ident = &pat_ident.ident;
+        fields.push(quote! { #vis #ident: ::tuidom_ui::Signal<#ty> });
+        binds.push(ident.clone());
+    }
+
+    Ok(quote! {
+        #vis struct #props_name {
+            #(#fields),*
+        }
+
+        #(#attrs)*
+        #[allow(non_snake_case)]
+        #vis fn #name(props: #props_name) #output {
+            let #props_name { #(#binds),* } = props;
+            #block
+        }
+    })
+}
+
 /// One node of a `view!` template.
 enum Node {
     /// An element by name with its attributes and static children, e.g. `box { text("x") }`.
@@ -95,6 +198,10 @@ enum Node {
     Match(Box<MatchNode>),
     /// An `each i, value in collection { … }` loop.
     Each(Box<EachNode>),
+    /// A component instance, e.g. `Counter { start: 0 }`. Dispatched from an element by the
+    /// name's case — PascalCase is a component. `props` reuse the `name: value` attribute
+    /// grammar; each becomes a field on the generated `NameProps` struct.
+    Component { name: Ident, props: Vec<Attr> },
 }
 
 /// One `key: value` attribute inside an element's braces.
@@ -175,10 +282,28 @@ impl Parse for Node {
                 "`else` here has no matching `if`",
             )),
             "each" => Ok(Node::Each(Box::new(parse_each(input)?))),
+            // PascalCase is a component instance; lowercase is an engine element. The case split
+            // is the Rust convention and needs no new sigil to tell `Counter {…}` from `box {…}`.
+            _ if is_pascal_case(&name) => {
+                let body;
+                braced!(body in input);
+                // Component props are not engine events, so `on_*` names are not validated here —
+                // a callback prop like `on_press` is legitimate (F5 step 5).
+                let (props, children) = parse_body(&body, false)?;
+                if !children.is_empty() {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!(
+                            "component `{name}` cannot take children yet; the `children` prop lands in F5 step 4"
+                        ),
+                    ));
+                }
+                Ok(Node::Component { name, props })
+            }
             _ => {
                 let body;
                 braced!(body in input);
-                let (attrs, children) = parse_body(&body)?;
+                let (attrs, children) = parse_body(&body, true)?;
                 Ok(Node::Element {
                     name,
                     attrs,
@@ -187,6 +312,15 @@ impl Parse for Node {
             }
         }
     }
+}
+
+/// Whether a name is PascalCase — its first character an ASCII uppercase letter. This is how
+/// `view!` tells a component instance from an engine element.
+fn is_pascal_case(name: &Ident) -> bool {
+    name.to_string()
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_uppercase())
 }
 
 /// Parse `if cond { … } [else …]`. The condition is parsed without eager brace consumption, so
@@ -278,7 +412,7 @@ fn parse_each(input: ParseStream) -> syn::Result<EachNode> {
 fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
     let body;
     braced!(body in input);
-    let (attrs, children) = parse_body(&body)?;
+    let (attrs, children) = parse_body(&body, true)?;
     if let Some(attr) = attrs.first() {
         return Err(syn::Error::new(
             attr.name.span(),
@@ -292,7 +426,7 @@ fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
 /// children. An `ident: value` entry is an attribute — detected by the colon as its second
 /// token, so the split holds whether or not the key is a keyword — and everything else is a
 /// child node.
-fn parse_body(body: ParseStream) -> syn::Result<(Vec<Attr>, Vec<Node>)> {
+fn parse_body(body: ParseStream, validate_events: bool) -> syn::Result<(Vec<Attr>, Vec<Node>)> {
     let mut attrs = Vec::new();
     let mut children = Vec::new();
     while !body.is_empty() {
@@ -301,9 +435,10 @@ fn parse_body(body: ParseStream) -> syn::Result<(Vec<Attr>, Vec<Node>)> {
             body.parse::<Token![:]>()?;
             let value: Expr = body.parse()?;
             // A misspelled event is a closure handed to a string-attribute setter otherwise —
-            // a confusing type error deep in expanded code. Catch it at the user's token.
+            // a confusing type error deep in expanded code. Catch it at the user's token. Only
+            // for elements: a component's `on_*` is a callback prop, not an engine event.
             let key = name.to_string();
-            if key.starts_with("on_") && !is_known_event(&key) {
+            if validate_events && key.starts_with("on_") && !is_known_event(&key) {
                 return Err(syn::Error::new(
                     name.span(),
                     format!(
@@ -356,6 +491,23 @@ impl Node {
                         ::std::iter::IntoIterator::into_iter(#collection)
                             .enumerate()
                             .map(move |(#index, #value)| #item)
+                    ))
+                }
+            }
+            Node::Component { name, props } => {
+                let props_name = format_ident!("{}Props", name);
+                // Each prop seeds a signal at mount (F4's static path). Reactive props — where
+                // the value tracks a parent signal — are step 2; today every value is seeded once.
+                let fields = props.iter().map(|attr| {
+                    let field = &attr.name;
+                    let value = &attr.value;
+                    quote! { #field: ::tuidom_ui::state(#value) }
+                });
+                // `component` defers the body to mount time under the component's own scope; the
+                // props struct is built there too, so the seeded signals belong to that scope.
+                quote! {
+                    ::tuidom_ui::component(move || ::tuidom_ui::View::from(
+                        #name(#props_name { #(#fields),* })
                     ))
                 }
             }
