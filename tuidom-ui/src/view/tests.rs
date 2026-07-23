@@ -1084,3 +1084,73 @@ fn component_required_props_can_be_supplied_in_any_order() {
     rt.render().unwrap();
     assert_eq!(row0(&rt, 2), "12");
 }
+
+// ---- F5 step 4: the `children` prop -----------------------------------------------------
+
+/// A container component: builds its own shell once and mounts caller-supplied children into it.
+/// `children.clone()` is the idiom — `Children` is `Arc`-backed and the hole closure must be `Fn`.
+#[crate::component]
+fn Panel(title: String, children: Children) -> View {
+    crate::view! {
+        box {
+            text(title.get()),
+            { children.clone() },
+        }
+    }
+}
+
+#[test]
+fn component_children_render_inside_the_container() {
+    let doc = Document::new().unwrap();
+    let view = crate::view! {
+        Panel {
+            title: String::from("T"),
+            text("a"),
+            text("b"),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    // Title, then the two children, laid out in a row: "Tab".
+    assert_eq!(row0(&rt, 3), "Tab");
+}
+
+#[test]
+fn component_children_swap_under_a_stable_panel_node() {
+    // The panel's shell is built once by the component primitive, so its box keeps identity while
+    // the children swap beneath it — the whole point of receiving children as a deferred thunk.
+    let doc = Document::new().unwrap();
+    let show = state(true);
+    let view = crate::view! {
+        Panel {
+            title: String::from("T"),
+            if show.get() { text("a") } else { text("b") },
+        }
+    };
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    let panel = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "Ta");
+
+    show.set(false);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "Tb");
+    // Same panel box across the child swap.
+    assert_eq!(doc.get_children(doc.root()), vec![panel]);
+}
+
+#[test]
+fn component_with_a_children_prop_but_none_supplied_is_empty() {
+    // No body nodes → the `children` setter is never called → the prop's empty default stands.
+    let doc = Document::new().unwrap();
+    let view = crate::view! { Panel { title: String::from("T") } };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "T");
+}

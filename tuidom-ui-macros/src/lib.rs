@@ -127,10 +127,11 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 struct PropSpec {
     /// The parameter name — the prop's field name and builder setter name.
     name: Ident,
-    /// The declared value type `T`; the field is `Signal<T>`.
-    ty: Type,
-    /// `None` for a required prop; `Some(expr)` for an optional one, holding the default *value*
-    /// expression (of type `T`) used when the call site omits it.
+    /// The full field type the prop is stored and set as: `Signal<T>` for an ordinary prop, or the
+    /// raw declared type for a special prop like `children: Children`.
+    field_ty: TokenStream2,
+    /// `None` for a required prop; `Some(value)` for an optional one, holding the full default of
+    /// type `field_ty` used when the call site omits it (already `state`-wrapped for signal props).
     default: Option<TokenStream2>,
 }
 
@@ -180,10 +181,24 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
                 "a component parameter must be a plain identifier",
             ));
         };
-        let default = parse_prop_default(param_attrs, ty)?;
+        // A `children` parameter is the deferred-child slot: stored raw as its declared type
+        // (a `Children`), always optional (empty when the call site supplies no children), and
+        // never signal-wrapped. Every other parameter is a signal prop.
+        let (field_ty, default) = if pat_ident.ident == "children" {
+            (
+                quote! { #ty },
+                Some(quote! { ::core::default::Default::default() }),
+            )
+        } else {
+            let value_default = parse_prop_default(param_attrs, ty)?;
+            (
+                quote! { ::tuidom_ui::Signal<#ty> },
+                value_default.map(|v| quote! { ::tuidom_ui::state(#v) }),
+            )
+        };
         props.push(PropSpec {
             name: pat_ident.ident.clone(),
-            ty: (**ty).clone(),
+            field_ty,
             default,
         });
     }
@@ -253,8 +268,8 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
 
     let struct_fields = props.iter().map(|p| {
         let n = &p.name;
-        let ty = &p.ty;
-        quote! { #n: ::tuidom_ui::Signal<#ty> }
+        let ty = &p.field_ty;
+        quote! { #n: #ty }
     });
 
     let required: Vec<&PropSpec> = props.iter().filter(|p| p.default.is_none()).collect();
@@ -271,8 +286,8 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
     let set_markers: Vec<TokenStream2> = required
         .iter()
         .map(|p| {
-            let ty = &p.ty;
-            quote! { (::tuidom_ui::Signal<#ty>,) }
+            let ty = &p.field_ty;
+            quote! { (#ty,) }
         })
         .collect();
 
@@ -297,8 +312,8 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
     });
     let opt_fields = optional.iter().map(|p| {
         let n = &p.name;
-        let ty = &p.ty;
-        quote! { #n: ::core::option::Option<::tuidom_ui::Signal<#ty>> }
+        let ty = &p.field_ty;
+        quote! { #n: ::core::option::Option<#ty> }
     });
 
     let req_init = required.iter().zip(&missing).map(|(p, m)| {
@@ -312,9 +327,9 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
 
     let opt_setters = optional.iter().map(|p| {
         let n = &p.name;
-        let ty = &p.ty;
+        let ty = &p.field_ty;
         quote! {
-            #vis fn #n(mut self, value: ::tuidom_ui::Signal<#ty>) -> Self {
+            #vis fn #n(mut self, value: #ty) -> Self {
                 self.#n = ::core::option::Option::Some(value);
                 self
             }
@@ -326,7 +341,7 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
     let req_setters = (0..required.len()).map(|j| {
         let p = required[j];
         let n = &p.name;
-        let ty = &p.ty;
+        let ty = &p.field_ty;
 
         let impl_gen = angle(
             &gens
@@ -375,7 +390,7 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
 
         quote! {
             impl #impl_gen #builder_name #self_ty {
-                #vis fn #n(self, value: ::tuidom_ui::Signal<#ty>) -> #builder_name #ret_ty {
+                #vis fn #n(self, value: #ty) -> #builder_name #ret_ty {
                     #builder_name {
                         #n: (value,),
                         #(#carry_req,)*
@@ -393,7 +408,7 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
     let build_opt = optional.iter().map(|p| {
         let n = &p.name;
         let default = p.default.as_ref().expect("optional prop has a default");
-        quote! { #n: self.#n.unwrap_or_else(|| ::tuidom_ui::state(#default)) }
+        quote! { #n: self.#n.unwrap_or_else(|| #default) }
     });
 
     let marker_defs = missing.iter().map(|m| {
@@ -462,8 +477,13 @@ enum Node {
     Each(Box<EachNode>),
     /// A component instance, e.g. `Counter { start: 0 }`. Dispatched from an element by the
     /// name's case — PascalCase is a component. `props` reuse the `name: value` attribute
-    /// grammar; each becomes a field on the generated `NameProps` struct.
-    Component { name: Ident, props: Vec<Attr> },
+    /// grammar; each becomes a field on the generated `NameProps` struct. `children` are the body
+    /// nodes, passed to the component's `children: Children` prop as a deferred thunk.
+    Component {
+        name: Ident,
+        props: Vec<Attr>,
+        children: Vec<Node>,
+    },
 }
 
 /// One `key: value` attribute inside an element's braces.
@@ -552,15 +572,20 @@ impl Parse for Node {
                 // Component props are not engine events, so `on_*` names are not validated here —
                 // a callback prop like `on_press` is legitimate (F5 step 5).
                 let (props, children) = parse_body(&body, false)?;
-                if !children.is_empty() {
+                // Children are passed as body nodes, which the lowering hands to the `children`
+                // prop. A `children:` attribute would be the same thing spelled two ways, so reject
+                // it rather than let both paths fight over the one slot.
+                if let Some(attr) = props.iter().find(|a| a.name == "children") {
                     return Err(syn::Error::new(
-                        name.span(),
-                        format!(
-                            "component `{name}` cannot take children yet; the `children` prop lands in F5 step 4"
-                        ),
+                        attr.name.span(),
+                        "pass children as body nodes (`Comp { child, … }`), not a `children:` attribute",
                     ));
                 }
-                Ok(Node::Component { name, props })
+                Ok(Node::Component {
+                    name,
+                    props,
+                    children,
+                })
             }
             _ => {
                 let body;
@@ -756,7 +781,11 @@ impl Node {
                     ))
                 }
             }
-            Node::Component { name, props } => {
+            Node::Component {
+                name,
+                props,
+                children,
+            } => {
                 let props_name = format_ident!("{}Props", name);
                 // Each supplied prop becomes a builder setter call; `build` fills omitted optional
                 // props and refuses (at compile time) a missing required one. An unknown prop is a
@@ -766,12 +795,22 @@ impl Node {
                     let init = prop_init(attr);
                     quote! { .#field(#init) }
                 });
+                // Body nodes feed the `children` prop as a deferred, re-runnable thunk. Absent
+                // children leave the setter uncalled, so the component's `children` default (empty)
+                // stands; children given to a component with no `children` prop are a `.children`
+                // call to a setter that does not exist — a compile error at the call site.
+                let children_setter = if children.is_empty() {
+                    quote! {}
+                } else {
+                    let body = child_list_to_view(children);
+                    quote! { .children(::tuidom_ui::Children::new(move || #body)) }
+                };
                 // `component` defers the body to mount time under the component's own scope; the
                 // builder — every prop signal and any syncing effect — runs there too, so it all
                 // belongs to that scope and is freed when the component unmounts.
                 quote! {
                     ::tuidom_ui::component(move || ::tuidom_ui::View::from(
-                        #name(#props_name::builder() #(#setters)* .build())
+                        #name(#props_name::builder() #(#setters)* #children_setter .build())
                     ))
                 }
             }

@@ -187,8 +187,11 @@ where
 /// when the parent is built — the framework calls it at mount time, and again when a signal
 /// it reads changes. So a container's own body is built once while its children swap beneath
 /// it, and the container node keeps its identity (and thus its scroll offset, focus, and
-/// running transitions) across the swap. This is the shape F5 components will receive
-/// children in.
+/// running transitions) across the swap. This is the shape a `#[component]` receives a
+/// `children: Children` prop in.
+///
+/// Cheap to clone (an `Arc` bump), so a component body places it with `{ children.clone() }`.
+#[derive(Clone)]
 pub struct Children(Arc<dyn Fn() -> View + Send + Sync>);
 
 impl Children {
@@ -198,6 +201,13 @@ impl Children {
         F: Fn() -> View + Send + Sync + 'static,
     {
         Children(Arc::new(thunk))
+    }
+}
+
+/// Empty children — a component's `children` prop when the call site supplies none.
+impl Default for Children {
+    fn default() -> Self {
+        Children::new(|| fragment(Vec::<View>::new()))
     }
 }
 
