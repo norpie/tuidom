@@ -16,7 +16,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
-use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
+use syn::{Expr, ExprLit, Ident, Lit, LitStr, Token, braced, parenthesized};
 
 /// Build a [`View`] from a Rust-like template.
 ///
@@ -25,8 +25,12 @@ use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
 ///
 /// let ui = view! {
 ///     box {
+///         focusable: true,
+///         style: style!{ padding: 1 },
+///         on_click: move |_| count.update(|n| *n += 1),
+///
 ///         text("Count:"),
-///         box { "nested" },
+///         text(count.get()),
 ///     }
 /// };
 /// ```
@@ -34,9 +38,10 @@ use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
 /// The macro emits absolute `::tuidom_ui::…` paths, so the crate must be reachable under that
 /// name — which it is for downstream users, and in-crate via `extern crate self as tuidom_ui`.
 ///
-/// This is step 2: the static element skeleton — `box`/`input` elements, nesting, `text(..)`,
-/// and bare string-literal children. Attributes, events, and control flow arrive in later F4
-/// steps and are rejected here with an error pointing at the offending token.
+/// The one dispatch rule is **literal-vs-expression**: a literal value is applied once and
+/// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). Control
+/// flow (`if` / `match` / `each`) and reactive view holes (`{ expr }`) are rejected here with a
+/// span-pointing error naming the F4 step that introduces them.
 ///
 /// [`View`]: ../tuidom_ui/struct.View.html
 #[proc_macro]
@@ -48,10 +53,20 @@ pub fn view(input: TokenStream) -> TokenStream {
 
 /// One node of a `view!` template.
 enum Node {
-    /// An element by name with its static children, e.g. `box { text("x") }`.
-    Element { name: Ident, children: Vec<Node> },
+    /// An element by name with its attributes and static children, e.g. `box { text("x") }`.
+    Element {
+        name: Ident,
+        attrs: Vec<Attr>,
+        children: Vec<Node>,
+    },
     /// A text node: `text(expr)`, or a bare string-literal child.
     Text(Expr),
+}
+
+/// One `key: value` attribute inside an element's braces.
+struct Attr {
+    name: Ident,
+    value: Expr,
 }
 
 impl Parse for Node {
@@ -84,45 +99,161 @@ impl Parse for Node {
             _ => {
                 let body;
                 braced!(body in input);
-                let children = parse_children(&body)?;
-                Ok(Node::Element { name, children })
+                let (attrs, children) = parse_body(&body)?;
+                Ok(Node::Element {
+                    name,
+                    attrs,
+                    children,
+                })
             }
         }
     }
 }
 
-/// Parse the comma-separated entries inside an element's braces.
-///
-/// Every entry is a static child for now; an `ident: value` attribute is detected by the
-/// colon and rejected with a step-3 pointer rather than mis-parsed as an element.
-fn parse_children(body: ParseStream) -> syn::Result<Vec<Node>> {
+/// Parse the comma-separated entries inside an element's braces into its attributes and its
+/// children. An `ident: value` entry is an attribute — detected by the colon as its second
+/// token, so the split holds whether or not the key is a keyword — and everything else is a
+/// child node.
+fn parse_body(body: ParseStream) -> syn::Result<(Vec<Attr>, Vec<Node>)> {
+    let mut attrs = Vec::new();
     let mut children = Vec::new();
     while !body.is_empty() {
-        // An attribute is `key: value`; a child never has a colon as its second token, so the
-        // colon is what tells the two apart without caring whether `key` is a keyword.
         if body.peek2(Token![:]) {
-            return Err(body.error("attributes and events arrive in F4 step 3"));
+            let name = body.call(Ident::parse_any)?;
+            body.parse::<Token![:]>()?;
+            let value: Expr = body.parse()?;
+            // A misspelled event is a closure handed to a string-attribute setter otherwise —
+            // a confusing type error deep in expanded code. Catch it at the user's token.
+            let key = name.to_string();
+            if key.starts_with("on_") && !is_known_event(&key) {
+                return Err(syn::Error::new(
+                    name.span(),
+                    format!(
+                        "unknown event handler `{key}`; F3 exposes `on_click` and `on_key_press`"
+                    ),
+                ));
+            }
+            attrs.push(Attr { name, value });
+        } else {
+            children.push(body.parse()?);
         }
-        children.push(body.parse()?);
         if body.is_empty() {
             break;
         }
         body.parse::<Token![,]>()?;
     }
-    Ok(children)
+    Ok((attrs, children))
+}
+
+/// The event attributes F3's `Element` exposes. Widening this set is mechanical as the view
+/// layer grows more `on_*` setters.
+fn is_known_event(name: &str) -> bool {
+    matches!(name, "on_click" | "on_key_press")
 }
 
 impl Node {
     fn expand(&self) -> TokenStream2 {
         match self {
-            Node::Text(expr) => quote! { ::tuidom_ui::text(#expr) },
-            Node::Element { name, children } => {
+            Node::Text(expr) => text_node(expr),
+            Node::Element {
+                name,
+                attrs,
+                children,
+            } => {
                 let ctor = element_ctor(name);
-                let children = children.iter().map(Node::expand);
-                quote! { #ctor #( .child(#children) )* }
+                let attrs = attrs.iter().map(Attr::expand);
+                let children = children.iter().map(|child| {
+                    let view = child.expand();
+                    quote! { .child(#view) }
+                });
+                quote! { #ctor #(#attrs)* #(#children)* }
             }
         }
     }
+}
+
+/// Lower a text node. A string literal is a static [`text`] node; any other expression is a
+/// reactive text hole, updated in place through `dyn_text` — stringified through `Display` so a
+/// non-`String` value (an integer, a `&str`) drops in without ceremony.
+fn text_node(expr: &Expr) -> TokenStream2 {
+    if is_str_literal(expr) {
+        quote! { ::tuidom_ui::text(#expr) }
+    } else {
+        quote! { ::tuidom_ui::dyn_text(move || ::std::string::ToString::to_string(&(#expr))) }
+    }
+}
+
+impl Attr {
+    fn expand(&self) -> TokenStream2 {
+        let name = &self.name;
+        let value = &self.value;
+        let key = name.to_string();
+        match key.as_str() {
+            // A `Style` is never a literal, so `style` is always a reactive whole-`Style` swap —
+            // the engine animates the diff. A signal-free value (an inline `style!`) just runs
+            // its effect once, which is the accepted cost of the literal-only static split.
+            "style" => quote! { .dyn_style(move || #value) },
+            "focusable" => {
+                if is_bool_literal(value) {
+                    quote! { .focusable(#value) }
+                } else {
+                    quote! { .dyn_focusable(move || #value) }
+                }
+            }
+            "on_click" | "on_key_press" => {
+                let handler = event_handler(value);
+                quote! { .#name(#handler) }
+            }
+            // Any other key is a raw string attribute: a string literal is static, anything else
+            // binds reactively and is stringified through `Display`.
+            other => {
+                if is_str_literal(value) {
+                    quote! { .attr(#other, #value) }
+                } else {
+                    quote! {
+                        .dyn_attr(#other, move || ::std::string::ToString::to_string(&(#value)))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Rebuild an event handler, wrapping a zero-argument closure (`|| …`) so it takes the ignored
+/// event argument the engine listener requires (`|_| …`). Any other expression — a one-argument
+/// closure, a function path — passes through untouched.
+fn event_handler(value: &Expr) -> TokenStream2 {
+    if let Expr::Closure(closure) = value
+        && closure.inputs.is_empty()
+    {
+        let mut closure = closure.clone();
+        closure.inputs.push(syn::Pat::Wild(syn::PatWild {
+            attrs: Vec::new(),
+            underscore_token: Default::default(),
+        }));
+        return quote! { #closure };
+    }
+    quote! { #value }
+}
+
+fn is_str_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_),
+            ..
+        })
+    )
+}
+
+fn is_bool_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Lit(ExprLit {
+            lit: Lit::Bool(_),
+            ..
+        })
+    )
 }
 
 /// Map an element name to its `tuidom-ui` constructor.

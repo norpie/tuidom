@@ -460,3 +460,146 @@ fn view_macro_mounts_an_input_element() {
     assert_eq!(doc.input_value(node).unwrap(), "");
     assert!(doc.is_focusable(node).unwrap()); // inputs are focusable by default
 }
+
+// ---- F4 step 3: attributes, events, and reactive text holes -----------------------------
+
+#[test]
+fn view_macro_literal_attr_is_static() {
+    // A literal attribute value applies once, no effect — `focusable: true`.
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), crate::view! { box { focusable: true } }).unwrap();
+    let node = mounted.roots()[0];
+
+    assert!(doc.is_focusable(node).unwrap());
+}
+
+#[test]
+fn view_macro_text_hole_tracks_its_signal() {
+    // `text(expr)` with a non-string, non-literal argument is a reactive hole: it stringifies
+    // through `Display` and repaints on change, unlike the static `text("literal")` form.
+    let doc = Document::new().unwrap();
+    let n = state(0i64);
+    let _mounted = mount(&doc, doc.root(), crate::view! { text(n.get()) }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "0");
+
+    n.set(5);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "5");
+}
+
+#[test]
+fn view_macro_text_hole_does_not_reapply_a_sibling_style_hole() {
+    // The load-bearing granularity test, written through the macro: a reactive style attribute
+    // and a reactive-text sibling are separate effects. Changing the text signal must repaint
+    // the text without re-evaluating the style — emergent coupling here is what silently resets
+    // scroll, focus, and running transitions.
+    let doc = Document::new().unwrap();
+    let label = state(String::from("a"));
+    let bg = state(0i64);
+    let style_runs = Arc::new(AtomicUsize::new(0));
+
+    let sr = style_runs.clone();
+    let view = crate::view! {
+        box {
+            style: {
+                sr.fetch_add(1, Ordering::SeqCst);
+                let _ = bg.get(); // the style hole's only dependency
+                Style::new()
+            },
+            text(label.get()),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "a");
+    assert_eq!(style_runs.load(Ordering::SeqCst), 1); // ran once at mount
+
+    label.set(String::from("b")); // text dep only
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "b"); // text repainted
+    assert_eq!(style_runs.load(Ordering::SeqCst), 1); // style untouched
+
+    bg.set(1); // style dep
+    assert_eq!(style_runs.load(Ordering::SeqCst), 2); // style reran
+}
+
+#[test]
+fn view_macro_wraps_a_zero_arg_event_closure() {
+    // `on_click: move || …` has no room for the event argument the engine listener requires;
+    // the macro wraps it to `move |_| …`. The style attribute (a helper-fn value, hence a
+    // reactive hole) sizes the box so the click can land.
+    let doc = Document::new().unwrap();
+    let clicks = Arc::new(AtomicUsize::new(0));
+
+    let c = clicks.clone();
+    let view = crate::view! {
+        box {
+            style: sized_box_style(),
+            on_click: move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            },
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    rt.simulate_click(0, 0);
+
+    assert_eq!(clicks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn view_macro_composes_an_inline_style_macro() {
+    // The explicit step-3 deliverable: an engine `style!{ … }` drops straight into a `style`
+    // attribute. It sizes the box, which a click landing on cell (0,0) confirms was applied.
+    let doc = Document::new().unwrap();
+    let clicks = Arc::new(AtomicUsize::new(0));
+
+    let c = clicks.clone();
+    let view = crate::view! {
+        box {
+            style: tuidom::style!{ width: 4, height: 1 },
+            on_click: move |_| { c.fetch_add(1, Ordering::SeqCst); },
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    rt.simulate_click(0, 0);
+
+    assert_eq!(clicks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn view_macro_key_handler_with_event_arg_drives_a_signal() {
+    // A one-argument handler (`move |_ev| …`) passes through untouched, and its in-listener
+    // write flushes inline so the bound text is current on the next frame.
+    let doc = Document::new().unwrap();
+    let count = state(0i64);
+
+    let view = crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |_ev| count.update(|n| *n += 1),
+            text(count.get()),
+        }
+    };
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    let node = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "0");
+
+    doc.focus(node).unwrap();
+    rt.simulate_key(KeyCode::Char('x'));
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "1");
+}
