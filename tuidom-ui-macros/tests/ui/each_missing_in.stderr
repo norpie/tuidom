@@ -1,0 +1,5 @@
+error: expected `in`
+ --> tests/ui/each_missing_in.rs:5:22
+  |
+5 |         each i, item [1, 2, 3] { text(item) }
+  |                      ^

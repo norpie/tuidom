@@ -1,0 +1,5 @@
+error: an attribute has no element to attach to inside a control-flow block
+ --> tests/ui/attr_in_control_flow.rs:5:19
+  |
+5 |         if true { focusable: true }
+  |                   ^^^^^^^^^

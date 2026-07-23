@@ -1,0 +1,5 @@
+error: unknown event handler `on_scroll`; F3 exposes `on_click` and `on_key_press`
+ --> tests/ui/unknown_event.rs:5:15
+  |
+5 |         box { on_scroll: move |_| {} }
+  |               ^^^^^^^^^

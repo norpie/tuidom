@@ -20,31 +20,54 @@ use syn::{Expr, ExprLit, Ident, Lit, LitStr, Pat, Token, braced, parenthesized};
 
 /// Build a [`View`] from a Rust-like template.
 ///
+/// The canonical counter — a focusable box, a key handler that mutates a signal, and a reactive
+/// text hole reflecting it:
+///
 /// ```ignore
 /// use tuidom_ui::view;
+/// use tuidom::event::KeyCode;
 ///
+/// let count = state(0i64);
 /// let ui = view! {
 ///     box {
 ///         focusable: true,
-///         style: style!{ padding: 1 },
-///         on_click: move |_| count.update(|n| *n += 1),
+///         on_key_press: move |ev| match ev.code {
+///             KeyCode::Char('+') => count.update(|n| *n += 1),
+///             KeyCode::Char('-') => count.update(|n| *n -= 1),
+///             _ => {}
+///         },
 ///
-///         text("Count:"),
+///         text("count: "),
 ///         text(count.get()),
-///         if count.get() > 9 { text("!") },
 ///     }
 /// };
 /// ```
+///
+/// # Grammar
+///
+/// - **Elements** — `box { … }` and `input { … }`. Braces hold a comma-separated mix of
+///   attributes and children; a nested element or `text(..)` is a child.
+/// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
+///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
+/// - **Attributes** — `key: value`. `style:` binds the whole `Style`; `focusable:` takes a
+///   bool; `on_click:` / `on_key_press:` take a `|ev| …` or `|| …` closure; any other key is a
+///   string attribute. A literal value is applied once; anything else binds reactively.
+/// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
+///   `{ fragment(iter) }`).
+/// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
+///   `each i, value in collection [key = …] { … }` (`_` for an unwanted binding).
+///
+/// # How it lowers
 ///
 /// The macro emits absolute `::tuidom_ui::…` paths, so the crate must be reachable under that
 /// name — which it is for downstream users, and in-crate via `extern crate self as tuidom_ui`.
 ///
 /// The one dispatch rule is **literal-vs-expression**: a literal value is applied once and
 /// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). Control
-/// flow (`if` / `match` / `each`) and reactive view holes (`{ expr }`) each lower to a single
-/// `dynamic` block, so a change to a condition or collection re-runs only that block and never
-/// its siblings. `each i, value in collection { … }` rebuilds the whole list on change in F4;
-/// keyed, identity-preserving reconciliation is F6, behind the same syntax.
+/// flow and reactive view holes each lower to a single `dynamic` block, so a change to a
+/// condition or collection re-runs only that block and never its siblings. `each` rebuilds the
+/// whole list on change in F4; keyed, identity-preserving reconciliation is F6, behind the same
+/// syntax, and `key` already parses today as a no-op.
 ///
 /// [`View`]: ../tuidom_ui/struct.View.html
 #[proc_macro]

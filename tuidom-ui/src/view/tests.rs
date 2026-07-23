@@ -756,6 +756,47 @@ fn tick_and(counter: &AtomicUsize, flag: crate::Signal<bool>) -> bool {
     flag.get()
 }
 
+// ---- F4 step 6: the worked counter example ----------------------------------------------
+
+#[test]
+fn view_macro_counter_worked_example() {
+    // The canonical counter, written entirely in `view!`: a focusable box, a key handler that
+    // mutates a signal, and a reactive text hole that reflects it. This is the example the
+    // macro docs show; it lives here as a test so the doc stays true.
+    let doc = Document::new().unwrap();
+    let count = state(0i64);
+
+    let view = crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |ev| match ev.code {
+                KeyCode::Char('+') => count.update(|n| *n += 1),
+                KeyCode::Char('-') => count.update(|n| *n -= 1),
+                _ => {}
+            },
+
+            text("count: "),
+            text(count.get()),
+        }
+    };
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    let node = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 20, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 8), "count: 0");
+
+    doc.focus(node).unwrap();
+    rt.simulate_key(KeyCode::Char('+'));
+    rt.simulate_key(KeyCode::Char('+'));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 8), "count: 2");
+
+    rt.simulate_key(KeyCode::Char('-'));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 8), "count: 1");
+}
+
 // ---- F4 step 5: `each` ------------------------------------------------------------------
 
 #[test]

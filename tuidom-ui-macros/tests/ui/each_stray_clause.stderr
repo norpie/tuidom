@@ -1,0 +1,5 @@
+error: expected `key = …` or the item block `{ … }` after the `each` collection
+ --> tests/ui/each_stray_clause.rs:5:35
+  |
+5 |         each i, item in [1, 2, 3] nope { text(item) }
+  |                                   ^^^^

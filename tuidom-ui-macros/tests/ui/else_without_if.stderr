@@ -1,0 +1,5 @@
+error: `else` here has no matching `if`
+ --> tests/ui/else_without_if.rs:5:9
+  |
+5 |         else { text("x") }
+  |         ^^^^

@@ -6,6 +6,9 @@
 //! nodes: a [`View`] mounts under a parent, its signal reads become subscriptions, and a
 //! change reruns only the affected binding.
 //!
+//! On top of both sits the [`view!`] macro (F4), a Rust-like template that lowers to the view
+//! layer's builder calls — see its own docs for the grammar and a worked counter.
+//!
 //! ```
 //! use tuidom_ui::{state, derived, effect, batch};
 //!
