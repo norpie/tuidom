@@ -1,0 +1,21 @@
+[package]
+name = "tuidom-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Reactive signal runtime and view layer for tuidom"
+
+[lib]
+# Per docs/STYLE.md the crate carries no doc tests; examples in doc comments illustrate,
+# they are not the verification path. Tests live in-crate next to the code.
+doctest = false
+
+[dependencies]
+tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "macros", "time"] }
+tracing-subscriber = "0.3.23"

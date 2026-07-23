@@ -43,6 +43,8 @@ tuidom/
 tuidom-macros/  proc macros usable against the engine alone — today, `style!`
   src/style/          property table, value sugar, expansion
   tests/ui/           trybuild compile-fail cases for the macro's own diagnostics
+tuidom-ui/      reactive layer on the engine — today, the signal runtime (framework F2)
+  src/runtime/        arena, Signal/Derived/effect, push-dirty flush, scopes; DOM-free
 docs/           guides, glossary, features, style
 .plans/         plans + roadmaps (gitignored)
 ```
