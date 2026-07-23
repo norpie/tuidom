@@ -956,3 +956,55 @@ fn component_body_owns_working_reactive_state() {
     rt.render().unwrap();
     assert_eq!(row0(&rt, 1), "1");
 }
+
+// ---- F5 step 2: reactive props ----------------------------------------------------------
+
+#[test]
+fn component_reactive_prop_tracks_the_parent_signal() {
+    // A non-literal prop value (`source.get()`) is kept synced to the parent signal by an
+    // effect, so changing the parent updates the child's bound text.
+    let doc = Document::new().unwrap();
+    let source = state(3i32);
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { Labelled { n: source.get() } },
+    )
+    .unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "3");
+
+    source.set(8);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "8");
+}
+
+#[test]
+fn component_reactive_prop_does_not_rerun_the_body() {
+    // The load-bearing property: a prop change flows through the prop signal to the body's
+    // binding, without re-running the body. If the body re-ran, its text node would be a fresh
+    // one; instead the *same* node is patched in place. Node identity is the proof.
+    let doc = Document::new().unwrap();
+    let source = state(1i32);
+    let mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { Labelled { n: source.get() } },
+    )
+    .unwrap();
+    let node = mounted.roots()[0];
+    assert_eq!(doc.get_children(doc.root()), vec![node]);
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "1");
+
+    source.set(9);
+    rt.render().unwrap();
+
+    // Same single node, its content updated — the body was not rebuilt.
+    assert_eq!(doc.get_children(doc.root()), vec![node]);
+    assert_eq!(row0(&rt, 1), "9");
+}

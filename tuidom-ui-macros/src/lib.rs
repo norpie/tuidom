@@ -496,15 +496,10 @@ impl Node {
             }
             Node::Component { name, props } => {
                 let props_name = format_ident!("{}Props", name);
-                // Each prop seeds a signal at mount (F4's static path). Reactive props — where
-                // the value tracks a parent signal — are step 2; today every value is seeded once.
-                let fields = props.iter().map(|attr| {
-                    let field = &attr.name;
-                    let value = &attr.value;
-                    quote! { #field: ::tuidom_ui::state(#value) }
-                });
+                let fields = props.iter().map(prop_field);
                 // `component` defers the body to mount time under the component's own scope; the
-                // props struct is built there too, so the seeded signals belong to that scope.
+                // props struct is built there too, so every prop signal — and any syncing effect —
+                // belongs to that scope and is freed when the component unmounts.
                 quote! {
                     ::tuidom_ui::component(move || ::tuidom_ui::View::from(
                         #name(#props_name { #(#fields),* })
@@ -526,6 +521,40 @@ impl Node {
             }
         }
     }
+}
+
+/// Lower one component prop to a `NameProps` field initializer, splitting on the same
+/// literal-vs-expression rule `view!` uses everywhere.
+///
+/// A **literal** seeds a plain signal once (`state(value)`) — it never changes, so it needs no
+/// effect. **Anything else** is a *reactive* prop: it may read a parent signal, so the prop stays
+/// synced to the expression through an effect. The expression is captured in a single re-runnable
+/// closure, evaluated once to seed the signal and again on every dependency change — so it appears
+/// once in the source (no double-move) and picks up parent-signal changes without re-running the
+/// component body. A reactive prop's type must be `PartialEq` (for the equality-skipping `set`);
+/// a literal prop escapes that, since it is never set.
+fn prop_field(attr: &Attr) -> TokenStream2 {
+    let field = &attr.name;
+    let value = &attr.value;
+    if is_literal(value) {
+        quote! { #field: ::tuidom_ui::state(#value) }
+    } else {
+        quote! {
+            #field: {
+                let __prop_sync = move || #value;
+                let __prop = ::tuidom_ui::state(__prop_sync());
+                ::tuidom_ui::effect(move || __prop.set(__prop_sync()));
+                __prop
+            }
+        }
+    }
+}
+
+/// Whether an expression is a literal — an integer, float, string, bool, or char literal. This
+/// is the static-prop test; a negative literal like `-1` is a unary expression, not a literal, so
+/// it takes the (harmless, run-once) reactive path.
+fn is_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Lit(_))
 }
 
 /// Lower an `if` chain to an `if`/`else` expression yielding a [`View`] on every path. A missing
