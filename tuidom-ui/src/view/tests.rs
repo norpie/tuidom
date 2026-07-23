@@ -390,3 +390,26 @@ fn unmount_leaves_no_orphaned_nodes() {
     mounted.unmount();
     assert_eq!(doc.node_count(), 1);
 }
+
+// ---- F4 step 1: the `view!` macro toolchain ---------------------------------------------
+
+#[test]
+fn view_macro_mounts_a_text_node() {
+    // Proves the whole chain: parse → emit `::tuidom_ui::text(..)` → resolve in-crate via
+    // `extern crate self` → `View` → mount → paint.
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { text("hi") }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "h");
+}
+
+#[test]
+fn view_macro_mounts_an_empty_box() {
+    // `box` is a reserved keyword; this exercises the `parse_any` path that accepts it.
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { box {} }).unwrap();
+
+    assert_eq!(doc.get_children(doc.root()).len(), 1);
+}

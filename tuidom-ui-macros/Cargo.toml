@@ -1,0 +1,16 @@
+[package]
+name = "tuidom-ui-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Framework-level macros for tuidom-ui (view!)"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = { version = "2.0.117", features = ["full"] }

@@ -24,9 +24,14 @@
 //! ```
 #![warn(missing_docs)]
 
+// The `view!` macro expands to absolute `::tuidom_ui::…` paths so it resolves the same way in
+// downstream crates and here; this alias is what makes those paths resolve in-crate.
+extern crate self as tuidom_ui;
+
 mod lock;
 mod runtime;
 mod view;
 
 pub use runtime::{Derived, Scope, Signal, batch, derived, effect, state};
+pub use tuidom_ui_macros::view;
 pub use view::{Children, Element, Mounted, View, boxed, dyn_text, dynamic, fragment, mount, text};
