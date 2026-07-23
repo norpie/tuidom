@@ -16,7 +16,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
-use syn::{Expr, ExprLit, Ident, Lit, LitStr, Token, braced, parenthesized};
+use syn::{Expr, ExprLit, Ident, Lit, LitStr, Pat, Token, braced, parenthesized};
 
 /// Build a [`View`] from a Rust-like template.
 ///
@@ -31,6 +31,7 @@ use syn::{Expr, ExprLit, Ident, Lit, LitStr, Token, braced, parenthesized};
 ///
 ///         text("Count:"),
 ///         text(count.get()),
+///         if count.get() > 9 { text("!") },
 ///     }
 /// };
 /// ```
@@ -40,8 +41,9 @@ use syn::{Expr, ExprLit, Ident, Lit, LitStr, Token, braced, parenthesized};
 ///
 /// The one dispatch rule is **literal-vs-expression**: a literal value is applied once and
 /// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). Control
-/// flow (`if` / `match` / `each`) and reactive view holes (`{ expr }`) are rejected here with a
-/// span-pointing error naming the F4 step that introduces them.
+/// flow (`if` / `match`) and reactive view holes (`{ expr }`) each lower to a single `dynamic`
+/// block, so a change to a condition re-runs only that block and never its siblings. `each`
+/// arrives in F4 step 5.
 ///
 /// [`View`]: ../tuidom_ui/struct.View.html
 #[proc_macro]
@@ -61,12 +63,45 @@ enum Node {
     },
     /// A text node: `text(expr)`, or a bare string-literal child.
     Text(Expr),
+    /// A reactive view hole: `{ expr }`, where `expr` is `Into<View>`.
+    Hole(Expr),
+    /// An `if` / `else if` / `else` chain.
+    If(IfNode),
+    /// A `match` over a scrutinee.
+    Match(MatchNode),
 }
 
 /// One `key: value` attribute inside an element's braces.
 struct Attr {
     name: Ident,
     value: Expr,
+}
+
+/// An `if cond { … }` with an optional `else` tail.
+struct IfNode {
+    cond: Expr,
+    then_branch: Vec<Node>,
+    else_branch: Option<ElseBranch>,
+}
+
+/// The tail of an `if`: either a chained `else if` or a final `else` block.
+enum ElseBranch {
+    If(Box<IfNode>),
+    Block(Vec<Node>),
+}
+
+/// A `match scrutinee { arm, … }`.
+struct MatchNode {
+    scrutinee: Expr,
+    arms: Vec<MatchArm>,
+}
+
+/// One `pat [if guard] => body` arm. The body is a single child node — wrap several in a `box`
+/// or a `{ … }` hole.
+struct MatchArm {
+    pat: Pat,
+    guard: Option<Expr>,
+    body: Node,
 }
 
 impl Parse for Node {
@@ -76,10 +111,18 @@ impl Parse for Node {
             return Ok(Node::Text(input.parse()?));
         }
 
-        // A leading brace is a reactive view hole — `{ expr }` — which lowers to a dynamic
-        // block. That arrives with control flow; reject it here rather than mis-parsing.
+        // A leading brace is a reactive view hole — `{ expr }` — lowered to a dynamic block.
         if input.peek(syn::token::Brace) {
-            return Err(input.error("reactive view holes `{ expr }` arrive in F4 step 4"));
+            let content;
+            braced!(content in input);
+            return Ok(Node::Hole(content.parse()?));
+        }
+
+        if input.peek(Token![if]) {
+            return Ok(Node::If(parse_if(input)?));
+        }
+        if input.peek(Token![match]) {
+            return Ok(Node::Match(parse_match(input)?));
         }
 
         // Element names may be reserved words — `box` is one — so read them permissively
@@ -91,9 +134,9 @@ impl Parse for Node {
                 parenthesized!(args in input);
                 Ok(Node::Text(args.parse()?))
             }
-            "if" | "else" | "match" => Err(syn::Error::new(
+            "else" => Err(syn::Error::new(
                 name.span(),
-                "control flow (`if` / `match`) arrives in F4 step 4",
+                "`else` here has no matching `if`",
             )),
             "each" => Err(syn::Error::new(name.span(), "`each` arrives in F4 step 5")),
             _ => {
@@ -108,6 +151,70 @@ impl Parse for Node {
             }
         }
     }
+}
+
+/// Parse `if cond { … } [else …]`. The condition is parsed without eager brace consumption, so
+/// the block that follows is the body rather than a struct literal — matching Rust's own rule.
+fn parse_if(input: ParseStream) -> syn::Result<IfNode> {
+    input.parse::<Token![if]>()?;
+    let cond = Expr::parse_without_eager_brace(input)?;
+    let then_branch = parse_child_block(input)?;
+    let else_branch = if input.peek(Token![else]) {
+        input.parse::<Token![else]>()?;
+        if input.peek(Token![if]) {
+            Some(ElseBranch::If(Box::new(parse_if(input)?)))
+        } else {
+            Some(ElseBranch::Block(parse_child_block(input)?))
+        }
+    } else {
+        None
+    };
+    Ok(IfNode {
+        cond,
+        then_branch,
+        else_branch,
+    })
+}
+
+/// Parse `match scrutinee { pat [if guard] => body, … }`. Commas between arms are optional, as
+/// in Rust. Each arm body is a single child node.
+fn parse_match(input: ParseStream) -> syn::Result<MatchNode> {
+    input.parse::<Token![match]>()?;
+    let scrutinee = Expr::parse_without_eager_brace(input)?;
+    let arms_body;
+    braced!(arms_body in input);
+    let mut arms = Vec::new();
+    while !arms_body.is_empty() {
+        let pat = Pat::parse_multi_with_leading_vert(&arms_body)?;
+        let guard = if arms_body.peek(Token![if]) {
+            arms_body.parse::<Token![if]>()?;
+            Some(arms_body.parse::<Expr>()?)
+        } else {
+            None
+        };
+        arms_body.parse::<Token![=>]>()?;
+        let body = arms_body.parse::<Node>()?;
+        arms.push(MatchArm { pat, guard, body });
+        if arms_body.peek(Token![,]) {
+            arms_body.parse::<Token![,]>()?;
+        }
+    }
+    Ok(MatchNode { scrutinee, arms })
+}
+
+/// Parse a braced list of children — an `if`/`else` branch. Attributes have no element to
+/// attach to here, so they are rejected at the offending key.
+fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
+    let body;
+    braced!(body in input);
+    let (attrs, children) = parse_body(&body)?;
+    if let Some(attr) = attrs.first() {
+        return Err(syn::Error::new(
+            attr.name.span(),
+            "an attribute has no element to attach to inside a control-flow block",
+        ));
+    }
+    Ok(children)
 }
 
 /// Parse the comma-separated entries inside an element's braces into its attributes and its
@@ -155,6 +262,17 @@ impl Node {
     fn expand(&self) -> TokenStream2 {
         match self {
             Node::Text(expr) => text_node(expr),
+            Node::Hole(expr) => {
+                quote! { ::tuidom_ui::dynamic(move || ::tuidom_ui::View::from(#expr)) }
+            }
+            Node::If(node) => {
+                let body = expand_if(node);
+                quote! { ::tuidom_ui::dynamic(move || #body) }
+            }
+            Node::Match(node) => {
+                let body = expand_match(node);
+                quote! { ::tuidom_ui::dynamic(move || #body) }
+            }
             Node::Element {
                 name,
                 attrs,
@@ -170,6 +288,58 @@ impl Node {
             }
         }
     }
+}
+
+/// Lower an `if` chain to an `if`/`else` expression yielding a [`View`] on every path. A missing
+/// `else` becomes an empty branch, so the expression always has a value — required since both
+/// arms feed the enclosing `dynamic`.
+fn expand_if(node: &IfNode) -> TokenStream2 {
+    let cond = &node.cond;
+    let then_view = child_list_to_view(&node.then_branch);
+    let else_part = match &node.else_branch {
+        None => {
+            let empty = empty_view();
+            quote! { { #empty } }
+        }
+        Some(ElseBranch::Block(children)) => {
+            let view = child_list_to_view(children);
+            quote! { { #view } }
+        }
+        Some(ElseBranch::If(inner)) => expand_if(inner),
+    };
+    quote! { if #cond { #then_view } else #else_part }
+}
+
+/// Lower a `match` to a `match` expression whose every arm yields a [`View`].
+fn expand_match(node: &MatchNode) -> TokenStream2 {
+    let scrutinee = &node.scrutinee;
+    let arms = node.arms.iter().map(|arm| {
+        let pat = &arm.pat;
+        let guard = arm.guard.as_ref().map(|g| quote! { if #g });
+        let body = arm.body.expand();
+        quote! { #pat #guard => ::tuidom_ui::View::from(#body), }
+    });
+    quote! { match #scrutinee { #(#arms)* } }
+}
+
+/// Collapse a child list into a single [`View`]. Zero children is an empty fragment; otherwise a
+/// fragment over the children, each coerced through `View::from`. A fragment adds no wrapper
+/// node, so this costs no layout.
+fn child_list_to_view(children: &[Node]) -> TokenStream2 {
+    if children.is_empty() {
+        empty_view()
+    } else {
+        let views = children.iter().map(|child| {
+            let expr = child.expand();
+            quote! { ::tuidom_ui::View::from(#expr) }
+        });
+        quote! { ::tuidom_ui::fragment([ #(#views),* ]) }
+    }
+}
+
+/// An empty fragment — a branch that renders nothing.
+fn empty_view() -> TokenStream2 {
+    quote! { ::tuidom_ui::fragment(::std::vec::Vec::<::tuidom_ui::View>::new()) }
 }
 
 /// Lower a text node. A string literal is a static [`text`] node; any other expression is a

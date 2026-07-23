@@ -603,3 +603,155 @@ fn view_macro_key_handler_with_event_arg_drives_a_signal() {
     rt.render().unwrap();
     assert_eq!(rt.get_cell(0, 0).unwrap().text, "1");
 }
+
+// ---- F4 step 4: reactive control flow ---------------------------------------------------
+
+#[test]
+fn view_macro_if_else_swaps_on_signal() {
+    let doc = Document::new().unwrap();
+    let show = state(true);
+    let view = crate::view! {
+        if show.get() { text("Y") } else { text("N") }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "Y");
+
+    show.set(false);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "N");
+}
+
+#[test]
+fn view_macro_else_if_chain_selects_the_right_branch() {
+    let doc = Document::new().unwrap();
+    let n = state(0i64);
+    let view = crate::view! {
+        if n.get() == 0 { text("z") } else if n.get() == 1 { text("o") } else { text("m") }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "z");
+
+    n.set(1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "o");
+
+    n.set(9);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "m");
+}
+
+#[test]
+fn view_macro_if_without_else_renders_nothing_when_false() {
+    // A missing `else` lowers to an empty fragment, so a false condition mounts no content —
+    // only the block's out-of-flow marker, which paints nothing.
+    let doc = Document::new().unwrap();
+    let show = state(false);
+    let view = crate::view! {
+        if show.get() { text("B") }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_ne!(rt.get_cell(0, 0).unwrap().text, "B"); // nothing painted
+
+    show.set(true);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "B");
+}
+
+#[test]
+fn view_macro_match_selects_arm_reactively() {
+    let doc = Document::new().unwrap();
+    let sel = state(0i64);
+    let view = crate::view! {
+        match sel.get() {
+            0 => text("zero"),
+            1 => text("one"),
+            _ => text("many"),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "zero");
+
+    sel.set(1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "one");
+
+    sel.set(7);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "many");
+}
+
+#[test]
+fn view_macro_view_hole_mounts_an_expression() {
+    // `{ expr }` is a view hole: the expression is coerced through `View::from` — here a
+    // `String`, via the F3-step-2 `From<String>` impl — and re-mounts when a read signal changes.
+    let doc = Document::new().unwrap();
+    let msg = state(String::from("hi"));
+    let view = crate::view! {
+        { msg.get() }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "hi");
+
+    msg.set(String::from("yo"));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "yo");
+}
+
+#[test]
+fn view_macro_control_flow_is_granular() {
+    // The load-bearing granularity test: an outer `if` and an inner reactive text are separate
+    // effects. Changing the inner signal repaints the text without re-evaluating the outer
+    // condition; only changing the condition's own signal re-runs the outer block.
+    let doc = Document::new().unwrap();
+    let cond = state(true);
+    let inner = state(0i64);
+    let outer_runs = Arc::new(AtomicUsize::new(0));
+
+    let or = outer_runs.clone();
+    let view = crate::view! {
+        if tick_and(&or, cond) {
+            text(inner.get())
+        } else {
+            text("off")
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "0");
+    assert_eq!(outer_runs.load(Ordering::SeqCst), 1); // outer ran once at mount
+
+    inner.set(5); // inner text dep only
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "5"); // inner repainted
+    assert_eq!(outer_runs.load(Ordering::SeqCst), 1); // outer condition not re-evaluated
+
+    cond.set(false); // the outer block's own dependency
+    rt.render().unwrap();
+    assert_eq!(rt.get_cell(0, 0).unwrap().text, "o"); // "off"
+    assert_eq!(outer_runs.load(Ordering::SeqCst), 2); // outer re-ran
+}
+
+/// Count each evaluation of an `if` condition, then return the flag's value — so a test can
+/// assert how often the enclosing block re-ran. Reads `flag` inside, so the block subscribes
+/// to it and nothing else.
+fn tick_and(counter: &AtomicUsize, flag: crate::Signal<bool>) -> bool {
+    counter.fetch_add(1, Ordering::SeqCst);
+    flag.get()
+}
