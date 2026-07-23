@@ -17,7 +17,8 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Expr, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, PatType, Token, braced, parenthesized,
+    Attribute, Expr, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, PatType, Token, Type,
+    Visibility, braced, parenthesized,
 };
 
 /// Build a [`View`] from a Rust-like template.
@@ -122,11 +123,25 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-/// Rewrite a component function into its props struct and a constructor taking that struct.
+/// One component parameter, classified for props-struct and builder generation.
+struct PropSpec {
+    /// The parameter name — the prop's field name and builder setter name.
+    name: Ident,
+    /// The declared value type `T`; the field is `Signal<T>`.
+    ty: Type,
+    /// `None` for a required prop; `Some(expr)` for an optional one, holding the default *value*
+    /// expression (of type `T`) used when the call site omits it.
+    default: Option<TokenStream2>,
+}
+
+/// Rewrite a component function into its props struct, a typestate builder, and a constructor
+/// taking the props.
 ///
-/// Each parameter `name: T` becomes a `Signal<T>` field on `NameProps` and a binding of the
-/// same name destructured at the top of the body, so the body reads props as signals. The body
-/// is otherwise untouched — this is a pure source transform, no reactivity analysis.
+/// Each parameter `name: T` becomes a `Signal<T>` field on `NameProps` and a binding of the same
+/// name destructured at the top of the body, so the body reads props as signals. The body is
+/// otherwise untouched — a pure source transform, no reactivity analysis. Optionality comes from
+/// `#[prop(default)]`, `#[prop(default = expr)]`, or an `Option<T>` type; everything else is a
+/// required prop the call site must supply.
 fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
     let sig = &func.sig;
     if let Some(param) = sig.generics.params.first() {
@@ -143,10 +158,14 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
     let block = &func.block;
     let props_name = format_ident!("{}Props", name);
 
-    let mut fields = Vec::new();
-    let mut binds = Vec::new();
+    let mut props = Vec::new();
     for input in &sig.inputs {
-        let PatType { pat, ty, .. } = match input {
+        let PatType {
+            attrs: param_attrs,
+            pat,
+            ty,
+            ..
+        } = match input {
             FnArg::Typed(typed) => typed,
             FnArg::Receiver(recv) => {
                 return Err(syn::Error::new_spanned(
@@ -161,15 +180,19 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
                 "a component parameter must be a plain identifier",
             ));
         };
-        let ident = &pat_ident.ident;
-        fields.push(quote! { #vis #ident: ::tuidom_ui::Signal<#ty> });
-        binds.push(ident.clone());
+        let default = parse_prop_default(param_attrs, ty)?;
+        props.push(PropSpec {
+            name: pat_ident.ident.clone(),
+            ty: (**ty).clone(),
+            default,
+        });
     }
 
+    let props_api = expand_props_builder(vis, &props_name, &props);
+    let binds = props.iter().map(|p| &p.name);
+
     Ok(quote! {
-        #vis struct #props_name {
-            #(#fields),*
-        }
+        #props_api
 
         #(#attrs)*
         #[allow(non_snake_case)]
@@ -178,6 +201,245 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
             #block
         }
     })
+}
+
+/// Classify one parameter's optionality from its `#[prop(...)]` attribute and type.
+///
+/// `#[prop(default)]` defaults to `Default::default()`, `#[prop(default = expr)]` to `expr`, and a
+/// bare `Option<T>` parameter to `None`. Anything else is required (`Ok(None)`).
+fn parse_prop_default(attrs: &[Attribute], ty: &Type) -> syn::Result<Option<TokenStream2>> {
+    for attr in attrs {
+        if !attr.path().is_ident("prop") {
+            continue;
+        }
+        let mut default = None;
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                if meta.input.peek(Token![=]) {
+                    let expr: Expr = meta.value()?.parse()?;
+                    default = Some(quote! { #expr });
+                } else {
+                    default = Some(quote! { ::core::default::Default::default() });
+                }
+                Ok(())
+            } else {
+                Err(meta.error("unknown `prop` option; expected `default` or `default = <expr>`"))
+            }
+        })?;
+        return Ok(default);
+    }
+    if is_option_type(ty) {
+        return Ok(Some(quote! { ::core::option::Option::None }));
+    }
+    Ok(None)
+}
+
+/// Whether a type is spelled `Option<..>` (by its last path segment). This is the "optional prop,
+/// defaults to `None`" test — a conservative syntactic check, not a resolve.
+fn is_option_type(ty: &Type) -> bool {
+    matches!(ty, Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Option"))
+}
+
+/// Generate `NameProps`, its typestate builder, and the constructor `NameProps::builder()`.
+///
+/// The builder carries one type parameter per **required** prop, each either an unset marker
+/// (`NamePropsMissing_field`) or set (`(Signal<T>,)`). A required setter transitions its own
+/// parameter from unset to set while leaving the others generic, so props may be supplied in any
+/// order; `build` exists only when every required parameter is set — so omitting one is a compile
+/// error naming the field (through the marker type), never a runtime panic. Optional props are
+/// stored as `Option` and filled with their default at `build`.
+fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]) -> TokenStream2 {
+    let builder_name = format_ident!("{}Builder", props_name);
+
+    let struct_fields = props.iter().map(|p| {
+        let n = &p.name;
+        let ty = &p.ty;
+        quote! { #n: ::tuidom_ui::Signal<#ty> }
+    });
+
+    let required: Vec<&PropSpec> = props.iter().filter(|p| p.default.is_none()).collect();
+    let optional: Vec<&PropSpec> = props.iter().filter(|p| p.default.is_some()).collect();
+
+    // Per-required-field: a generic param, an unset marker type, and the set marker `(Signal<T>,)`.
+    let gens: Vec<Ident> = (0..required.len())
+        .map(|i| format_ident!("__M{i}"))
+        .collect();
+    let missing: Vec<Ident> = required
+        .iter()
+        .map(|p| format_ident!("{}Missing_{}", props_name, p.name))
+        .collect();
+    let set_markers: Vec<TokenStream2> = required
+        .iter()
+        .map(|p| {
+            let ty = &p.ty;
+            quote! { (::tuidom_ui::Signal<#ty>,) }
+        })
+        .collect();
+
+    // Wrap a list of generic arguments in `<...>`, or nothing when there are no required props.
+    let angle = |items: &[TokenStream2]| -> TokenStream2 {
+        if items.is_empty() {
+            quote! {}
+        } else {
+            quote! { <#(#items),*> }
+        }
+    };
+    let gen_args: Vec<TokenStream2> = gens.iter().map(|g| quote! { #g }).collect();
+    let missing_args: Vec<TokenStream2> = missing.iter().map(|m| quote! { #m }).collect();
+    let impl_generics = angle(&gen_args);
+    let builder_generic = angle(&gen_args);
+    let builder_missing = angle(&missing_args);
+    let builder_set = angle(&set_markers);
+
+    let req_fields = required.iter().zip(&gens).map(|(p, g)| {
+        let n = &p.name;
+        quote! { #n: #g }
+    });
+    let opt_fields = optional.iter().map(|p| {
+        let n = &p.name;
+        let ty = &p.ty;
+        quote! { #n: ::core::option::Option<::tuidom_ui::Signal<#ty>> }
+    });
+
+    let req_init = required.iter().zip(&missing).map(|(p, m)| {
+        let n = &p.name;
+        quote! { #n: #m }
+    });
+    let opt_init = optional.iter().map(|p| {
+        let n = &p.name;
+        quote! { #n: ::core::option::Option::None }
+    });
+
+    let opt_setters = optional.iter().map(|p| {
+        let n = &p.name;
+        let ty = &p.ty;
+        quote! {
+            #vis fn #n(mut self, value: ::tuidom_ui::Signal<#ty>) -> Self {
+                self.#n = ::core::option::Option::Some(value);
+                self
+            }
+        }
+    });
+
+    // One impl per required field, transitioning only that field's marker while the rest stay
+    // generic — this is what lets the call site set required props in any order.
+    let req_setters = (0..required.len()).map(|j| {
+        let p = required[j];
+        let n = &p.name;
+        let ty = &p.ty;
+
+        let impl_gen = angle(
+            &gens
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != j)
+                .map(|(_, g)| quote! { #g })
+                .collect::<Vec<_>>(),
+        );
+        let self_args: Vec<TokenStream2> = (0..required.len())
+            .map(|i| {
+                if i == j {
+                    let m = &missing[j];
+                    quote! { #m }
+                } else {
+                    let g = &gens[i];
+                    quote! { #g }
+                }
+            })
+            .collect();
+        let ret_args: Vec<TokenStream2> = (0..required.len())
+            .map(|i| {
+                if i == j {
+                    set_markers[j].clone()
+                } else {
+                    let g = &gens[i];
+                    quote! { #g }
+                }
+            })
+            .collect();
+        let self_ty = angle(&self_args);
+        let ret_ty = angle(&ret_args);
+
+        let carry_req = required
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != j)
+            .map(|(_, q)| {
+                let qn = &q.name;
+                quote! { #qn: self.#qn }
+            });
+        let carry_opt = optional.iter().map(|q| {
+            let qn = &q.name;
+            quote! { #qn: self.#qn }
+        });
+
+        quote! {
+            impl #impl_gen #builder_name #self_ty {
+                #vis fn #n(self, value: ::tuidom_ui::Signal<#ty>) -> #builder_name #ret_ty {
+                    #builder_name {
+                        #n: (value,),
+                        #(#carry_req,)*
+                        #(#carry_opt,)*
+                    }
+                }
+            }
+        }
+    });
+
+    let build_req = required.iter().map(|p| {
+        let n = &p.name;
+        quote! { #n: self.#n.0 }
+    });
+    let build_opt = optional.iter().map(|p| {
+        let n = &p.name;
+        let default = p.default.as_ref().expect("optional prop has a default");
+        quote! { #n: self.#n.unwrap_or_else(|| ::tuidom_ui::state(#default)) }
+    });
+
+    let marker_defs = missing.iter().map(|m| {
+        quote! {
+            #[doc(hidden)]
+            #[allow(non_camel_case_types)]
+            #vis struct #m;
+        }
+    });
+
+    quote! {
+        #vis struct #props_name {
+            #(#struct_fields),*
+        }
+
+        #(#marker_defs)*
+
+        #vis struct #builder_name #impl_generics {
+            #(#req_fields,)*
+            #(#opt_fields,)*
+        }
+
+        impl #props_name {
+            #vis fn builder() -> #builder_name #builder_missing {
+                #builder_name {
+                    #(#req_init,)*
+                    #(#opt_init,)*
+                }
+            }
+        }
+
+        impl #impl_generics #builder_name #builder_generic {
+            #(#opt_setters)*
+        }
+
+        #(#req_setters)*
+
+        impl #builder_name #builder_set {
+            #vis fn build(self) -> #props_name {
+                #props_name {
+                    #(#build_req,)*
+                    #(#build_opt,)*
+                }
+            }
+        }
+    }
 }
 
 /// One node of a `view!` template.
@@ -496,13 +758,20 @@ impl Node {
             }
             Node::Component { name, props } => {
                 let props_name = format_ident!("{}Props", name);
-                let fields = props.iter().map(prop_field);
+                // Each supplied prop becomes a builder setter call; `build` fills omitted optional
+                // props and refuses (at compile time) a missing required one. An unknown prop is a
+                // call to a setter that does not exist — a compile error naming it at the call site.
+                let setters = props.iter().map(|attr| {
+                    let field = &attr.name;
+                    let init = prop_init(attr);
+                    quote! { .#field(#init) }
+                });
                 // `component` defers the body to mount time under the component's own scope; the
-                // props struct is built there too, so every prop signal — and any syncing effect —
+                // builder — every prop signal and any syncing effect — runs there too, so it all
                 // belongs to that scope and is freed when the component unmounts.
                 quote! {
                     ::tuidom_ui::component(move || ::tuidom_ui::View::from(
-                        #name(#props_name { #(#fields),* })
+                        #name(#props_name::builder() #(#setters)* .build())
                     ))
                 }
             }
@@ -523,8 +792,8 @@ impl Node {
     }
 }
 
-/// Lower one component prop to a `NameProps` field initializer, splitting on the same
-/// literal-vs-expression rule `view!` uses everywhere.
+/// Lower one component prop's value to the `Signal<T>` a builder setter receives, splitting on
+/// the same literal-vs-expression rule `view!` uses everywhere.
 ///
 /// A **literal** seeds a plain signal once (`state(value)`) — it never changes, so it needs no
 /// effect. **Anything else** is a *reactive* prop: it may read a parent signal, so the prop stays
@@ -533,20 +802,17 @@ impl Node {
 /// once in the source (no double-move) and picks up parent-signal changes without re-running the
 /// component body. A reactive prop's type must be `PartialEq` (for the equality-skipping `set`);
 /// a literal prop escapes that, since it is never set.
-fn prop_field(attr: &Attr) -> TokenStream2 {
-    let field = &attr.name;
+fn prop_init(attr: &Attr) -> TokenStream2 {
     let value = &attr.value;
     if is_literal(value) {
-        quote! { #field: ::tuidom_ui::state(#value) }
+        quote! { ::tuidom_ui::state(#value) }
     } else {
-        quote! {
-            #field: {
-                let __prop_sync = move || #value;
-                let __prop = ::tuidom_ui::state(__prop_sync());
-                ::tuidom_ui::effect(move || __prop.set(__prop_sync()));
-                __prop
-            }
-        }
+        quote! {{
+            let __prop_sync = move || #value;
+            let __prop = ::tuidom_ui::state(__prop_sync());
+            ::tuidom_ui::effect(move || __prop.set(__prop_sync()));
+            __prop
+        }}
     }
 }
 

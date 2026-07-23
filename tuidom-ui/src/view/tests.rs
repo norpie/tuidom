@@ -1008,3 +1008,79 @@ fn component_reactive_prop_does_not_rerun_the_body() {
     assert_eq!(doc.get_children(doc.root()), vec![node]);
     assert_eq!(row0(&rt, 1), "9");
 }
+
+// ---- F5 step 3: optional props & defaults -----------------------------------------------
+
+/// All props optional: `#[prop(default)]` (→ `Default::default()`), `#[prop(default = expr)]`,
+/// and a bare `Option<T>` (→ `None`). Zero required props exercises the builder's no-typestate
+/// path. Rendered left-to-right (default flex row) so a single row reads all three.
+#[crate::component]
+fn Defaults(#[prop(default)] a: i32, #[prop(default = 9)] b: i32, note: Option<String>) -> View {
+    crate::view! {
+        box {
+            text(a.get()),
+            text(b.get()),
+            text(match note.get() {
+                Some(s) => s,
+                None => String::from("-"),
+            }),
+        }
+    }
+}
+
+/// One required prop and one optional — exercises the single-marker typestate and default fill.
+#[crate::component]
+fn Mixed(label: i32, #[prop(default = 7)] pad: i32) -> View {
+    crate::view! { box { text(label.get()), text(pad.get()) } }
+}
+
+/// Two required props — the critical typestate path: the call site may set them in any order.
+#[crate::component]
+fn TwoReq(a: i32, b: i32) -> View {
+    crate::view! { box { text(a.get()), text(b.get()) } }
+}
+
+#[test]
+fn component_omitted_optionals_use_their_defaults() {
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { Defaults {} }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    // a = i32::default() = 0, b = 9, note = None → "-".
+    assert_eq!(row0(&rt, 3), "09-");
+}
+
+#[test]
+fn component_supplied_optionals_override_defaults() {
+    let doc = Document::new().unwrap();
+    let view = crate::view! { Defaults { a: 1, b: 2, note: Some(String::from("X")) } };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "12X");
+}
+
+#[test]
+fn component_required_and_optional_mix() {
+    let doc = Document::new().unwrap();
+    // `pad` omitted → default 7; only the required `label` is supplied.
+    let _mounted = mount(&doc, doc.root(), crate::view! { Mixed { label: 3 } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "37");
+}
+
+#[test]
+fn component_required_props_can_be_supplied_in_any_order() {
+    // The typestate builder accepts required props out of declaration order — each setter
+    // transitions only its own marker.
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { TwoReq { b: 2, a: 1 } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "12");
+}
