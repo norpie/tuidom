@@ -12,25 +12,31 @@
 #![warn(missing_docs)]
 
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
-use syn::{Expr, Ident, braced, parenthesized};
+use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
 
 /// Build a [`View`] from a Rust-like template.
 ///
 /// ```ignore
 /// use tuidom_ui::view;
 ///
-/// let ui = view! { text("hello") };
-/// let empty = view! { box {} };
+/// let ui = view! {
+///     box {
+///         text("Count:"),
+///         box { "nested" },
+///     }
+/// };
 /// ```
 ///
 /// The macro emits absolute `::tuidom_ui::…` paths, so the crate must be reachable under that
 /// name — which it is for downstream users, and in-crate via `extern crate self as tuidom_ui`.
 ///
-/// This is step 1: a lone `text(..)` or empty `box {}`. Children, attributes, events, and
-/// control flow arrive in later F4 steps.
+/// This is step 2: the static element skeleton — `box`/`input` elements, nesting, `text(..)`,
+/// and bare string-literal children. Attributes, events, and control flow arrive in later F4
+/// steps and are rejected here with an error pointing at the offending token.
 ///
 /// [`View`]: ../tuidom_ui/struct.View.html
 #[proc_macro]
@@ -42,48 +48,88 @@ pub fn view(input: TokenStream) -> TokenStream {
 
 /// One node of a `view!` template.
 enum Node {
-    /// An element by name, e.g. `box`.
-    Element(Ident),
-    /// A text node: `text(expr)`.
+    /// An element by name with its static children, e.g. `box { text("x") }`.
+    Element { name: Ident, children: Vec<Node> },
+    /// A text node: `text(expr)`, or a bare string-literal child.
     Text(Expr),
 }
 
 impl Parse for Node {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        // A bare string literal is a static text child: `box { "hi" }`.
+        if input.peek(LitStr) {
+            return Ok(Node::Text(input.parse()?));
+        }
+
+        // A leading brace is a reactive view hole — `{ expr }` — which lowers to a dynamic
+        // block. That arrives with control flow; reject it here rather than mis-parsing.
+        if input.peek(syn::token::Brace) {
+            return Err(input.error("reactive view holes `{ expr }` arrive in F4 step 4"));
+        }
+
         // Element names may be reserved words — `box` is one — so read them permissively
         // rather than as ordinary identifiers.
         let name = Ident::parse_any(input)?;
-        if name == "text" {
-            let args;
-            parenthesized!(args in input);
-            Ok(Node::Text(args.parse()?))
-        } else {
-            let body;
-            braced!(body in input);
-            if !body.is_empty() {
-                return Err(syn::Error::new(
-                    name.span(),
-                    "element children are not supported yet (F4 step 2)",
-                ));
+        match name.to_string().as_str() {
+            "text" => {
+                let args;
+                parenthesized!(args in input);
+                Ok(Node::Text(args.parse()?))
             }
-            Ok(Node::Element(name))
+            "if" | "else" | "match" => Err(syn::Error::new(
+                name.span(),
+                "control flow (`if` / `match`) arrives in F4 step 4",
+            )),
+            "each" => Err(syn::Error::new(name.span(), "`each` arrives in F4 step 5")),
+            _ => {
+                let body;
+                braced!(body in input);
+                let children = parse_children(&body)?;
+                Ok(Node::Element { name, children })
+            }
         }
     }
 }
 
+/// Parse the comma-separated entries inside an element's braces.
+///
+/// Every entry is a static child for now; an `ident: value` attribute is detected by the
+/// colon and rejected with a step-3 pointer rather than mis-parsed as an element.
+fn parse_children(body: ParseStream) -> syn::Result<Vec<Node>> {
+    let mut children = Vec::new();
+    while !body.is_empty() {
+        // An attribute is `key: value`; a child never has a colon as its second token, so the
+        // colon is what tells the two apart without caring whether `key` is a keyword.
+        if body.peek2(Token![:]) {
+            return Err(body.error("attributes and events arrive in F4 step 3"));
+        }
+        children.push(body.parse()?);
+        if body.is_empty() {
+            break;
+        }
+        body.parse::<Token![,]>()?;
+    }
+    Ok(children)
+}
+
 impl Node {
-    fn expand(&self) -> proc_macro2::TokenStream {
+    fn expand(&self) -> TokenStream2 {
         match self {
             Node::Text(expr) => quote! { ::tuidom_ui::text(#expr) },
-            Node::Element(name) => element_ctor(name),
+            Node::Element { name, children } => {
+                let ctor = element_ctor(name);
+                let children = children.iter().map(Node::expand);
+                quote! { #ctor #( .child(#children) )* }
+            }
         }
     }
 }
 
 /// Map an element name to its `tuidom-ui` constructor.
-fn element_ctor(name: &Ident) -> proc_macro2::TokenStream {
+fn element_ctor(name: &Ident) -> TokenStream2 {
     match name.to_string().as_str() {
         "box" => quote! { ::tuidom_ui::boxed() },
+        "input" => quote! { ::tuidom_ui::input() },
         other => {
             let message = format!("unknown element `{other}`");
             quote_spanned! { name.span() => compile_error!(#message) }

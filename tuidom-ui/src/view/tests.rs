@@ -413,3 +413,50 @@ fn view_macro_mounts_an_empty_box() {
 
     assert_eq!(doc.get_children(doc.root()).len(), 1);
 }
+
+// ---- F4 step 2: element skeleton and static children ------------------------------------
+
+#[test]
+fn view_macro_mounts_nested_children() {
+    // box > { text("x"), box > text("y") } — the same shape as the hand-built
+    // `nested_elements_mount_under_their_parent`, now written as a template.
+    let doc = Document::new().unwrap();
+    let view = crate::view! {
+        box {
+            text("x"),
+            box { text("y") },
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let outer = doc.get_children(doc.root());
+    assert_eq!(outer.len(), 1);
+    assert_eq!(doc.get_children(outer[0]).len(), 2);
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "xy");
+}
+
+#[test]
+fn view_macro_accepts_bare_string_literal_children() {
+    // A bare `"literal"` child lowers to a static text node, no `text(..)` spelled out.
+    let doc = Document::new().unwrap();
+    let _mounted = mount(&doc, doc.root(), crate::view! { box { "hi" } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "hi");
+}
+
+#[test]
+fn view_macro_mounts_an_input_element() {
+    // `input {}` maps to the input builder, which creates an editable node — `input_value`
+    // succeeds only for one, so it doubles as the assertion that the node is an input.
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), crate::view! { input {} }).unwrap();
+    let node = mounted.roots()[0];
+
+    assert_eq!(doc.input_value(node).unwrap(), "");
+    assert!(doc.is_focusable(node).unwrap()); // inputs are focusable by default
+}

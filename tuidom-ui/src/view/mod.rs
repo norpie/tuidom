@@ -65,11 +65,22 @@ struct DynamicView {
     produce: Box<dyn Fn() -> View + Send + Sync>,
 }
 
-/// A box-element description: a builder for its style, attributes, focusability, and children.
+/// Which engine node an [`Element`] mounts as.
+///
+/// Both share the same builder — style, attributes, focusability, listeners, and children —
+/// and differ only in the node the engine creates for them. An `Input` is an editable leaf,
+/// focusable by default; a `Box` is a plain container.
+enum ElementKind {
+    Box,
+    Input,
+}
+
+/// An element description: a builder for its style, attributes, focusability, and children.
 ///
 /// Every setter has a `dyn_` counterpart taking a closure, which binds the property reactively
 /// instead of to a constant.
 pub struct Element {
+    kind: ElementKind,
     style: Option<Source<Style>>,
     attrs: Vec<(String, Source<String>)>,
     focusable: Option<Source<bool>>,
@@ -173,7 +184,20 @@ impl From<Children> for View {
 
 /// Begin building a box element.
 pub fn boxed() -> Element {
+    element(ElementKind::Box)
+}
+
+/// Begin building an editable input element. The engine node is focusable by default and
+/// starts empty; a template sets its value and observes edits through attributes and events
+/// in later F4 steps.
+pub fn input() -> Element {
+    element(ElementKind::Input)
+}
+
+/// The shared empty builder both element constructors start from.
+fn element(kind: ElementKind) -> Element {
     Element {
+        kind,
         style: None,
         attrs: Vec::new(),
         focusable: None,
@@ -270,6 +294,22 @@ impl From<Element> for View {
     }
 }
 
+/// A `String` becomes a static text node — so a plain string expression drops into a view
+/// hole or a child slot without spelling out [`text`]. Reactive text still goes through
+/// [`dyn_text`].
+impl From<String> for View {
+    fn from(content: String) -> View {
+        text(content)
+    }
+}
+
+/// A string slice becomes a static text node. See [`From<String>`](#impl-From<String>-for-View).
+impl From<&str> for View {
+    fn from(content: &str) -> View {
+        text(content)
+    }
+}
+
 /// Mount `view` under `parent` in `doc`, returning a handle that owns the whole subtree.
 ///
 /// A partial mount that errors partway is fully rolled back before the error returns.
@@ -322,7 +362,10 @@ fn mount_view(
         }
         ViewKind::Element(element) => {
             let element = *element;
-            let node = doc.create_box()?;
+            let node = match element.kind {
+                ElementKind::Box => doc.create_box()?,
+                ElementKind::Input => doc.create_input("")?,
+            };
             place(doc, parent, node, before)?;
             register_remove(doc, parent, node, scope);
 

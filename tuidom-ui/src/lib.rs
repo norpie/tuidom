@@ -34,4 +34,6 @@ mod view;
 
 pub use runtime::{Derived, Scope, Signal, batch, derived, effect, state};
 pub use tuidom_ui_macros::view;
-pub use view::{Children, Element, Mounted, View, boxed, dyn_text, dynamic, fragment, mount, text};
+pub use view::{
+    Children, Element, Mounted, View, boxed, dyn_text, dynamic, fragment, input, mount, text,
+};
