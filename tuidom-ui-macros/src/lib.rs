@@ -41,9 +41,10 @@ use syn::{Expr, ExprLit, Ident, Lit, LitStr, Pat, Token, braced, parenthesized};
 ///
 /// The one dispatch rule is **literal-vs-expression**: a literal value is applied once and
 /// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). Control
-/// flow (`if` / `match`) and reactive view holes (`{ expr }`) each lower to a single `dynamic`
-/// block, so a change to a condition re-runs only that block and never its siblings. `each`
-/// arrives in F4 step 5.
+/// flow (`if` / `match` / `each`) and reactive view holes (`{ expr }`) each lower to a single
+/// `dynamic` block, so a change to a condition or collection re-runs only that block and never
+/// its siblings. `each i, value in collection { … }` rebuilds the whole list on change in F4;
+/// keyed, identity-preserving reconciliation is F6, behind the same syntax.
 ///
 /// [`View`]: ../tuidom_ui/struct.View.html
 #[proc_macro]
@@ -65,10 +66,12 @@ enum Node {
     Text(Expr),
     /// A reactive view hole: `{ expr }`, where `expr` is `Into<View>`.
     Hole(Expr),
-    /// An `if` / `else if` / `else` chain.
-    If(IfNode),
+    /// An `if` / `else if` / `else` chain. Boxed — a control-flow node dwarfs the others.
+    If(Box<IfNode>),
     /// A `match` over a scrutinee.
-    Match(MatchNode),
+    Match(Box<MatchNode>),
+    /// An `each i, value in collection { … }` loop.
+    Each(Box<EachNode>),
 }
 
 /// One `key: value` attribute inside an element's braces.
@@ -104,6 +107,16 @@ struct MatchArm {
     body: Node,
 }
 
+/// An `each i, value in collection [key = …] { … }` loop. `i` binds the enumerate index and
+/// `value` the item; either may be `_`. `key` parses but is a no-op until F6's keyed
+/// reconciliation, so it is not stored.
+struct EachNode {
+    index_pat: Pat,
+    value_pat: Pat,
+    collection: Expr,
+    body: Vec<Node>,
+}
+
 impl Parse for Node {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // A bare string literal is a static text child: `box { "hi" }`.
@@ -119,10 +132,10 @@ impl Parse for Node {
         }
 
         if input.peek(Token![if]) {
-            return Ok(Node::If(parse_if(input)?));
+            return Ok(Node::If(Box::new(parse_if(input)?)));
         }
         if input.peek(Token![match]) {
-            return Ok(Node::Match(parse_match(input)?));
+            return Ok(Node::Match(Box::new(parse_match(input)?)));
         }
 
         // Element names may be reserved words — `box` is one — so read them permissively
@@ -138,7 +151,7 @@ impl Parse for Node {
                 name.span(),
                 "`else` here has no matching `if`",
             )),
-            "each" => Err(syn::Error::new(name.span(), "`each` arrives in F4 step 5")),
+            "each" => Ok(Node::Each(Box::new(parse_each(input)?))),
             _ => {
                 let body;
                 braced!(body in input);
@@ -202,8 +215,43 @@ fn parse_match(input: ParseStream) -> syn::Result<MatchNode> {
     Ok(MatchNode { scrutinee, arms })
 }
 
-/// Parse a braced list of children — an `if`/`else` branch. Attributes have no element to
-/// attach to here, so they are rejected at the offending key.
+/// Parse `i, value in collection [key = expr] { … }`, positioned just after the `each`
+/// identifier. Either pattern may be `_`. The `key` clause is parsed and dropped — it is a
+/// documented no-op until F6 turns naive rebuild into keyed reconciliation.
+fn parse_each(input: ParseStream) -> syn::Result<EachNode> {
+    let index_pat = Pat::parse_single(input)?;
+    input.parse::<Token![,]>()?;
+    let value_pat = Pat::parse_single(input)?;
+    input.parse::<Token![in]>()?;
+    let collection = Expr::parse_without_eager_brace(input)?;
+
+    // After the collection comes either the item block or a `key = …` clause. Anything else is
+    // a mistake worth naming rather than letting `braced!` report a bare "expected `{`".
+    if !input.peek(syn::token::Brace) {
+        let kw = input.parse::<Ident>()?;
+        if kw != "key" {
+            return Err(syn::Error::new(
+                kw.span(),
+                "expected `key = …` or the item block `{ … }` after the `each` collection",
+            ));
+        }
+        input.parse::<Token![=]>()?;
+        // Dropped: keyed reconciliation is F6. Parsing it keeps the grammar stable so item
+        // templates need not change when the key starts mattering.
+        let _key = Expr::parse_without_eager_brace(input)?;
+    }
+
+    let body = parse_child_block(input)?;
+    Ok(EachNode {
+        index_pat,
+        value_pat,
+        collection,
+        body,
+    })
+}
+
+/// Parse a braced list of children — an `if`/`else` branch or an `each` item template.
+/// Attributes have no element to attach to here, so they are rejected at the offending key.
 fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
     let body;
     braced!(body in input);
@@ -272,6 +320,21 @@ impl Node {
             Node::Match(node) => {
                 let body = expand_match(node);
                 quote! { ::tuidom_ui::dynamic(move || #body) }
+            }
+            Node::Each(node) => {
+                let index = &node.index_pat;
+                let value = &node.value_pat;
+                let collection = &node.collection;
+                let item = child_list_to_view(&node.body);
+                // Naive rebuild (F4): the whole list re-mounts when the collection changes. Item
+                // templates keep their own reactive holes; identity-preserving reorder is F6.
+                quote! {
+                    ::tuidom_ui::dynamic(move || ::tuidom_ui::fragment(
+                        ::std::iter::IntoIterator::into_iter(#collection)
+                            .enumerate()
+                            .map(move |(#index, #value)| #item)
+                    ))
+                }
             }
             Node::Element {
                 name,

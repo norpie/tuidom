@@ -755,3 +755,78 @@ fn tick_and(counter: &AtomicUsize, flag: crate::Signal<bool>) -> bool {
     counter.fetch_add(1, Ordering::SeqCst);
     flag.get()
 }
+
+// ---- F4 step 5: `each` ------------------------------------------------------------------
+
+#[test]
+fn view_macro_each_renders_a_list_and_rebuilds() {
+    // `_, item` drops the index. The list renders adjacently (default row layout); changing the
+    // collection rebuilds it whole — the naive F4 semantics, keyed reorder is F6.
+    let doc = Document::new().unwrap();
+    let items = state(vec![String::from("a"), String::from("b")]);
+    let view = crate::view! {
+        each _, item in items.get() {
+            text(item),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "ab");
+
+    items.set(vec![
+        String::from("x"),
+        String::from("y"),
+        String::from("z"),
+    ]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "xyz");
+}
+
+#[test]
+fn view_macro_each_binds_the_index_and_accepts_a_key() {
+    // `i` binds the enumerate index (a `usize`, stringified by the text hole). `key = …` parses
+    // and is accepted — a documented no-op until F6 — proving the grammar is stable now.
+    let doc = Document::new().unwrap();
+    let items = state(vec![String::from("x"), String::from("y")]);
+    let view = crate::view! {
+        each i, item in items.get() key = item.clone() {
+            text(i),
+            text(item),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "0x1y"); // (index, item) per row, laid out adjacently
+}
+
+#[test]
+fn view_macro_each_item_keeps_its_own_reactive_holes() {
+    // An item template is ordinary `view!`, so its holes bind per item. Here every row nests a
+    // box with a reactive-text child; the list mounts one node per item under the block.
+    let doc = Document::new().unwrap();
+    let items = state(vec![
+        String::from("a"),
+        String::from("b"),
+        String::from("c"),
+    ]);
+    let view = crate::view! {
+        box {
+            each _, item in items.get() {
+                text(item),
+            }
+        }
+    };
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    let container = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "abc");
+
+    // Three item text nodes plus the block's anchor marker, all under the container box.
+    assert_eq!(doc.get_children(container).len(), 4);
+}
