@@ -181,14 +181,20 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
                 "a component parameter must be a plain identifier",
             ));
         };
-        // A `children` parameter is the deferred-child slot: stored raw as its declared type
-        // (a `Children`), always optional (empty when the call site supplies no children), and
-        // never signal-wrapped. Every other parameter is a signal prop.
+        // Two parameter kinds are stored raw as their declared type rather than signal-wrapped,
+        // because they carry structure or behavior, not a reactive value:
+        //   - `children` — the deferred-child slot, always optional (empty when none is given).
+        //   - a `Callback<A>` prop — a handler; required unless `#[prop(default)]` opts into the
+        //     no-op default. Detected syntactically by the type's last path segment (like
+        //     `Option`), so a type aliased to `Callback` would slip through — accepted.
+        // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
         let (field_ty, default) = if pat_ident.ident == "children" {
             (
                 quote! { #ty },
                 Some(quote! { ::core::default::Default::default() }),
             )
+        } else if is_callback_type(ty) {
+            (quote! { #ty }, parse_prop_default(param_attrs, ty)?)
         } else {
             let value_default = parse_prop_default(param_attrs, ty)?;
             (
@@ -253,6 +259,13 @@ fn parse_prop_default(attrs: &[Attribute], ty: &Type) -> syn::Result<Option<Toke
 /// defaults to `None`" test — a conservative syntactic check, not a resolve.
 fn is_option_type(ty: &Type) -> bool {
     matches!(ty, Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Option"))
+}
+
+/// Whether a type is spelled `Callback<..>` (by its last path segment). A callback prop is stored
+/// raw rather than signal-wrapped; the check mirrors [`is_option_type`] — syntactic, so an alias
+/// of `Callback` would not be recognized.
+fn is_callback_type(ty: &Type) -> bool {
+    matches!(ty, Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Callback"))
 }
 
 /// Generate `NameProps`, its typestate builder, and the constructor `NameProps::builder()`.
@@ -831,19 +844,30 @@ impl Node {
     }
 }
 
-/// Lower one component prop's value to the `Signal<T>` a builder setter receives, splitting on
-/// the same literal-vs-expression rule `view!` uses everywhere.
+/// Lower one component prop's value to what its builder setter receives, splitting on syntax the
+/// same way `view!` dispatches everywhere.
 ///
-/// A **literal** seeds a plain signal once (`state(value)`) — it never changes, so it needs no
-/// effect. **Anything else** is a *reactive* prop: it may read a parent signal, so the prop stays
-/// synced to the expression through an effect. The expression is captured in a single re-runnable
-/// closure, evaluated once to seed the signal and again on every dependency change — so it appears
-/// once in the source (no double-move) and picks up parent-signal changes without re-running the
-/// component body. A reactive prop's type must be `PartialEq` (for the equality-skipping `set`);
-/// a literal prop escapes that, since it is never set.
+/// - A **closure** is a *callback* prop: the parent hands the child behavior, not a reactive
+///   value, so it lowers to a raw [`Callback`] — never a signal, never a syncing effect. A
+///   zero-argument closure is widened to ignore the callback's argument, exactly as an event
+///   handler's `||` normalizes to `|_|`. (A closure is never a valid *data* prop, so this dispatch
+///   never steals one — a `Signal<T>` prop's `T` could not be a closure.)
+/// - A **literal** seeds a plain signal once (`state(value)`) — it never changes, so it needs no
+///   effect.
+/// - **Anything else** is a *reactive* prop: it may read a parent signal, so the prop stays synced
+///   to the expression through an effect. The expression is captured in a single re-runnable
+///   closure, evaluated once to seed the signal and again on every dependency change — so it
+///   appears once in the source (no double-move) and picks up parent-signal changes without
+///   re-running the component body. A reactive prop's type must be `PartialEq` (for the
+///   equality-skipping `set`); a literal prop escapes that, since it is never set.
+///
+/// [`Callback`]: ../tuidom_ui/struct.Callback.html
 fn prop_init(attr: &Attr) -> TokenStream2 {
     let value = &attr.value;
-    if is_literal(value) {
+    if let Expr::Closure(_) = value {
+        let handler = event_handler(value);
+        quote! { ::tuidom_ui::Callback::new(#handler) }
+    } else if is_literal(value) {
         quote! { ::tuidom_ui::state(#value) }
     } else {
         quote! {{

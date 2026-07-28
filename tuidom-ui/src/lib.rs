@@ -31,10 +31,12 @@
 // downstream crates and here; this alias is what makes those paths resolve in-crate.
 extern crate self as tuidom_ui;
 
+mod callback;
 mod lock;
 mod runtime;
 mod view;
 
+pub use callback::Callback;
 pub use runtime::{Derived, Scope, Signal, batch, derived, effect, state};
 // `component` names two things in two namespaces: the attribute macro (macro namespace) that
 // rewrites a component function, and the `view::component` value (below) it lowers to. They

@@ -10,7 +10,7 @@ use tuidom::headless::HeadlessRuntime;
 use tuidom::style::{FlexDirection, FlexGap, Length, Style};
 
 use super::{Children, View, boxed, dyn_text, dynamic, fragment, mount, text};
-use crate::state;
+use crate::{Callback, state};
 
 /// A column container with a one-row gap between its children.
 fn gapped_column() -> Style {
@@ -1153,4 +1153,83 @@ fn component_with_a_children_prop_but_none_supplied_is_empty() {
     let mut rt = HeadlessRuntime::new(doc, 10, 1);
     rt.render().unwrap();
     assert_eq!(row0(&rt, 1), "T");
+}
+
+// ---- F5 step 5: callback props ----------------------------------------------------------
+
+/// A child that talks back to its parent through a `Callback` prop rather than reaching into
+/// parent state. `on_fire` is stored raw (not signal-wrapped) and invoked directly.
+#[crate::component]
+fn Emitter(on_fire: Callback<i32>) -> View {
+    crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |_| on_fire.call(7),
+        }
+    }
+}
+
+/// An optional callback: `#[prop(default)]` falls back to the no-op `Callback`. The handler still
+/// bumps the component's own counter, so a test can prove it ran past the default call.
+#[crate::component]
+fn MaybeEmit(#[prop(default)] on_fire: Callback<i32>) -> View {
+    let count = state(0i64);
+    crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |_| {
+                count.update(|n| *n += 1);
+                on_fire.call(count.get() as i32);
+            },
+            text(count.get()),
+        }
+    }
+}
+
+#[test]
+fn component_callback_prop_talks_back_to_the_parent() {
+    // `view!` lowers the parent's closure to a `Callback::new(..)`; the child calls it, and the
+    // parent's closure writes a parent signal a sibling binding reflects — child-to-parent flow
+    // with no shared state threaded through props.
+    let doc = Document::new().unwrap();
+    let received = state(0i64);
+
+    let view = crate::view! {
+        box {
+            Emitter { on_fire: move |n| received.set(n as i64) },
+            text(received.get()),
+        }
+    };
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    let outer = mounted.roots()[0];
+    // The Emitter adds no wrapper node, so its focusable box is the outer box's first child.
+    let emitter_box = doc.get_children(outer)[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "0");
+
+    doc.focus(emitter_box).unwrap();
+    rt.simulate_key(KeyCode::Char('x'));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "7");
+}
+
+#[test]
+fn component_omitted_callback_prop_defaults_to_a_noop() {
+    // No `on_fire` supplied → the `#[prop(default)]` no-op `Callback` stands. The handler still
+    // runs to completion (the internal counter advances), proving the default is callable rather
+    // than a hole that panics.
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), crate::view! { MaybeEmit {} }).unwrap();
+    let node = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "0");
+
+    doc.focus(node).unwrap();
+    rt.simulate_key(KeyCode::Char('x'));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "1");
 }
