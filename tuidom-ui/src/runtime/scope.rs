@@ -132,6 +132,24 @@ pub fn use_context<T: Clone + 'static>() -> Option<T> {
     }
 }
 
+/// Register `f` to run when the current owner scope is disposed — the ambient-scope form of
+/// [`Scope::on_cleanup`], for calling inside a component body where the scope is implicit (the
+/// same way [`state`](super::state) and [`effect`](super::effect) find their scope).
+///
+/// Cleanups run in reverse registration order, after child scopes are disposed and before this
+/// scope's nodes are freed. With no scope open this is a logged no-op: nothing would own the
+/// callback, so it could never run.
+pub fn on_cleanup(f: impl FnOnce() + Send + Sync + 'static) {
+    let Some(sid) = current_scope() else {
+        tracing::debug!("on_cleanup called with no scope open; callback dropped");
+        return;
+    };
+    let mut w = rt().write();
+    if let Some(data) = w.scopes.get_mut(&sid) {
+        data.cleanups.push(Box::new(f));
+    }
+}
+
 fn create_scope(parent: Option<ScopeId>) -> ScopeId {
     let mut w = rt().write();
     let id = ScopeId(w.next_scope);

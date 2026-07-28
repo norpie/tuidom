@@ -14,6 +14,7 @@
 //! whenever a signal it read changes. Each property is its own effect, so a change to one
 //! never reapplies another — the granularity the reactive model promises.
 
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tuidom::event::{KeyEvent, ListenerHandle, MouseEvent};
@@ -21,6 +22,54 @@ use tuidom::style::{Length, Position, Style};
 use tuidom::{Document, NodeId, Result};
 
 use crate::runtime::{Scope, effect};
+
+thread_local! {
+    /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
+    /// subtree is in place. A `Vec` used as a stack of pending callbacks: each scope-establishing
+    /// mount boundary ([`mount_at`] and a component instantiation) records the queue length on
+    /// entry and, on success, fires exactly the tail it added — so an inner component's callbacks
+    /// run before the outer component's, and a failed mount discards its own rather than leaking
+    /// them into the next mount on this thread.
+    static ON_MOUNT: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Register `f` to run once, right after the enclosing component's subtree has finished
+/// mounting — the deferred counterpart to [`on_cleanup`](crate::on_cleanup).
+///
+/// A component body builds a [`View`] before any of it is in the DOM, so a side effect that
+/// should happen "once the component is live" — focusing through a signal, starting a task,
+/// kicking off a fetch — cannot run inline. `on_mount` queues `f`; the mount machinery drains
+/// it after the subtree is placed. It runs **once**, never again on a prop change or rerender,
+/// and with the component's scope entered, so anything reactive it creates is owned by the
+/// component and torn down on unmount.
+///
+/// Called outside any mount in progress, `f` is queued and fires at the end of the next
+/// top-level [`mount`].
+pub fn on_mount(f: impl FnOnce() + 'static) {
+    ON_MOUNT.with(|q| q.borrow_mut().push(Box::new(f)));
+}
+
+/// Run a subtree mount, then fire the [`on_mount`] callbacks it queued — in registration order,
+/// once the subtree is placed — or discard them if it failed to mount. Wraps every
+/// scope-establishing mount boundary so callbacks resolve to the nearest enclosing subtree.
+fn with_mount_callbacks<R>(mount: impl FnOnce() -> Result<R>) -> Result<R> {
+    let base = ON_MOUNT.with(|q| q.borrow().len());
+    match mount() {
+        Ok(value) => {
+            // `split_off` leaves everything below `base` queued for an enclosing boundary to
+            // drain; we own only the tail this subtree added.
+            let pending = ON_MOUNT.with(|q| q.borrow_mut().split_off(base));
+            for cb in pending {
+                cb();
+            }
+            Ok(value)
+        }
+        Err(err) => {
+            ON_MOUNT.with(|q| q.borrow_mut().truncate(base));
+            Err(err)
+        }
+    }
+}
 
 /// A deferred listener registration: run at mount against the created node, yielding the
 /// handle used to remove it on unmount.
@@ -357,7 +406,7 @@ pub fn mount(doc: &Document, parent: NodeId, view: impl Into<View>) -> Result<Mo
 /// dynamic block's marker) or appended. A partial mount that errors is rolled back.
 fn mount_at(doc: &Document, parent: NodeId, before: Option<NodeId>, view: View) -> Result<Mounted> {
     let scope = Scope::new();
-    match scope.run(|| mount_view(doc, parent, before, view, &scope)) {
+    match scope.run(|| with_mount_callbacks(|| mount_view(doc, parent, before, view, &scope))) {
         Ok(roots) => Ok(Mounted { scope, roots }),
         Err(err) => {
             scope.dispose();
@@ -486,7 +535,7 @@ fn mount_view(
             // `build` with `child` entered is what attaches the body's reactive state there;
             // mounting the produced view under the same scope keeps its bindings owned there too.
             let child = scope.child();
-            child.run(|| mount_view(doc, parent, before, build(), &child))
+            child.run(|| with_mount_callbacks(|| mount_view(doc, parent, before, build(), &child)))
         }
     }
 }

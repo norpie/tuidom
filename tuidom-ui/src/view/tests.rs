@@ -1,8 +1,8 @@
 //! View-layer tests. Everything is asserted through the headless screen — painted cells,
 //! not internals — because that is the only ground truth for "the signal reached the node".
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tuidom::Document;
 use tuidom::event::KeyCode;
@@ -1232,4 +1232,116 @@ fn component_omitted_callback_prop_defaults_to_a_noop() {
     rt.simulate_key(KeyCode::Char('x'));
     rt.render().unwrap();
     assert_eq!(row0(&rt, 1), "1");
+}
+
+// ---- F5 step 7: lifecycle (on_mount / on_cleanup) ---------------------------------------
+
+/// Marks its body and its mount through a `mark` callback, then instantiates `Inner` directly
+/// (not through `children`, so the parent scope chain is preserved and context reaches it). It
+/// provides the callback as context — proving a context can carry behavior, not just data — so
+/// `Inner` injects the same sink without a prop threaded through.
+#[crate::component]
+fn Outer(mark: Callback<&'static str>) -> View {
+    crate::provide_context(mark.clone());
+    mark.call("outer-body");
+    let mounted = mark.clone();
+    crate::on_mount(move || mounted.call("outer-mount"));
+    crate::view! { Inner {} }
+}
+
+/// Injects the `mark` callback `Outer` provided and marks its own body and mount.
+#[crate::component]
+fn Inner() -> View {
+    let mark: Callback<&'static str> = crate::use_context().unwrap();
+    mark.call("inner-body");
+    let mounted = mark.clone();
+    crate::on_mount(move || mounted.call("inner-mount"));
+    crate::view! { text("x") }
+}
+
+#[test]
+fn on_mount_is_deferred_and_nests_inner_before_outer() {
+    // Bodies run top-down as the tree is built; each `on_mount` waits until its own subtree is
+    // placed, so mounts fire bottom-up — the inner component's before the outer's, and every
+    // mount after every body.
+    let doc = Document::new().unwrap();
+    let sink: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let s = sink.clone();
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { Outer { mark: move |m| s.lock().unwrap().push(m) } },
+    )
+    .unwrap();
+
+    assert_eq!(
+        *sink.lock().unwrap(),
+        vec!["outer-body", "inner-body", "inner-mount", "outer-mount"],
+    );
+}
+
+/// A component that pings a callback from `on_mount` and paints a reactive prop, so a test can
+/// change the prop and confirm the body (and thus `on_mount`) does not re-run.
+#[crate::component]
+fn OnceMounter(label: i32, on_ping: Callback<()>) -> View {
+    let ping = on_ping.clone();
+    crate::on_mount(move || ping.call(()));
+    crate::view! { text(label.get()) }
+}
+
+#[test]
+fn on_mount_runs_exactly_once_across_prop_changes() {
+    // A prop change flows through the kept-synced signal and repaints, but never re-runs the
+    // body — so `on_mount` fires exactly once for the component's lifetime, not per render.
+    let doc = Document::new().unwrap();
+    let mounts = Arc::new(AtomicUsize::new(0));
+    let label = state(1i32);
+
+    let m = mounts.clone();
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! {
+            OnceMounter { label: label.get(), on_ping: move |_| { m.fetch_add(1, Ordering::SeqCst); } }
+        },
+    )
+    .unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "1");
+    assert_eq!(mounts.load(Ordering::SeqCst), 1);
+
+    label.set(2); // repaints through the prop signal, but the body stays put
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "2");
+    assert_eq!(mounts.load(Ordering::SeqCst), 1);
+}
+
+/// Registers an ambient `on_cleanup` (the free function, not the `Scope` method) that pings a
+/// callback, to prove it fires when the component's scope disposes on unmount.
+#[crate::component]
+fn CleanupComp(on_gone: Callback<()>) -> View {
+    let gone = on_gone.clone();
+    crate::on_cleanup(move || gone.call(()));
+    crate::view! { text("x") }
+}
+
+#[test]
+fn on_cleanup_free_fn_fires_on_unmount() {
+    let doc = Document::new().unwrap();
+    let cleaned = Arc::new(AtomicUsize::new(0));
+
+    let c = cleaned.clone();
+    let mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { CleanupComp { on_gone: move |_| { c.fetch_add(1, Ordering::SeqCst); } } },
+    )
+    .unwrap();
+    assert_eq!(cleaned.load(Ordering::SeqCst), 0);
+
+    mounted.unmount();
+    assert_eq!(cleaned.load(Ordering::SeqCst), 1);
 }
