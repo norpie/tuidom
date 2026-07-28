@@ -37,7 +37,9 @@ mod runtime;
 mod view;
 
 pub use callback::Callback;
-pub use runtime::{Derived, Scope, Signal, batch, derived, effect, state};
+pub use runtime::{
+    Derived, Scope, Signal, batch, derived, effect, provide_context, state, use_context,
+};
 // `component` names two things in two namespaces: the attribute macro (macro namespace) that
 // rewrites a component function, and the `view::component` value (below) it lowers to. They
 // coexist under one path — `#[component]` finds the macro, `component(..)` the function.

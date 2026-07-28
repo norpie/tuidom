@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::{Scope, batch, derived, effect, state};
+use super::{Scope, batch, derived, effect, provide_context, state, use_context};
 
 /// A shared counter an effect or compute closure can bump, so a test can assert how many
 /// times it ran.
@@ -297,4 +297,70 @@ fn an_unbounded_cycle_is_broken_by_the_iteration_guard() {
     // landed at the guard's ceiling rather than diverging.
     assert!(s.get() > 0);
     scope.dispose();
+}
+
+// ---- Context provide / inject -----------------------------------------------------------
+
+// Distinct newtypes so a test's context cannot collide with another's by sharing `i32`'s
+// `TypeId` — though scope trees are already disjoint, so the parent-chain walk keeps them
+// apart regardless.
+#[derive(Clone, PartialEq, Debug)]
+struct Ctx(i32);
+#[derive(Clone, PartialEq, Debug)]
+struct Absent;
+
+#[test]
+fn a_context_injects_across_an_intervening_scope() {
+    // Provided at the root, injected at the leaf, with a middle scope that provides nothing —
+    // the value crosses the gap without being threaded through `mid`.
+    let root = Scope::new();
+    let mid = root.child();
+    let leaf = mid.child();
+
+    root.run(|| provide_context(Ctx(7)));
+    let got = leaf.run(use_context::<Ctx>);
+
+    assert_eq!(got, Some(Ctx(7)));
+    root.dispose();
+}
+
+#[test]
+fn a_nearer_context_shadows_a_farther_one() {
+    // Both root and mid provide a `Ctx`; the leaf's walk stops at the nearer provider.
+    let root = Scope::new();
+    let mid = root.child();
+    let leaf = mid.child();
+
+    root.run(|| provide_context(Ctx(1)));
+    mid.run(|| provide_context(Ctx(2)));
+    let got = leaf.run(use_context::<Ctx>);
+
+    assert_eq!(got, Some(Ctx(2)));
+    root.dispose();
+}
+
+#[test]
+fn an_absent_context_is_none_not_a_panic() {
+    // Nothing up the chain provides an `Absent`, so injection returns `None` rather than
+    // faulting — the caller owns what a missing value means.
+    let scope = Scope::new();
+    let got = scope.run(use_context::<Absent>);
+
+    assert_eq!(got, None);
+    scope.dispose();
+}
+
+#[test]
+fn a_disposed_scope_drops_its_provided_context() {
+    // The context map holds the value; disposing the scope must release it, not leak it. A
+    // `Weak` outliving the strong `Arc` proves the map actually dropped the box.
+    let arc = Arc::new(());
+    let weak = Arc::downgrade(&arc);
+
+    let scope = Scope::new();
+    scope.run(move || provide_context(arc));
+    assert!(weak.upgrade().is_some()); // the context still holds the only strong ref
+
+    scope.dispose();
+    assert!(weak.upgrade().is_none()); // dropped along with the scope
 }

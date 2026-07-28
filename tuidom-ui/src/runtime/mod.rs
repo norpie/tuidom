@@ -18,7 +18,7 @@
 //! and is a silent no-op, a read logs and falls back. This is what makes an aborted task's
 //! late write into a freed signal harmless.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, RwLock};
@@ -37,7 +37,7 @@ mod tests;
 
 pub use computed::{Derived, derived};
 pub use effects::effect;
-pub use scope::Scope;
+pub use scope::{Scope, provide_context, use_context};
 pub use signal::{Signal, state};
 
 /// A `Copy` handle identifying one slot in the runtime arena.
@@ -95,6 +95,10 @@ struct ScopeData {
     nodes: Vec<SlotId>,
     cleanups: Vec<Box<dyn FnOnce() + Send + Sync>>,
     tasks: Vec<JoinHandle<()>>,
+    /// Values provided to this scope's descendants, keyed by their concrete type (D3). A
+    /// descendant injects one by walking parent scopes to the nearest provider of that type.
+    /// Dropped with the scope, so a provided value lives exactly as long as the subtree.
+    contexts: HashMap<TypeId, BoxAny>,
 }
 
 /// The arena behind the runtime's lock.

@@ -1,8 +1,10 @@
 //! `Scope` — an owner that frees the signals, effects, cleanups, and tasks created inside it.
 
+use std::any::TypeId;
+use std::collections::HashMap;
 use std::future::Future;
 
-use super::{Inner, SCOPE, ScopeData, ScopeId, SlotId, rt};
+use super::{BoxAny, Inner, SCOPE, ScopeData, ScopeId, SlotId, current_scope, rt};
 
 /// An ownership boundary for reactive state.
 ///
@@ -82,6 +84,54 @@ impl Default for Scope {
     }
 }
 
+/// Provide a value to the current scope's descendants, so any of them can [`use_context`] it
+/// without a prop threaded through every layer in between.
+///
+/// The value is keyed by its concrete type `T` (D3) — you provide a `Theme` and inject a
+/// `Theme` — so a scope holds at most one value per type. Providing the same type again in a
+/// nested scope *shadows* the outer one for that subtree, standard context semantics. The value
+/// is dropped when its scope is disposed, living exactly as long as the subtree that owns it.
+///
+/// Called with no scope open, this is a no-op: nothing could ever inject the value, so it is
+/// logged and dropped rather than leaked to no owner.
+pub fn provide_context<T: Send + Sync + 'static>(value: T) {
+    let Some(sid) = current_scope() else {
+        tracing::debug!("provide_context called with no scope open; value dropped");
+        return;
+    };
+    let mut w = rt().write();
+    if let Some(data) = w.scopes.get_mut(&sid) {
+        data.contexts
+            .insert(TypeId::of::<T>(), Box::new(value) as BoxAny);
+    }
+}
+
+/// Inject the nearest `T` a surrounding scope [`provide_context`]-ed, cloning it out, or `None`
+/// if no ancestor provides one.
+///
+/// Resolution walks from the current scope rootward through parent links and stops at the first
+/// scope holding a `T`, so a nearer provider shadows a farther one. An absent context is
+/// `None`, never a panic — the caller decides what a missing value means.
+///
+/// The value is cloned while the runtime read lock is held (like [`Signal::get`]), so its
+/// `Clone` **must not read or write any signal** — reentering the lock would deadlock. The
+/// common contexts (a `Copy` [`Signal`] handle, an `Arc`) clone trivially and satisfy this.
+///
+/// [`Signal`]: crate::Signal
+/// [`Signal::get`]: crate::Signal::get
+pub fn use_context<T: Clone + 'static>() -> Option<T> {
+    let mut sid = current_scope()?;
+    let key = TypeId::of::<T>();
+    let w = rt().read();
+    loop {
+        let data = w.scopes.get(&sid)?;
+        if let Some(boxed) = data.contexts.get(&key) {
+            return boxed.downcast_ref::<T>().cloned();
+        }
+        sid = data.parent?;
+    }
+}
+
 fn create_scope(parent: Option<ScopeId>) -> ScopeId {
     let mut w = rt().write();
     let id = ScopeId(w.next_scope);
@@ -94,6 +144,7 @@ fn create_scope(parent: Option<ScopeId>) -> ScopeId {
             nodes: Vec::new(),
             cleanups: Vec::new(),
             tasks: Vec::new(),
+            contexts: HashMap::new(),
         },
     );
     if let Some(p) = parent
