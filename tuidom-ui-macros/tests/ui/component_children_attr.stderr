@@ -1,0 +1,5 @@
+error: pass children as body nodes (`Comp { child, … }`), not a `children:` attribute
+ --> tests/ui/component_children_attr.rs:6:29
+  |
+6 |     let _ = view! { Panel { children: whatever } };
+  |                             ^^^^^^^^

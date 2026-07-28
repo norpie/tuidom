@@ -1,0 +1,8 @@
+error[E0599]: no method named `bogus` found for struct `CounterPropsBuilder<__M0>` in the current scope
+ --> tests/ui/unknown_prop.rs:9:31
+  |
+3 | #[component]
+  | ------------ method `bogus` not found for this struct
+...
+9 |     let _ = view! { Counter { bogus: 1 } };
+  |                               ^^^^^ method not found in `CounterPropsBuilder<CounterPropsMissing_start>`

@@ -1,0 +1,5 @@
+error: a component may declare only one `children` parameter
+ --> tests/ui/component_duplicate_children.rs:4:35
+  |
+4 | fn Duplicated(children: Children, children: Children) -> View {
+  |                                   ^^^^^^^^

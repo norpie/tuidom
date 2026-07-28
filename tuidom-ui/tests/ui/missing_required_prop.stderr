@@ -1,0 +1,11 @@
+error[E0599]: no method named `build` found for struct `CounterPropsBuilder<CounterPropsMissing_start>` in the current scope
+ --> tests/ui/missing_required_prop.rs:9:21
+  |
+3 | #[component]
+  | ------------ method `build` not found for this struct
+...
+9 |     let _ = view! { Counter {} };
+  |                     ^^^^^^^ method not found in `CounterPropsBuilder<CounterPropsMissing_start>`
+  |
+  = note: the method was found for
+          - `CounterPropsBuilder<(Signal<i32>,)>`

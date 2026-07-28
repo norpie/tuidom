@@ -112,8 +112,56 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// changes rather than re-running its body, so a prop holding a plain value would render the one
 /// it was first given forever. As a signal, a prop change reruns only the bindings that read it.
 ///
+/// At the call site `view!` decides how each prop value flows in by its **syntax**: a literal
+/// (`start: 0`) seeds the signal once; any other expression (`start: base.get()`) stays synced to
+/// a parent signal through an effect owned by the caller; and a **closure** is a callback prop
+/// (below), never a signal.
+///
+/// # Optional props
+///
+/// A parameter is required unless it opts out. `#[prop(default)]` falls back to
+/// `Default::default()` when the call site omits it, `#[prop(default = expr)]` to `expr`, and a
+/// bare `Option<T>` parameter defaults to `None`. Omitting a *required* prop is a compile error
+/// naming the field — the generated builder simply has no `build` until every required prop is
+/// set.
+///
+/// # Children
+///
+/// A `children: Children` parameter receives the instantiation's body nodes as a deferred thunk,
+/// which the body places with `{ children }`. The container node keeps its identity — scroll,
+/// focus, running transitions — while the children swap beneath it. A component with no
+/// `children` parameter rejects body nodes at compile time.
+///
+/// ```ignore
+/// #[component]
+/// fn Panel(title: String, children: Children) -> View {
+///     view! { box { text(title.get()), { children } } }
+/// }
+/// // view! { Panel { title: heading.get(), Counter { start: 0 } } }
+/// ```
+///
+/// # Callback props
+///
+/// A [`Callback<A>`] parameter is how a child talks back to its parent: the parent passes a
+/// closure, the child invokes `on_x.call(arg)`. It is stored raw (not a signal), and `view!`
+/// lowers a closure-valued prop to it automatically. A callback is required unless
+/// `#[prop(default)]` gives it the no-op default.
+///
+/// # Context and lifecycle
+///
+/// A component body runs inside its own owner scope, so the ambient runtime functions work with
+/// nothing threaded: [`provide_context`]/[`use_context`] pass a value down a subtree without
+/// prop-drilling, and [`on_mount`]/[`on_cleanup`] tie a side effect to the component's mount and
+/// unmount. Context resolves up the scope chain, which a directly-instantiated child extends but
+/// a `{ children }` block does not.
+///
 /// [`view!`]: macro.view.html
 /// [`Signal`]: ../tuidom_ui/struct.Signal.html
+/// [`Callback<A>`]: ../tuidom_ui/struct.Callback.html
+/// [`provide_context`]: ../tuidom_ui/fn.provide_context.html
+/// [`use_context`]: ../tuidom_ui/fn.use_context.html
+/// [`on_mount`]: ../tuidom_ui/fn.on_mount.html
+/// [`on_cleanup`]: ../tuidom_ui/fn.on_cleanup.html
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = syn::parse_macro_input!(item as ItemFn);
@@ -160,6 +208,7 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
     let props_name = format_ident!("{}Props", name);
 
     let mut props = Vec::new();
+    let mut saw_children = false;
     for input in &sig.inputs {
         let PatType {
             attrs: param_attrs,
@@ -181,6 +230,18 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
                 "a component parameter must be a plain identifier",
             ));
         };
+        let is_children = pat_ident.ident == "children";
+        if is_children {
+            // Two `children` parameters would emit a struct with a duplicate field — an error
+            // pointing into generated code. Name it at the offending parameter instead.
+            if saw_children {
+                return Err(syn::Error::new_spanned(
+                    pat_ident,
+                    "a component may declare only one `children` parameter",
+                ));
+            }
+            saw_children = true;
+        }
         // Two parameter kinds are stored raw as their declared type rather than signal-wrapped,
         // because they carry structure or behavior, not a reactive value:
         //   - `children` — the deferred-child slot, always optional (empty when none is given).
@@ -188,7 +249,7 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
         //     no-op default. Detected syntactically by the type's last path segment (like
         //     `Option`), so a type aliased to `Callback` would slip through — accepted.
         // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
-        let (field_ty, default) = if pat_ident.ident == "children" {
+        let (field_ty, default) = if is_children {
             (
                 quote! { #ty },
                 Some(quote! { ::core::default::Default::default() }),
@@ -799,7 +860,10 @@ impl Node {
                 props,
                 children,
             } => {
-                let props_name = format_ident!("{}Props", name);
+                // Span the generated props type at the component's name, so a PascalCase name that
+                // is not a component — `Foo {}` with no `Foo` in scope — reports "cannot find type
+                // `FooProps`" pointed at the user's `Foo`, not the whole macro invocation.
+                let props_name = format_ident!("{}Props", name, span = name.span());
                 // Each supplied prop becomes a builder setter call; `build` fills omitted optional
                 // props and refuses (at compile time) a missing required one. An unknown prop is a
                 // call to a setter that does not exist — a compile error naming it at the call site.
@@ -811,19 +875,26 @@ impl Node {
                 // Body nodes feed the `children` prop as a deferred, re-runnable thunk. Absent
                 // children leave the setter uncalled, so the component's `children` default (empty)
                 // stands; children given to a component with no `children` prop are a `.children`
-                // call to a setter that does not exist — a compile error at the call site.
+                // call to a setter that does not exist. Spanned at the component name so that "no
+                // method named `children`" points at `Foo`, reading as "Foo takes no children".
                 let children_setter = if children.is_empty() {
                     quote! {}
                 } else {
                     let body = child_list_to_view(children);
-                    quote! { .children(::tuidom_ui::Children::new(move || #body)) }
+                    quote_spanned! { name.span() =>
+                        .children(::tuidom_ui::Children::new(move || #body))
+                    }
                 };
+                // Span `build` at the component name too: a missing required prop makes `build`
+                // resolve on an unfinished builder type whose name encodes the absent field
+                // (`FooPropsMissing_bar`), and that error should land on `Foo`.
+                let build = quote_spanned! { name.span() => .build() };
                 // `component` defers the body to mount time under the component's own scope; the
                 // builder — every prop signal and any syncing effect — runs there too, so it all
                 // belongs to that scope and is freed when the component unmounts.
                 quote! {
                     ::tuidom_ui::component(move || ::tuidom_ui::View::from(
-                        #name(#props_name::builder() #(#setters)* #children_setter .build())
+                        #name(#props_name::builder() #(#setters)* #children_setter #build)
                     ))
                 }
             }

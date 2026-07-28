@@ -1,0 +1,8 @@
+error[E0599]: no method named `children` found for struct `LeafPropsBuilder<__M0>` in the current scope
+  --> tests/ui/stray_children.rs:10:21
+   |
+ 4 | #[component]
+   | ------------ method `children` not found for this struct
+...
+10 |     let _ = view! { Leaf { label: 1, text("x") } };
+   |                     ^^^^ method not found in `LeafPropsBuilder<(Signal<i32>,)>`

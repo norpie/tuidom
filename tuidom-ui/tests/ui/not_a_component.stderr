@@ -1,0 +1,11 @@
+error[E0433]: failed to resolve: use of undeclared type `MissingProps`
+ --> tests/ui/not_a_component.rs:6:21
+  |
+6 |     let _ = view! { Missing {} };
+  |                     ^^^^^^^ use of undeclared type `MissingProps`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Missing` in this scope
+ --> tests/ui/not_a_component.rs:6:21
+  |
+6 |     let _ = view! { Missing {} };
+  |                     ^^^^^^^ not found in this scope

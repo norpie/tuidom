@@ -20,6 +20,13 @@ fn gapped_column() -> Style {
     style
 }
 
+/// A column container with no gap, so each child lands on its own contiguous row.
+fn column() -> Style {
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style
+}
+
 /// A box sized to cover a few cells, so a click can land on it.
 fn sized_box_style() -> Style {
     let mut style = Style::new();
@@ -30,8 +37,13 @@ fn sized_box_style() -> Style {
 
 /// Read the glyphs of the first `n` cells of row 0 as a string.
 fn row0(rt: &HeadlessRuntime, n: u16) -> String {
+    read_row(rt, 0, n)
+}
+
+/// Read the glyphs of the first `n` cells of row `y` as a string.
+fn read_row(rt: &HeadlessRuntime, y: i32, n: u16) -> String {
     (0..n as i32)
-        .filter_map(|x| rt.get_cell(x, 0).map(|c| c.text))
+        .filter_map(|x| rt.get_cell(x, y).map(|c| c.text))
         .collect()
 }
 
@@ -1344,4 +1356,87 @@ fn on_cleanup_free_fn_fires_on_unmount() {
 
     mounted.unmount();
     assert_eq!(cleaned.load(Ordering::SeqCst), 1);
+}
+
+// ---- F5 step 8: a worked composition ----------------------------------------------------
+
+/// A titled section laid out as a column — a reactive header over body content handed in as
+/// `children`, one child per row. The section keeps its identity while its children swap.
+#[crate::component]
+fn Section(title: String, children: Children) -> View {
+    crate::view! {
+        box {
+            style: column(),
+            text(title.get()),
+            { children.clone() },
+        }
+    }
+}
+
+/// A counter with internal reactive state that also reports every new value up to its parent
+/// through a callback prop — child-to-parent composition layered on local state.
+#[crate::component]
+fn ReportingCounter(start: i32, on_change: Callback<i32>) -> View {
+    let count = state(start.get());
+    crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |ev| {
+                if ev.code == KeyCode::Char('+') {
+                    count.update(|c| *c += 1);
+                    on_change.call(count.get());
+                }
+            },
+            text(count.get()),
+        }
+    }
+}
+
+#[test]
+fn worked_composition_of_section_counters_and_callbacks() {
+    // The whole milestone in one tree: a `Section` with a reactive title wraps two
+    // `ReportingCounter`s passed as `children`; each reports its new value up through a callback
+    // into a shared `latest` signal a sibling text reflects. Exercises reactive props, a children
+    // prop, callback props, and per-component internal state together.
+    let doc = Document::new().unwrap();
+    let title = state("Sum".to_string());
+    let latest = state(0i64);
+
+    let view = crate::view! {
+        box {
+            style: column(),
+            Section {
+                title: title.get(),
+                ReportingCounter { start: 0, on_change: move |n| latest.set(n as i64) },
+                ReportingCounter { start: 10, on_change: move |n| latest.set(n as i64) },
+            },
+            text(latest.get()),
+        }
+    };
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    let outer = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 6, 4);
+    rt.render().unwrap();
+    // Row 0 the section title, rows 1–2 the two counters' starts, row 3 the reported latest.
+    assert_eq!(row0(&rt, 3), "Sum");
+    assert_eq!(read_row(&rt, 1, 1), "0");
+    assert_eq!(read_row(&rt, 2, 2), "10");
+    assert_eq!(read_row(&rt, 3, 1), "0");
+
+    // `Section` adds no wrapper node, so its column box is `outer`'s first child, holding the
+    // title, both counters, then the children marker; the second counter's box is child index 2.
+    let section = doc.get_children(outer)[0];
+    let counter1 = doc.get_children(section)[2];
+    doc.focus(counter1).unwrap();
+    rt.simulate_key(KeyCode::Char('+'));
+    rt.render().unwrap();
+
+    assert_eq!(read_row(&rt, 2, 2), "11"); // the focused counter advanced 10 → 11
+    assert_eq!(read_row(&rt, 3, 2), "11"); // and its callback pushed 11 up to `latest`
+
+    // The reactive title prop still tracks its parent signal after all that.
+    title.set("Total".to_string());
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 5), "Total");
 }
