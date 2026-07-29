@@ -1991,3 +1991,130 @@ fn a_cross_axis_resize_re_measures_off_window_items() {
     let layout = doc.get_node(container).unwrap().layout.unwrap();
     assert_eq!(layout.max_scroll_y, 8 * 2 - 2); // every item two cells, minus the 2-row viewport
 }
+
+// ---- Worked examples: the whole milestone at once ---------------------------------------
+
+/// An item carrying all three kinds of `NodeId`-keyed runtime state at once: it is focusable, it
+/// holds a nested scroll container with its own offset, and its own background can run a
+/// transition. Its root is three cells tall over a two-cell nested scroller, so the item's
+/// bottom row is exposed background whose colour a transition can be watched through.
+fn stateful_item() -> View {
+    let mut root = column();
+    root.width(Length::Cells(6));
+    root.height(Length::Cells(3));
+    root.background(Color::white());
+
+    let mut inner = column();
+    inner.overflow_y(Overflow::Scroll);
+    inner.height(Length::Cells(2));
+
+    View::from(
+        boxed().focusable(true).style(root).child(
+            boxed()
+                .style(inner)
+                .child(text("l0"))
+                .child(text("l1"))
+                .child(text("l2"))
+                .child(text("l3")),
+        ),
+    )
+}
+
+fn stateful_list(order: Signal<Vec<&'static str>>) -> View {
+    View::from(boxed().style(column()).child(keyed(move || {
+        order
+            .get()
+            .into_iter()
+            .map(|k| (k, stateful_item as fn() -> View))
+            .collect::<Vec<_>>()
+    })))
+}
+
+#[test]
+fn a_keyed_reorder_carries_focus_scroll_and_a_transition_together() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let _m = mount(&doc, doc.root(), stateful_list(order)).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 6, 12);
+    rt.render().unwrap(); // compute layout so scroll ranges are known
+
+    let parent = doc.get_children(doc.root())[0];
+    let roots = item_roots(&doc, parent); // [a, b, c], rows 0..3, 3..6, 6..9
+    let b = roots[1];
+    let b_scroller = doc.get_children(b)[0];
+
+    // Load b with all three kinds of state: focus it, scroll its nested container, and start a
+    // slow background transition on it — then run the transition halfway.
+    doc.focus(b).unwrap();
+    doc.scroll_to(b_scroller, 0, 2).unwrap();
+    doc.set_transition(
+        b,
+        TransitionConfig::new(
+            TransitionProperty::Background,
+            Duration::from_millis(1000),
+            Easing::Linear,
+        ),
+    )
+    .unwrap();
+    doc.update_style(b, |s| s.background(Color::black()))
+        .unwrap();
+    rt.advance_time(Duration::from_millis(500));
+    rt.render().unwrap();
+
+    assert_eq!(doc.focused(), Some(b));
+    assert_eq!(doc.scroll_offset(b_scroller).y, 2);
+    let midway = rt.get_cell(0, 5).unwrap().bg; // b's exposed bg row (index 1, row 3+2), mid-fade
+    let white = rt.get_cell(0, 2).unwrap().bg; // a's exposed bg row (index 0), never transitioned
+    assert_ne!(midway, white); // the transition has visibly moved off white
+
+    // Reorder b to the front. Nothing about b was rebuilt: it is the same node, so focus, the
+    // nested scroll offset, and the in-flight transition all ride along.
+    order.set(vec!["b", "a", "c"]);
+    assert_eq!(item_roots(&doc, parent), vec![roots[1], roots[0], roots[2]]);
+    assert_eq!(doc.focused(), Some(b)); // focus stayed with the node, not the slot
+    assert_eq!(doc.scroll_offset(b_scroller).y, 2); // nested offset survived
+
+    rt.advance_time(Duration::from_millis(250));
+    rt.render().unwrap();
+    let later = rt.get_cell(0, 2).unwrap().bg; // b now at index 0, exposed bg on row 2
+    let a_now = rt.get_cell(0, 5).unwrap().bg; // a now at index 1, exposed bg on row 5
+    assert_eq!(a_now, white); // a was untouched by any of this
+    assert_ne!(later, white); // b did not snap back to base — the transition survived the move
+    assert_ne!(later, midway); // and it kept progressing past the halfway colour
+}
+
+#[test]
+fn a_windowed_list_scrolls_through_a_large_collection() {
+    let doc = Document::new().unwrap();
+    // A thousand rows, five in view, one item of overscan — only a handful ever exist at once.
+    let mut style = Style::new();
+    style.width(Length::Cells(6));
+    style.height(Length::Cells(5));
+    let view = virtual_list(style, 1, 1, || 1000, |i| text(i.to_string()));
+    let container = mount(&doc, doc.root(), view).unwrap().roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 6, 5);
+    rt.render().unwrap();
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 0, 1), "0");
+
+    // The spacers stand in for the 995 unmaterialized rows, so the scrollbar reflects all thousand.
+    let full = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!(full.max_scroll_y, 1000 - 5);
+
+    // Jump deep into the collection; the window follows and paints the rows at that offset.
+    doc.scroll_to(container, 0, 500).unwrap();
+    rt.render().unwrap();
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 0, 3), "500");
+    assert_eq!(read_row(&rt, 4, 3), "504");
+
+    // Jump to the end; the last visible row is the last item and the window is still bounded.
+    doc.scroll_to(container, 0, 1000).unwrap();
+    rt.render().unwrap();
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 4, 3), "999");
+    let n = doc.get_children(list_content(&doc, container)).len();
+    assert!(n <= 10, "window stayed bounded, got {n} children"); // never a thousand nodes
+}

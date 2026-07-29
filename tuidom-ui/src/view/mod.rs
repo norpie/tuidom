@@ -13,6 +13,18 @@
 //! constant is applied once at mount; a closure becomes an [`effect`], so it reapplies
 //! whenever a signal it read changes. Each property is its own effect, so a change to one
 //! never reapplies another — the granularity the reactive model promises.
+//!
+//! # Structure that reacts, not just properties
+//!
+//! Three view kinds let the *shape* of the subtree react, not only its leaf properties.
+//! [`dynamic`] re-runs a closure and swaps its whole produced view in place. [`keyed`] does the
+//! same over an ordered `(key, item)` sequence, but diffs it instead of rebuilding: a key present
+//! in both the old and new sequence keeps the nodes it already owns — and with them its scroll
+//! offset, focus, and running transitions, all of which the engine keys by `NodeId`, not by
+//! position — so a reorder *moves* an item's nodes rather than minting new ones and dropping that
+//! state. [`virtual_list`] and [`virtual_list_measured`] build on that same differ to materialize
+//! only the on-screen window of a large collection, standing in for the rest with two spacers so
+//! the scroll container's size — and thus its scrollbar — stays honest.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -381,6 +393,10 @@ struct VirtualizedView {
 /// to nothing, and fills in once the viewport is known. The caller's `style` must give the
 /// container a bounded height (a fixed height, or flex within a bounded parent); an unbounded
 /// container has no viewport to virtualize against.
+///
+/// The windowing arithmetic — which items the window holds, the overscan margin, the two spacer
+/// extents — is the engine's `tuidom::virtualize::Virtualizer`; this drives it against live scroll
+/// and layout. See the engine's virtualization guide (`docs/virtualization.md`) for the math.
 ///
 /// For items whose height is not known ahead of time, see [`virtual_list_measured`].
 pub fn virtual_list<C, R>(style: Style, stride: u16, overscan: usize, count: C, render: R) -> View
