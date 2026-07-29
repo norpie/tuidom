@@ -3,14 +3,16 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use tuidom::Document;
+use tuidom::animation::{Easing, TransitionConfig, TransitionProperty};
 use tuidom::event::KeyCode;
 use tuidom::headless::HeadlessRuntime;
-use tuidom::style::{FlexDirection, FlexGap, Length, Style};
+use tuidom::style::{Color, FlexDirection, FlexGap, Length, Overflow, Style};
+use tuidom::{Document, NodeId};
 
-use super::{Children, View, boxed, dyn_text, dynamic, fragment, mount, text};
-use crate::{Callback, state};
+use super::{Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text};
+use crate::{Callback, Signal, state};
 
 /// A column container with a one-row gap between its children.
 fn gapped_column() -> Style {
@@ -1439,4 +1441,260 @@ fn worked_composition_of_section_counters_and_callbacks() {
     title.set("Total".to_string());
     rt.render().unwrap();
     assert_eq!(row0(&rt, 5), "Total");
+}
+
+// ---- F6 Step 1: the keyed differ ---------------------------------------------------------
+
+/// A keyed list of one-glyph text items, keyed by the glyph itself, driven by `order`.
+fn text_list(order: Signal<Vec<&'static str>>) -> View {
+    keyed(move || {
+        order
+            .get()
+            .into_iter()
+            .map(|k| (k, move || text(k)))
+            .collect::<Vec<_>>()
+    })
+}
+
+/// The keyed block's item roots in DOM order — everything under `parent` except the trailing
+/// anchor marker, which a keyed list always keeps last.
+fn item_roots(doc: &Document, parent: NodeId) -> Vec<NodeId> {
+    let mut kids = doc.get_children(parent);
+    kids.pop(); // drop the marker
+    kids
+}
+
+#[test]
+fn a_keyed_list_paints_its_items_in_order() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let _m = mount(&doc, doc.root(), text_list(order)).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "abc");
+}
+
+#[test]
+fn a_keyed_reorder_preserves_node_identity() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let _m = mount(&doc, doc.root(), text_list(order)).unwrap();
+
+    let before = item_roots(&doc, doc.root());
+    assert_eq!(before.len(), 3);
+
+    // Reorder to c, a, b. Every item is the *same node* it was — moved, never rebuilt.
+    order.set(vec!["c", "a", "b"]);
+    let after = item_roots(&doc, doc.root());
+    assert_eq!(after, vec![before[2], before[0], before[1]]);
+}
+
+#[test]
+fn a_keyed_insert_reuses_survivors_and_mounts_only_the_new_key() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let _m = mount(&doc, doc.root(), text_list(order)).unwrap();
+
+    let before = item_roots(&doc, doc.root());
+
+    // Insert x at the front: a, b, c keep their identity and order; only x is freshly mounted.
+    order.set(vec!["x", "a", "b", "c"]);
+    let after = item_roots(&doc, doc.root());
+    assert_eq!(after.len(), 4);
+    assert_eq!(&after[1..], &before[..]);
+    assert!(!before.contains(&after[0]));
+}
+
+#[test]
+fn a_keyed_remove_disposes_only_the_vanished_key() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let _m = mount(&doc, doc.root(), text_list(order)).unwrap();
+
+    let before = item_roots(&doc, doc.root());
+
+    // Drop b: a and c survive with their nodes; b's node is gone from the document.
+    order.set(vec!["a", "c"]);
+    let after = item_roots(&doc, doc.root());
+    assert_eq!(after, vec![before[0], before[2]]);
+    assert!(doc.get_node(before[1]).is_none());
+}
+
+#[test]
+fn an_empty_keyed_list_holds_its_place_between_siblings() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b"]);
+    // A sibling on each side: the block empties and refills without disturbing them, because
+    // the out-of-flow marker keeps holding the slot.
+    let view = fragment([text("<"), text_list(order), text(">")]);
+    let _m = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "<ab>");
+
+    order.set(vec![]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "<>");
+
+    order.set(vec!["a", "b"]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "<ab>");
+}
+
+#[test]
+fn a_duplicate_key_is_dropped_not_duplicated() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "a", "b"]);
+    let _m = mount(&doc, doc.root(), text_list(order)).unwrap();
+
+    // The second "a" is dropped: two items, not three.
+    let roots = item_roots(&doc, doc.root());
+    assert_eq!(roots.len(), 2);
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "ab");
+}
+
+/// A focusable box wrapping the key's glyph — an item that carries focus state.
+fn focusable_list(order: Signal<Vec<&'static str>>) -> View {
+    View::from(boxed().style(column()).child(keyed(move || {
+        order
+            .get()
+            .into_iter()
+            .map(|k| {
+                (k, move || {
+                    View::from(boxed().focusable(true).child(text(k)))
+                })
+            })
+            .collect::<Vec<_>>()
+    })))
+}
+
+#[test]
+fn focus_stays_with_a_keyed_item_across_a_reorder() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let _m = mount(&doc, doc.root(), focusable_list(order)).unwrap();
+
+    let parent = doc.get_children(doc.root())[0];
+    let roots = item_roots(&doc, parent);
+    doc.focus(roots[1]).unwrap(); // focus b
+    assert_eq!(doc.focused(), Some(roots[1]));
+
+    // Reorder so b moves position: focus rides the node, not the slot.
+    order.set(vec!["c", "b", "a"]);
+    assert_eq!(doc.focused(), Some(roots[1]));
+    let after = item_roots(&doc, parent);
+    assert_eq!(after, vec![roots[2], roots[1], roots[0]]);
+}
+
+/// A one-cell box with a solid background — an item whose paint we can watch a transition move.
+fn cell_box(bg: Color) -> Style {
+    let mut style = Style::new();
+    style.width(Length::Cells(1));
+    style.height(Length::Cells(1));
+    style.background(bg);
+    style
+}
+
+#[test]
+fn an_in_flight_transition_stays_with_a_keyed_item_across_a_reorder() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b"]);
+    let view = boxed().style(column()).child(keyed(move || {
+        order
+            .get()
+            .into_iter()
+            .map(|k| {
+                (k, move || {
+                    View::from(boxed().style(cell_box(Color::white())).child(text(k)))
+                })
+            })
+            .collect::<Vec<_>>()
+    }));
+    let _m = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 2);
+    rt.render().unwrap();
+
+    let parent = doc.get_children(doc.root())[0];
+    let roots = item_roots(&doc, parent); // [a, b]
+    let b = roots[1];
+
+    // Start a slow white → black background transition on b (row 1), then run it halfway.
+    doc.set_transition(
+        b,
+        TransitionConfig::new(
+            TransitionProperty::Background,
+            Duration::from_millis(1000),
+            Easing::Linear,
+        ),
+    )
+    .unwrap();
+    doc.update_style(b, |s| s.background(Color::black()))
+        .unwrap();
+    rt.advance_time(Duration::from_millis(500));
+    rt.render().unwrap();
+    let midway = rt.get_cell(0, 1).unwrap().bg; // b, mid-fade
+    let white = rt.get_cell(0, 0).unwrap().bg; // a, never transitioned
+    assert_ne!(midway, white); // the transition has visibly moved off white
+
+    // Reorder b to the top. The transition keeps running on the same node — it does not reset.
+    order.set(vec!["b", "a"]);
+    let after = item_roots(&doc, parent);
+    assert_eq!(after, vec![b, roots[0]]);
+
+    rt.advance_time(Duration::from_millis(250));
+    rt.render().unwrap();
+    let later = rt.get_cell(0, 0).unwrap().bg; // b now on row 0
+    let white_after = rt.get_cell(0, 1).unwrap().bg; // a now on row 1, still white
+    assert_eq!(white_after, white); // a untouched by any of this
+    assert_ne!(later, white); // b did not snap back to its base — the transition survived
+    assert_ne!(later, midway); // and it kept progressing past the halfway color
+}
+
+/// A fixed-height scroll container with more content than fits — its offset is per-node state.
+fn scroller() -> View {
+    let mut style = column();
+    style.overflow_y(Overflow::Scroll);
+    style.height(Length::Cells(2));
+    View::from(
+        boxed()
+            .style(style)
+            .child(text("l0"))
+            .child(text("l1"))
+            .child(text("l2"))
+            .child(text("l3")),
+    )
+}
+
+#[test]
+fn a_nested_scroll_offset_survives_a_keyed_reorder() {
+    let doc = Document::new().unwrap();
+    let order = state(vec!["a", "b", "c"]);
+    let view = boxed().style(column()).child(keyed(move || {
+        order
+            .get()
+            .into_iter()
+            .map(|k| (k, scroller as fn() -> View))
+            .collect::<Vec<_>>()
+    }));
+    let _m = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 8);
+    rt.render().unwrap(); // compute layout so the scroll range is known
+
+    let parent = doc.get_children(doc.root())[0];
+    let roots = item_roots(&doc, parent);
+    doc.scroll_to(roots[1], 0, 2).unwrap(); // scroll b's inner container down
+    assert_eq!(doc.scroll_offset(roots[1]).y, 2);
+
+    // Reorder: b keeps its node, and thus its scroll offset.
+    order.set(vec!["c", "b", "a"]);
+    assert_eq!(doc.scroll_offset(roots[1]).y, 2);
+    let after = item_roots(&doc, parent);
+    assert_eq!(after, vec![roots[2], roots[1], roots[0]]);
 }

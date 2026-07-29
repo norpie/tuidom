@@ -14,7 +14,10 @@
 //! whenever a signal it read changes. Each property is its own effect, so a change to one
 //! never reapplies another — the granularity the reactive model promises.
 
+use std::any::Any;
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tuidom::event::{KeyEvent, ListenerHandle, MouseEvent};
@@ -100,6 +103,7 @@ enum ViewKind {
     Text(TextView),
     Fragment(Vec<View>),
     Dynamic(DynamicView),
+    Keyed(KeyedView),
     Component(ComponentBuild),
 }
 
@@ -119,6 +123,80 @@ struct TextView {
 /// costs no cells and adjacent siblings are undisturbed.
 struct DynamicView {
     produce: Box<dyn Fn() -> View + Send + Sync>,
+}
+
+/// A keyed list: a closure re-run on its own dependencies, producing an ordered sequence of
+/// `(key, item)` pairs. Unlike a [`DynamicView`], which discards and rebuilds its whole content,
+/// this diffs the new key sequence against the mounted one — reusing the nodes a surviving key
+/// already owns, mounting only genuinely new keys, and disposing only vanished ones. Anchored by
+/// the same out-of-flow marker, so an empty list costs no cells.
+struct KeyedView {
+    produce: Box<dyn Fn() -> Vec<(ErasedKey, ItemThunk)> + Send + Sync>,
+}
+
+/// One keyed item's deferred body, built the first time its key appears and never re-run while
+/// the key survives — content updates flow through the signals the item reads, not through the
+/// differ (a key promises "same item", and re-running would throw away the very node identity,
+/// and thus the scroll/focus/transition state, that keys exist to preserve).
+type ItemThunk = Box<dyn FnOnce() -> View>;
+
+/// A type-erased list key. The author's `key = …` may be any `Eq + Hash + Clone` type; boxing it
+/// behind [`DynKey`] lets the differ diff a key sequence without threading that type through the
+/// non-generic [`View`]. Equality is same-type-and-equal: two keys of different concrete types are
+/// never equal, so distinct key types simply never collide.
+struct ErasedKey(Box<dyn DynKey>);
+
+impl ErasedKey {
+    fn new<K: DynKey + 'static>(key: K) -> Self {
+        ErasedKey(Box::new(key))
+    }
+}
+
+impl Clone for ErasedKey {
+    fn clone(&self) -> Self {
+        ErasedKey(self.0.dyn_clone())
+    }
+}
+
+impl PartialEq for ErasedKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.dyn_eq(other.0.as_any())
+    }
+}
+
+impl Eq for ErasedKey {}
+
+impl Hash for ErasedKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.dyn_hash(state);
+    }
+}
+
+/// The object-safe view of a key that [`ErasedKey`] holds — equality, hashing, and cloning
+/// forwarded to the concrete key type behind `dyn`.
+trait DynKey: Send + Sync {
+    fn dyn_eq(&self, other: &dyn Any) -> bool;
+    fn dyn_hash(&self, state: &mut dyn Hasher);
+    fn dyn_clone(&self) -> Box<dyn DynKey>;
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl<K: Eq + Hash + Clone + Send + Sync + 'static> DynKey for K {
+    fn dyn_eq(&self, other: &dyn Any) -> bool {
+        other.downcast_ref::<K>().is_some_and(|o| self == o)
+    }
+
+    fn dyn_hash(&self, mut state: &mut dyn Hasher) {
+        self.hash(&mut state);
+    }
+
+    fn dyn_clone(&self) -> Box<dyn DynKey> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Which engine node an [`Element`] mounts as.
@@ -207,6 +285,50 @@ where
     View {
         kind: ViewKind::Dynamic(DynamicView {
             produce: Box::new(f),
+        }),
+    }
+}
+
+/// A keyed list whose items keep their node identity — and thus their scroll offset, focus, and
+/// running transitions — across reorders.
+///
+/// `produce` yields an ordered sequence of `(key, item)` pairs and is re-run whenever a signal it
+/// read changes, exactly like [`dynamic`]. But instead of rebuilding, the new key sequence is
+/// diffed against the mounted one: a key present in both **reuses** the nodes it already owns
+/// (moving them into place with the engine's `move_child`), a new key **mounts** its item, and a
+/// vanished key **unmounts** its subtree. The item body is built once, the first time its key
+/// appears, and is never re-run while the key survives — so an item's displayed data must update
+/// through the signals it reads, not through this closure re-running (the [`For`-versus-`Index`]
+/// distinction: this is keyed identity, not positional content).
+///
+/// Keys must be unique within one pass; a duplicate is dropped with a warning. The `#[component]`
+/// macro lowers `each … key = …` to this, using the enumerate index as the key when no `key` is
+/// given.
+///
+/// [`For`-versus-`Index`]: https://www.solidjs.com/tutorial/flow_index
+pub fn keyed<K, F, I, T>(produce: F) -> View
+where
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+    F: Fn() -> I + Send + Sync + 'static,
+    I: IntoIterator<Item = (K, T)>,
+    T: FnOnce() -> View + 'static,
+{
+    // Erase each key and box each item body, so the differ works over one non-generic sequence
+    // type behind the `View`. The wrapping closure inherits `Send + Sync` from the captured
+    // `produce`; the boxed item bodies it returns need neither (they are consumed in the same
+    // effect run that produces them).
+    let produce = move || {
+        produce()
+            .into_iter()
+            .map(|(key, item)| {
+                let item: ItemThunk = Box::new(item);
+                (ErasedKey::new(key), item)
+            })
+            .collect::<Vec<_>>()
+    };
+    View {
+        kind: ViewKind::Keyed(KeyedView {
+            produce: Box::new(produce),
         }),
     }
 }
@@ -528,6 +650,40 @@ fn mount_view(
 
             Ok(vec![marker])
         }
+        ViewKind::Keyed(keyed) => {
+            // Same anchor discipline as a dynamic block: an out-of-flow end marker the items sit
+            // before, so the list can empty to nothing and still hold its position among siblings.
+            let marker = doc.create_box()?;
+            doc.set_style(marker, &marker_style())?;
+            place(doc, parent, marker, before)?;
+            register_remove(doc, parent, marker, scope);
+
+            // The live items in DOM order, each its own mount so its scope, nodes, and reactive
+            // state are disposed independently when its key leaves.
+            let items: Arc<Mutex<Vec<(ErasedKey, Mounted)>>> = Arc::new(Mutex::new(Vec::new()));
+
+            // Each item's content mounts under a root scope (as a dynamic block's does), not under
+            // the owner scope, so disposing the owner does not reach them structurally — tear them
+            // down explicitly.
+            let held = items.clone();
+            scope.on_cleanup(move || {
+                for (_, mounted) in std::mem::take(&mut *lock(&held)) {
+                    mounted.unmount();
+                }
+            });
+
+            let produce = keyed.produce;
+            let doc = doc.clone();
+            effect(move || {
+                // Reading `produce()` subscribes this effect to the signals the author read while
+                // building the key sequence — the collection, not the items' own bindings.
+                let produced = produce();
+                let mut state = lock(&items);
+                reconcile(&doc, parent, marker, &mut state, produced);
+            });
+
+            Ok(vec![marker])
+        }
         ViewKind::Component(build) => {
             // The body runs under a child of the mount scope, so its signals, effects, and
             // nodes belong to `child` and are freed when the mount is disposed — the child is
@@ -538,6 +694,109 @@ fn mount_view(
             child.run(|| with_mount_callbacks(|| mount_view(doc, parent, before, build(), &child)))
         }
     }
+}
+
+/// What a surviving or newly seen key resolves to during one [`reconcile`] pass.
+enum Slot {
+    /// A key present last pass: its `usize` is its old DOM position (for the order-preserved
+    /// check) and it carries the [`Mounted`] whose nodes are reused untouched.
+    Reuse(usize, Mounted),
+    /// A key new this pass: its body has not been built yet.
+    New(ItemThunk),
+}
+
+/// Diff a freshly produced key sequence against the mounted items, in place.
+///
+/// Reuses the [`Mounted`] behind every surviving key, mounts each new key's body, and unmounts
+/// every vanished key. Then it puts the DOM in the new order with the fewest moves it can cheaply
+/// justify: if the surviving items kept their relative order (the pure insert/remove/append case)
+/// none of them move at all — only new items are inserted and removed ones dropped; otherwise it
+/// repositions every surviving item. Placement runs right-to-left so the anchor to insert before
+/// is always the already-placed node to the item's right, starting at the end `marker`.
+fn reconcile(
+    doc: &Document,
+    parent: NodeId,
+    marker: NodeId,
+    state: &mut Vec<(ErasedKey, Mounted)>,
+    produced: Vec<(ErasedKey, ItemThunk)>,
+) {
+    // Index the mounted items by key, remembering each one's position for the order check. The
+    // sequence always holds unique keys (we dedup below), so a collision here can only be a prior
+    // bug — unmount the evicted subtree rather than leak it.
+    let mut old: HashMap<ErasedKey, (usize, Mounted)> = HashMap::with_capacity(state.len());
+    for (pos, (key, mounted)) in state.drain(..).enumerate() {
+        if let Some((_, evicted)) = old.insert(key, (pos, mounted)) {
+            evicted.unmount();
+        }
+    }
+
+    // Resolve the new order into slots, dropping duplicate keys. A surviving key is *removed* from
+    // `old`, so whatever stays in `old` afterward is exactly the vanished keys.
+    let mut seen: HashSet<ErasedKey> = HashSet::with_capacity(produced.len());
+    let mut order: Vec<(ErasedKey, Slot)> = Vec::with_capacity(produced.len());
+    for (key, item) in produced {
+        if !seen.insert(key.clone()) {
+            tracing::warn!("keyed list has a duplicate key; the later item is dropped");
+            continue;
+        }
+        match old.remove(&key) {
+            Some((pos, mounted)) => order.push((key, Slot::Reuse(pos, mounted))),
+            None => order.push((key, Slot::New(item))),
+        }
+    }
+
+    // Vanished keys.
+    for (_, (_, mounted)) in old.drain() {
+        mounted.unmount();
+    }
+
+    // Did the survivors keep their relative order? If their old positions read strictly increasing
+    // down the new order, they are already in the right DOM order and need no moves.
+    let mut preserved = true;
+    let mut last_pos: Option<usize> = None;
+    for (_, slot) in &order {
+        if let Slot::Reuse(pos, _) = slot {
+            if last_pos.is_some_and(|prev| *pos <= prev) {
+                preserved = false;
+                break;
+            }
+            last_pos = Some(*pos);
+        }
+    }
+
+    // Place right-to-left. New items mount before the running anchor; survivors move there only on
+    // a real reorder. The anchor walks leftward as each item's first node is settled.
+    let mut anchor = marker;
+    let mut placed: Vec<(ErasedKey, Mounted)> = Vec::with_capacity(order.len());
+    for (key, slot) in order.into_iter().rev() {
+        let mounted = match slot {
+            Slot::New(item) => match mount_at(doc, parent, Some(anchor), item()) {
+                Ok(mounted) => mounted,
+                Err(err) => {
+                    tracing::warn!(?parent, "keyed item failed to mount: {err}");
+                    continue;
+                }
+            },
+            Slot::Reuse(_, mounted) => {
+                if !preserved {
+                    // Moving each root before the anchor in order rebuilds the run left-to-right:
+                    // `[… r0, r1, anchor]`.
+                    for &root in mounted.roots() {
+                        if let Err(err) = doc.move_child(parent, root, anchor) {
+                            tracing::warn!(?root, "keyed reorder failed: {err}");
+                        }
+                    }
+                }
+                mounted
+            }
+        };
+        if let Some(&first) = mounted.roots().first() {
+            anchor = first;
+        }
+        placed.push((key, mounted));
+    }
+    placed.reverse();
+    *state = placed;
 }
 
 /// The style of a dynamic block's anchor marker: absolute and zero-sized, so it participates

@@ -45,6 +45,6 @@ pub use runtime::{
 // coexist under one path — `#[component]` finds the macro, `component(..)` the function.
 pub use tuidom_ui_macros::{component, view};
 pub use view::{
-    Children, Element, Mounted, View, boxed, component, dyn_text, dynamic, fragment, input, mount,
-    on_mount, text,
+    Children, Element, Mounted, View, boxed, component, dyn_text, dynamic, fragment, input, keyed,
+    mount, on_mount, text,
 };
