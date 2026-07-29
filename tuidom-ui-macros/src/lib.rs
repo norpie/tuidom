@@ -66,11 +66,13 @@ use syn::{
 /// name — which it is for downstream users, and in-crate via `extern crate self as tuidom_ui`.
 ///
 /// The one dispatch rule is **literal-vs-expression**: a literal value is applied once and
-/// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). Control
-/// flow and reactive view holes each lower to a single `dynamic` block, so a change to a
-/// condition or collection re-runs only that block and never its siblings. `each` rebuilds the
-/// whole list on change in F4; keyed, identity-preserving reconciliation is F6, behind the same
-/// syntax, and `key` already parses today as a no-op.
+/// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). An `if`,
+/// `match`, or view hole lowers to a single `dynamic` block, so a change to a condition re-runs
+/// only that block and never its siblings. An `each` lowers to a keyed differ: a `key = …` clause
+/// preserves item identity (and thus scroll/focus/transition state) across reorders, while an
+/// unkeyed `each` keys by position — reusing nodes on append, but showing stale content if a value
+/// at a stable index changes without a key. An item body is built once per key and updates only
+/// through the signals it reads.
 ///
 /// [`View`]: ../tuidom_ui/struct.View.html
 #[proc_macro]
@@ -594,12 +596,14 @@ struct MatchArm {
 }
 
 /// An `each i, value in collection [key = …] { … }` loop. `i` binds the enumerate index and
-/// `value` the item; either may be `_`. `key` parses but is a no-op until F6's keyed
-/// reconciliation, so it is not stored.
+/// `value` the item; either may be `_`. A `key = expr` clause makes the list keyed — items keep
+/// their node identity across reorders; without it the enumerate index is the key, which reuses
+/// nodes by position (correct for appends, stale on an unkeyed reorder).
 struct EachNode {
     index_pat: Pat,
     value_pat: Pat,
     collection: Expr,
+    key: Option<Expr>,
     body: Vec<Node>,
 }
 
@@ -734,8 +738,8 @@ fn parse_match(input: ParseStream) -> syn::Result<MatchNode> {
 }
 
 /// Parse `i, value in collection [key = expr] { … }`, positioned just after the `each`
-/// identifier. Either pattern may be `_`. The `key` clause is parsed and dropped — it is a
-/// documented no-op until F6 turns naive rebuild into keyed reconciliation.
+/// identifier. Either pattern may be `_`. A `key = expr` clause, when present, is what makes the
+/// list keyed; its expression may read the index and value bindings.
 fn parse_each(input: ParseStream) -> syn::Result<EachNode> {
     let index_pat = Pat::parse_single(input)?;
     input.parse::<Token![,]>()?;
@@ -745,6 +749,7 @@ fn parse_each(input: ParseStream) -> syn::Result<EachNode> {
 
     // After the collection comes either the item block or a `key = …` clause. Anything else is
     // a mistake worth naming rather than letting `braced!` report a bare "expected `{`".
+    let mut key = None;
     if !input.peek(syn::token::Brace) {
         let kw = input.parse::<Ident>()?;
         if kw != "key" {
@@ -754,9 +759,7 @@ fn parse_each(input: ParseStream) -> syn::Result<EachNode> {
             ));
         }
         input.parse::<Token![=]>()?;
-        // Dropped: keyed reconciliation is F6. Parsing it keeps the grammar stable so item
-        // templates need not change when the key starts mattering.
-        let _key = Expr::parse_without_eager_brace(input)?;
+        key = Some(Expr::parse_without_eager_brace(input)?);
     }
 
     let body = parse_child_block(input)?;
@@ -764,6 +767,7 @@ fn parse_each(input: ParseStream) -> syn::Result<EachNode> {
         index_pat,
         value_pat,
         collection,
+        key,
         body,
     })
 }
@@ -845,14 +849,40 @@ impl Node {
                 let value = &node.value_pat;
                 let collection = &node.collection;
                 let item = child_list_to_view(&node.body);
-                // Naive rebuild (F4): the whole list re-mounts when the collection changes. Item
-                // templates keep their own reactive holes; identity-preserving reorder is F6.
-                quote! {
-                    ::tuidom_ui::dynamic(move || ::tuidom_ui::fragment(
-                        ::std::iter::IntoIterator::into_iter(#collection)
-                            .enumerate()
-                            .map(move |(#index, #value)| #item)
-                    ))
+                // Both forms lower to the same `keyed` differ, which reuses the node a surviving
+                // key already owns instead of rebuilding. A `key = …` clause supplies the key and
+                // the list preserves item identity across reorders; without one the enumerate index
+                // is the key, reusing nodes by position — cheap and correct for appends, but stale
+                // if items reorder or a value at a stable index changes without a key. Either way
+                // an item body is built once per key and updates only through the signals it reads.
+                match &node.key {
+                    Some(key) => quote! {
+                        ::tuidom_ui::keyed(move || {
+                            ::std::iter::IntoIterator::into_iter(#collection)
+                                .enumerate()
+                                .map(move |(#index, #value)| {
+                                    // The key is computed before `value` moves into the item body,
+                                    // so `key = value.id` borrows it and the body still owns it.
+                                    let __key = #key;
+                                    (__key, move || #item)
+                                })
+                        })
+                    },
+                    None => quote! {
+                        ::tuidom_ui::keyed(move || {
+                            ::std::iter::IntoIterator::into_iter(#collection)
+                                .enumerate()
+                                .map(move |(__index, #value)| {
+                                    // Key by position. The index is rebound inside the body so the
+                                    // user's `i` binding is in scope even though the key owns it too
+                                    // (a `usize` is `Copy`).
+                                    (__index, move || {
+                                        let #index = __index;
+                                        #item
+                                    })
+                                })
+                        })
+                    },
                 }
             }
             Node::Component {

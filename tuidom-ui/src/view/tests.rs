@@ -814,9 +814,41 @@ fn view_macro_counter_worked_example() {
 // ---- F4 step 5: `each` ------------------------------------------------------------------
 
 #[test]
-fn view_macro_each_renders_a_list_and_rebuilds() {
-    // `_, item` drops the index. The list renders adjacently (default row layout); changing the
-    // collection rebuilds it whole — the naive F4 semantics, keyed reorder is F6.
+fn view_macro_unkeyed_each_reuses_nodes_by_index() {
+    // Unkeyed `each` keys by position: appending keeps the existing item nodes and mounts only the
+    // new tail. `_, item` drops the index; the list lays out adjacently (default row).
+    let doc = Document::new().unwrap();
+    let items = state(vec![String::from("a"), String::from("b")]);
+    let view = crate::view! {
+        each _, item in items.get() {
+            text(item),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 2), "ab");
+    let before = item_roots(&doc, doc.root());
+
+    items.set(vec![
+        String::from("a"),
+        String::from("b"),
+        String::from("c"),
+    ]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "abc");
+    // a and b are the very same nodes; only c was mounted.
+    let after = item_roots(&doc, doc.root());
+    assert_eq!(after.len(), 3);
+    assert_eq!(&after[..2], &before[..]);
+}
+
+#[test]
+fn view_macro_unkeyed_each_keeps_stale_content_when_a_value_changes() {
+    // The unkeyed hazard: with no key, a value that changes at a stable index reuses that
+    // position's node — built once, never re-run — so it keeps its original glyph. The remedy is
+    // a `key`, or an item that reads its value through a signal.
     let doc = Document::new().unwrap();
     let items = state(vec![String::from("a"), String::from("b")]);
     let view = crate::view! {
@@ -830,19 +862,49 @@ fn view_macro_each_renders_a_list_and_rebuilds() {
     rt.render().unwrap();
     assert_eq!(row0(&rt, 2), "ab");
 
-    items.set(vec![
-        String::from("x"),
-        String::from("y"),
-        String::from("z"),
-    ]);
+    // Same length, different values: indices 0 and 1 survive and keep "a"/"b".
+    items.set(vec![String::from("x"), String::from("y")]);
     rt.render().unwrap();
-    assert_eq!(row0(&rt, 3), "xyz");
+    assert_eq!(row0(&rt, 2), "ab");
 }
 
 #[test]
-fn view_macro_each_binds_the_index_and_accepts_a_key() {
-    // `i` binds the enumerate index (a `usize`, stringified by the text hole). `key = …` parses
-    // and is accepted — a documented no-op until F6 — proving the grammar is stable now.
+fn view_macro_keyed_each_preserves_identity_across_a_reorder() {
+    // `key = item.clone()` makes the list keyed: a reorder moves the existing nodes instead of
+    // rebuilding, so each item keeps its identity — and, because the key is the value, its content
+    // stays correct.
+    let doc = Document::new().unwrap();
+    let items = state(vec![
+        String::from("a"),
+        String::from("b"),
+        String::from("c"),
+    ]);
+    let view = crate::view! {
+        each _, item in items.get() key = item.clone() {
+            text(item),
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "abc");
+    let before = item_roots(&doc, doc.root());
+
+    items.set(vec![
+        String::from("c"),
+        String::from("a"),
+        String::from("b"),
+    ]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 3), "cab");
+    let after = item_roots(&doc, doc.root());
+    assert_eq!(after, vec![before[2], before[0], before[1]]);
+}
+
+#[test]
+fn view_macro_each_binds_the_index() {
+    // `i` binds the enumerate index (a `usize`, stringified by the text hole).
     let doc = Document::new().unwrap();
     let items = state(vec![String::from("x"), String::from("y")]);
     let view = crate::view! {
@@ -1443,7 +1505,7 @@ fn worked_composition_of_section_counters_and_callbacks() {
     assert_eq!(row0(&rt, 5), "Total");
 }
 
-// ---- F6 Step 1: the keyed differ ---------------------------------------------------------
+// ---- Keyed lists: identity-preserving reconciliation ------------------------------------
 
 /// A keyed list of one-glyph text items, keyed by the glyph itself, driven by `order`.
 fn text_list(order: Signal<Vec<&'static str>>) -> View {
