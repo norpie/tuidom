@@ -46,5 +46,5 @@ pub use runtime::{
 pub use tuidom_ui_macros::{component, view};
 pub use view::{
     Children, Element, Mounted, View, boxed, component, dyn_text, dynamic, fragment, input, keyed,
-    mount, on_mount, text,
+    mount, on_mount, text, virtual_list,
 };

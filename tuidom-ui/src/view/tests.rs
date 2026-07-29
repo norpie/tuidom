@@ -11,7 +11,7 @@ use tuidom::headless::HeadlessRuntime;
 use tuidom::style::{Color, FlexDirection, FlexGap, Length, Overflow, Style};
 use tuidom::{Document, NodeId};
 
-use super::{Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text};
+use super::{Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text, virtual_list};
 use crate::{Callback, Signal, state};
 
 /// A column container with a one-row gap between its children.
@@ -1759,4 +1759,82 @@ fn a_nested_scroll_offset_survives_a_keyed_reorder() {
     assert_eq!(doc.scroll_offset(roots[1]).y, 2);
     let after = item_roots(&doc, parent);
     assert_eq!(after, vec![roots[2], roots[1], roots[0]]);
+}
+
+// ---- The uniform windowed list ----------------------------------------------------------
+
+/// A fixed 4×5 uniform list of `count` one-row text items, keyed by index. The width leaves the
+/// scroll container's own vertical scrollbar (its last column) clear of the item text.
+fn number_list(count: usize) -> View {
+    let mut style = Style::new();
+    style.width(Length::Cells(4));
+    style.height(Length::Cells(5));
+    virtual_list(style, 1, 0, move || count, |i| text(i.to_string()))
+}
+
+#[test]
+fn an_unlaid_out_virtual_list_materializes_nothing() {
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), number_list(100)).unwrap();
+    let container = mounted.roots()[0];
+
+    // Before the first layout the viewport is unknown, so the driver skips rather than windowing
+    // to a zero viewport: the container holds only its lead spacer, the keyed marker, and the
+    // trail spacer — no items yet.
+    assert_eq!(doc.get_children(container).len(), 3);
+}
+
+#[test]
+fn a_virtual_list_materializes_only_the_visible_window() {
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), number_list(100)).unwrap();
+    let container = mounted.roots()[0];
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 5);
+    rt.render().unwrap(); // first frame learns the viewport and schedules the window
+    rt.render().unwrap(); // second frame paints the materialized items
+
+    // Viewport 5, stride 1, no overscan: exactly items 0..=4 exist and paint on their rows.
+    assert_eq!(read_row(&rt, 0, 1), "0");
+    assert_eq!(read_row(&rt, 4, 1), "4");
+    // Five item nodes plus the lead spacer, keyed marker, and trail spacer — not 100 items.
+    assert_eq!(doc.get_children(container).len(), 8);
+}
+
+#[test]
+fn spacers_keep_the_scroll_range_honest() {
+    let doc = Document::new().unwrap();
+    let _m = mount(&doc, doc.root(), number_list(100)).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 5);
+    rt.render().unwrap();
+    rt.render().unwrap();
+
+    // Only five items are materialized, but the spacers stand in for the other 95, so the
+    // container's scroll range reflects the full collection: 100 cells of content − 5 of viewport.
+    let container = doc.get_children(doc.root())[0];
+    let layout = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!(layout.max_scroll_y, 95);
+}
+
+#[test]
+fn scrolling_a_virtual_list_shifts_the_materialized_window() {
+    let doc = Document::new().unwrap();
+    let _m = mount(&doc, doc.root(), number_list(100)).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 5);
+    rt.render().unwrap();
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 0, 1), "0"); // start of the list
+
+    // Scroll ten rows down; the window slides to items 10..=14.
+    let container = doc.get_children(doc.root())[0];
+    doc.scroll_to(container, 0, 10).unwrap();
+    rt.render().unwrap();
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 0, 2), "10");
+    assert_eq!(read_row(&rt, 4, 2), "14");
+
+    // Still a bounded window — the far items never materialized.
+    assert_eq!(doc.get_children(container).len(), 8);
 }

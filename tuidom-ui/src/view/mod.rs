@@ -21,10 +21,11 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tuidom::event::{KeyEvent, ListenerHandle, MouseEvent};
-use tuidom::style::{Length, Position, Style};
+use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
+use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
 
-use crate::runtime::{Scope, effect};
+use crate::runtime::{Scope, effect, state};
 
 thread_local! {
     /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
@@ -104,6 +105,8 @@ enum ViewKind {
     Fragment(Vec<View>),
     Dynamic(DynamicView),
     Keyed(KeyedView),
+    // Boxed because a `VirtualizedView` (a style, two boxed closures) dwarfs the other variants.
+    Virtualized(Box<VirtualizedView>),
     Component(ComponentBuild),
 }
 
@@ -330,6 +333,57 @@ where
         kind: ViewKind::Keyed(KeyedView {
             produce: Box::new(produce),
         }),
+    }
+}
+
+/// A virtualized vertical list: materializes only the on-screen window of a large uniform
+/// collection, holding the rest open with two spacers.
+struct VirtualizedView {
+    /// Caller-supplied container style. The list forces `flex_direction: Column` and
+    /// `overflow_y: Scroll` on top of it and supplies the rest (height, border, …).
+    style: Style,
+    /// Every item's extent in cells — the uniform stride.
+    stride: u16,
+    /// Items materialized beyond each edge of the visible range.
+    overscan: usize,
+    /// The collection's length, read reactively so the list resizes as it grows or shrinks.
+    count: Box<dyn Fn() -> usize + Send + Sync>,
+    /// Builds the item at an index. Called when the index enters the window, and its subtree is
+    /// disposed when the index leaves — so it is built once per materialization, not per frame.
+    render: Arc<dyn Fn(usize) -> View + Send + Sync>,
+}
+
+/// A virtualized vertical list over a large uniform collection.
+///
+/// Only the items in view (plus `overscan` on each side) exist in the DOM at any moment; the rest
+/// are stood in for by two spacers, so the scroll container's content size — and thus its
+/// scrollbar — stays honest. As the list scrolls, entering items mount and leaving items unmount
+/// through the same keyed differ as [`keyed`], so an item that merely shifts within the window
+/// keeps its identity.
+///
+/// `stride` is each item's height in cells and `overscan` the number of extra items kept beyond
+/// each edge. `count` is read reactively — grow or shrink the collection and the window follows.
+/// `render` builds an item from its index; it runs once when the index enters the window, so an
+/// item that must reflect changing data should read it through a signal.
+///
+/// The container reads its own viewport from the layout snapshot each frame. Until it has been laid
+/// out — the first frame, before any size is known — the window holds empty rather than collapsing
+/// to nothing, and fills in once the viewport is known. The caller's `style` must give the
+/// container a bounded height (a fixed height, or flex within a bounded parent); an unbounded
+/// container has no viewport to virtualize against.
+pub fn virtual_list<C, R>(style: Style, stride: u16, overscan: usize, count: C, render: R) -> View
+where
+    C: Fn() -> usize + Send + Sync + 'static,
+    R: Fn(usize) -> View + Send + Sync + 'static,
+{
+    View {
+        kind: ViewKind::Virtualized(Box::new(VirtualizedView {
+            style,
+            stride,
+            overscan,
+            count: Box::new(count),
+            render: Arc::new(render),
+        })),
     }
 }
 
@@ -684,6 +738,7 @@ fn mount_view(
 
             Ok(vec![marker])
         }
+        ViewKind::Virtualized(view) => mount_virtualized(doc, parent, before, *view, scope),
         ViewKind::Component(build) => {
             // The body runs under a child of the mount scope, so its signals, effects, and
             // nodes belong to `child` and are freed when the mount is disposed — the child is
@@ -797,6 +852,139 @@ fn reconcile(
     }
     placed.reverse();
     *state = placed;
+}
+
+/// Mount a virtualized list: a scroll container holding a lead spacer, the live item window, and a
+/// trail spacer, driven by a [`Virtualizer`] off the container's own scroll offset and viewport.
+///
+/// The item window is a [`keyed`] block over a `window` signal the driver writes, so materializing
+/// and dematerializing items reuses the identity-preserving differ. The driver runs off engine
+/// events (scroll and post-frame) plus a count effect, and touches the DOM **only** when the
+/// virtualizer reports a changed window — otherwise a post-frame handler that mutated every frame
+/// would keep the renderer permanently awake.
+fn mount_virtualized(
+    doc: &Document,
+    parent: NodeId,
+    before: Option<NodeId>,
+    view: VirtualizedView,
+    scope: &Scope,
+) -> Result<Vec<NodeId>> {
+    // The scroll container. We own the structural bits; the caller's style supplies the rest.
+    let container = doc.create_box()?;
+    let mut style = view.style;
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    doc.set_style(container, &style)?;
+    place(doc, parent, container, before)?;
+    register_remove(doc, parent, container, scope);
+
+    // Sibling order under the container: lead spacer, the item window, trail spacer.
+    let lead = doc.create_box()?;
+    doc.set_style(lead, &spacer_style(0))?;
+    doc.append_child(container, lead)?;
+
+    // The materialized index range: written by the driver, read by the keyed differ. Created under
+    // the mount scope, so it is disposed with the rest of the subtree.
+    let window = state(0..0usize);
+    let render = view.render;
+    let items = keyed(move || {
+        let render = render.clone();
+        window
+            .get()
+            .map(move |index| {
+                let render = render.clone();
+                (index, move || render(index))
+            })
+            .collect::<Vec<_>>()
+    });
+    mount_view(doc, container, None, items, scope)?;
+
+    let trail = doc.create_box()?;
+    doc.set_style(trail, &spacer_style(0))?;
+    doc.append_child(container, trail)?;
+
+    let virt = Arc::new(Mutex::new(Virtualizer::uniform(
+        0,
+        view.stride,
+        view.overscan,
+    )));
+
+    // Recompute the window from the current offset and viewport, applying spacer sizes and the new
+    // item range only if something actually changed.
+    let recompute = {
+        let doc = doc.clone();
+        let virt = virt.clone();
+        Arc::new(move || {
+            // The viewport is unknown until the container is in the layout snapshot. Skip rather
+            // than window to a zero viewport, which would dematerialize the whole list.
+            let Some(node) = doc.get_node(container) else {
+                return;
+            };
+            let Some(layout) = node.layout else {
+                return;
+            };
+            let viewport = layout.scrollport.height;
+            let offset = doc.scroll_offset(container).y;
+            let update = lock(&virt).update(offset, viewport);
+            if let Some(update) = update {
+                let lead_cells = clamp_cells(update.window.lead);
+                let trail_cells = clamp_cells(update.window.trail);
+                let _ = doc.update_style(lead, |s| s.height(Length::Cells(lead_cells)));
+                let _ = doc.update_style(trail, |s| s.height(Length::Cells(trail_cells)));
+                // Setting the window reruns the keyed differ, mounting and unmounting items.
+                window.set(update.window.items);
+            }
+        })
+    };
+
+    // Count changes resize the collection and recompute — in an effect, so it tracks the count's
+    // signals. Runs once at mount, where the container is not yet laid out, so `recompute` skips.
+    {
+        let virt = virt.clone();
+        let count = view.count;
+        let recompute = recompute.clone();
+        effect(move || {
+            let n = count();
+            lock(&virt).set_count(n);
+            recompute();
+        });
+    }
+
+    // Offset and viewport changes arrive as engine events, not signals. Scrolling always schedules
+    // a frame, so post-frame alone would catch it; on_scroll recomputes *before* that frame paints,
+    // so a scroll and the items it reveals land in the same frame.
+    {
+        let recompute = recompute.clone();
+        let handle = doc.on_scroll(container, move |_| recompute())?;
+        let doc = doc.clone();
+        scope.on_cleanup(move || {
+            doc.remove_listener(handle);
+        });
+    }
+    {
+        let handle = doc.on_post_frame(move |_| recompute());
+        let doc = doc.clone();
+        scope.on_cleanup(move || {
+            doc.remove_listener(handle);
+        });
+    }
+
+    Ok(vec![container])
+}
+
+/// A virtual-list spacer: `cells` of main-axis space that must never shrink, so it faithfully
+/// holds open the extent of the items it stands in for.
+fn spacer_style(cells: u16) -> Style {
+    let mut style = Style::new();
+    style.height(Length::Cells(cells));
+    style.flex_shrink(0.0);
+    style
+}
+
+/// Clamp a spacer extent to the range a `Length::Cells` holds. A collection tall enough to overflow
+/// `u16` saturates rather than wrapping — the scroll range is `u16` anyway.
+fn clamp_cells(cells: u64) -> u16 {
+    cells.min(u64::from(u16::MAX)) as u16
 }
 
 /// The style of a dynamic block's anchor marker: absolute and zero-sized, so it participates
