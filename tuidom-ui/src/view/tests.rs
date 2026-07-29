@@ -8,10 +8,13 @@ use std::time::Duration;
 use tuidom::animation::{Easing, TransitionConfig, TransitionProperty};
 use tuidom::event::KeyCode;
 use tuidom::headless::HeadlessRuntime;
-use tuidom::style::{Color, FlexDirection, FlexGap, Length, Overflow, Style};
+use tuidom::style::{Color, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Style};
 use tuidom::{Document, NodeId};
 
-use super::{Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text, virtual_list};
+use super::{
+    Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text, virtual_list,
+    virtual_list_measured,
+};
 use crate::{Callback, Signal, state};
 
 /// A column container with a one-row gap between its children.
@@ -1763,6 +1766,12 @@ fn a_nested_scroll_offset_survives_a_keyed_reorder() {
 
 // ---- The uniform windowed list ----------------------------------------------------------
 
+/// The scroll container's inner content box — its single child, which holds the spacers and the
+/// materialized item window.
+fn list_content(doc: &Document, container: NodeId) -> NodeId {
+    doc.get_children(container)[0]
+}
+
 /// A fixed 4×5 uniform list of `count` one-row text items, keyed by index. The width leaves the
 /// scroll container's own vertical scrollbar (its last column) clear of the item text.
 fn number_list(count: usize) -> View {
@@ -1779,9 +1788,9 @@ fn an_unlaid_out_virtual_list_materializes_nothing() {
     let container = mounted.roots()[0];
 
     // Before the first layout the viewport is unknown, so the driver skips rather than windowing
-    // to a zero viewport: the container holds only its lead spacer, the keyed marker, and the
+    // to a zero viewport: the content box holds only its lead spacer, the keyed marker, and the
     // trail spacer — no items yet.
-    assert_eq!(doc.get_children(container).len(), 3);
+    assert_eq!(doc.get_children(list_content(&doc, container)).len(), 3);
 }
 
 #[test]
@@ -1798,7 +1807,7 @@ fn a_virtual_list_materializes_only_the_visible_window() {
     assert_eq!(read_row(&rt, 0, 1), "0");
     assert_eq!(read_row(&rt, 4, 1), "4");
     // Five item nodes plus the lead spacer, keyed marker, and trail spacer — not 100 items.
-    assert_eq!(doc.get_children(container).len(), 8);
+    assert_eq!(doc.get_children(list_content(&doc, container)).len(), 8);
 }
 
 #[test]
@@ -1836,5 +1845,149 @@ fn scrolling_a_virtual_list_shifts_the_materialized_window() {
     assert_eq!(read_row(&rt, 4, 2), "14");
 
     // Still a bounded window — the far items never materialized.
-    assert_eq!(doc.get_children(container).len(), 8);
+    assert_eq!(doc.get_children(list_content(&doc, container)).len(), 8);
+}
+
+// ---- The measured windowed list ---------------------------------------------------------
+
+/// An item that is really two cells tall (a fixed-height box), labelled by index.
+fn tall_item(i: usize) -> View {
+    let mut style = Style::new();
+    style.height(Length::Cells(2));
+    View::from(boxed().style(style).child(text(i.to_string())))
+}
+
+#[test]
+fn a_measured_list_windows_by_real_extent_not_estimate() {
+    let doc = Document::new().unwrap();
+    let mut style = Style::new();
+    style.width(Length::Cells(4));
+    style.height(Length::Cells(6));
+    // Estimate one cell, but every item is really two — the window must follow the measurements.
+    let view = virtual_list_measured(style, 1, 0, || 20, tall_item);
+    let _m = mount(&doc, doc.root(), view).unwrap();
+
+    let container = doc.get_children(doc.root())[0];
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 6);
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+
+    // A 6-cell viewport at a real height of 2 holds three items, not the six the estimate implied.
+    assert_eq!(doc.get_children(list_content(&doc, container)).len(), 6); // lead+3 items+marker+trail
+    assert_eq!(read_row(&rt, 0, 1), "0");
+    assert_eq!(read_row(&rt, 2, 1), "1");
+    assert_eq!(read_row(&rt, 4, 1), "2");
+}
+
+#[test]
+fn anchoring_pins_the_view_when_an_item_above_the_fold_grows() {
+    let doc = Document::new().unwrap();
+    let top_height = state(2u16); // item 0's height; every other item is always two cells
+    let mut style = Style::new();
+    style.width(Length::Cells(4));
+    style.height(Length::Cells(4)); // viewport 4
+    let render = move |i: usize| -> View {
+        if i == 0 {
+            View::from(
+                boxed()
+                    .dyn_style(move || {
+                        let mut s = Style::new();
+                        s.height(Length::Cells(top_height.get()));
+                        s
+                    })
+                    .child(text("A")),
+            )
+        } else {
+            let mut s = Style::new();
+            s.height(Length::Cells(2));
+            View::from(boxed().style(s).child(text(i.to_string())))
+        }
+    };
+    // Estimate 2 matches every item's initial height; overscan 2 keeps items 0 and 1 materialized
+    // (and thus measured) while item 2 sits at the top.
+    let view = virtual_list_measured(style, 2, 2, || 20, render);
+    let _m = mount(&doc, doc.root(), view).unwrap();
+
+    let container = doc.get_children(doc.root())[0];
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 4);
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+
+    // Scroll so items 0 and 1 (two cells each) sit above the fold and item 2 is at the top.
+    doc.scroll_to(container, 0, 4).unwrap();
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+    assert_eq!(read_row(&rt, 0, 1), "2");
+    assert_eq!(doc.scroll_offset(container).y, 4);
+
+    // Grow item 0 (above the fold) by three cells. Anchoring absorbs the growth into the offset, so
+    // item 2 stays put rather than sliding down out from under the eye.
+    top_height.set(5);
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+    assert_eq!(read_row(&rt, 0, 1), "2");
+    assert_eq!(doc.scroll_offset(container).y, 7);
+}
+
+/// An item whose height depends on the container width: three 2-wide blocks that sit on one row
+/// when wide (height 1) and wrap to two rows when narrow (height 2).
+fn wrapping_item() -> View {
+    let mut item = Style::new();
+    item.flex_wrap(FlexWrap::Wrap);
+    let block = || {
+        let mut s = Style::new();
+        s.width(Length::Cells(2));
+        s.height(Length::Cells(1));
+        s.flex_shrink(0.0);
+        boxed().style(s)
+    };
+    View::from(
+        boxed()
+            .style(item)
+            .child(block())
+            .child(block())
+            .child(block()),
+    )
+}
+
+#[test]
+fn a_cross_axis_resize_re_measures_off_window_items() {
+    let doc = Document::new().unwrap();
+    let mut style = Style::new();
+    style.width(Length::Percent(100.0)); // follow the screen width
+    style.height(Length::Cells(2)); // viewport 2 rows
+    // Estimate 2 == the narrow height, so once the wide measurements are dropped every item reads
+    // as two cells again.
+    let view = virtual_list_measured(style, 2, 3, || 8, |_| wrapping_item());
+    let _m = mount(&doc, doc.root(), view).unwrap();
+
+    let container = doc.get_children(doc.root())[0];
+    // Wide: three blocks fit on one row, so each item is one cell tall. Visit top and bottom so
+    // items across the whole list get measured at that wide height.
+    let mut rt = HeadlessRuntime::new(doc.clone(), 6, 2);
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+    doc.scroll_to(container, 0, 1000).unwrap();
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+    doc.scroll_to(container, 0, 0).unwrap();
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+
+    // Narrow: the blocks wrap, so every item is two cells tall. The resize must invalidate the
+    // wide-width measurements — including the off-window ones — or the scroll range would still
+    // reflect the stale one-cell heights.
+    rt.resize(4, 2);
+    for _ in 0..8 {
+        rt.render().unwrap();
+    }
+    let layout = doc.get_node(container).unwrap().layout.unwrap();
+    assert_eq!(layout.max_scroll_y, 8 * 2 - 2); // every item two cells, minus the 2-row viewport
 }

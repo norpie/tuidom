@@ -18,6 +18,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tuidom::event::{KeyEvent, ListenerHandle, MouseEvent};
@@ -336,14 +337,23 @@ where
     }
 }
 
-/// A virtualized vertical list: materializes only the on-screen window of a large uniform
-/// collection, holding the rest open with two spacers.
+/// How a [`VirtualizedView`] sizes its items.
+enum VirtualMode {
+    /// Every item is `stride` cells — no measurement needed.
+    Uniform { stride: u16 },
+    /// Items vary; each starts at `estimate` cells and is corrected to its real extent once laid
+    /// out, with the scroll offset anchored so measuring off-screen items does not shift the view.
+    Measured { estimate: u16 },
+}
+
+/// A virtualized vertical list: materializes only the on-screen window of a large collection,
+/// holding the rest open with two spacers.
 struct VirtualizedView {
     /// Caller-supplied container style. The list forces `flex_direction: Column` and
     /// `overflow_y: Scroll` on top of it and supplies the rest (height, border, …).
     style: Style,
-    /// Every item's extent in cells — the uniform stride.
-    stride: u16,
+    /// Uniform stride or measured estimate.
+    mode: VirtualMode,
     /// Items materialized beyond each edge of the visible range.
     overscan: usize,
     /// The collection's length, read reactively so the list resizes as it grows or shrinks.
@@ -353,7 +363,7 @@ struct VirtualizedView {
     render: Arc<dyn Fn(usize) -> View + Send + Sync>,
 }
 
-/// A virtualized vertical list over a large uniform collection.
+/// A virtualized vertical list over a large **uniform** collection — every item the same height.
 ///
 /// Only the items in view (plus `overscan` on each side) exist in the DOM at any moment; the rest
 /// are stood in for by two spacers, so the scroll container's content size — and thus its
@@ -371,7 +381,56 @@ struct VirtualizedView {
 /// to nothing, and fills in once the viewport is known. The caller's `style` must give the
 /// container a bounded height (a fixed height, or flex within a bounded parent); an unbounded
 /// container has no viewport to virtualize against.
+///
+/// For items whose height is not known ahead of time, see [`virtual_list_measured`].
 pub fn virtual_list<C, R>(style: Style, stride: u16, overscan: usize, count: C, render: R) -> View
+where
+    C: Fn() -> usize + Send + Sync + 'static,
+    R: Fn(usize) -> View + Send + Sync + 'static,
+{
+    virtualized(
+        style,
+        VirtualMode::Uniform { stride },
+        overscan,
+        count,
+        render,
+    )
+}
+
+/// A virtualized vertical list over a large collection of **variably sized** items.
+///
+/// Like [`virtual_list`], but item heights are not known in advance. Each item starts at `estimate`
+/// cells; once an item has been laid out, its real height is recorded, so the spacers and the
+/// scroll range converge on the truth as the user scrolls. Measuring an item *above* the viewport
+/// would shift the visible content, so the scroll offset is anchored to absorb the change and keep
+/// what is on screen pinned.
+///
+/// A good `estimate` matters only for scroll-bar accuracy before an item has been seen; it must be
+/// at least one cell, or an unmeasured item would occupy nothing and never scroll into view to be
+/// measured. Item heights depend on the container's width, so a width change discards every recorded
+/// height and re-measures — otherwise the total extent, and the scrollbar, would lie.
+pub fn virtual_list_measured<C, R>(
+    style: Style,
+    estimate: u16,
+    overscan: usize,
+    count: C,
+    render: R,
+) -> View
+where
+    C: Fn() -> usize + Send + Sync + 'static,
+    R: Fn(usize) -> View + Send + Sync + 'static,
+{
+    virtualized(
+        style,
+        VirtualMode::Measured { estimate },
+        overscan,
+        count,
+        render,
+    )
+}
+
+/// Shared constructor behind [`virtual_list`] and [`virtual_list_measured`].
+fn virtualized<C, R>(style: Style, mode: VirtualMode, overscan: usize, count: C, render: R) -> View
 where
     C: Fn() -> usize + Send + Sync + 'static,
     R: Fn(usize) -> View + Send + Sync + 'static,
@@ -379,7 +438,7 @@ where
     View {
         kind: ViewKind::Virtualized(Box::new(VirtualizedView {
             style,
-            stride,
+            mode,
             overscan,
             count: Box::new(count),
             render: Arc::new(render),
@@ -854,6 +913,15 @@ fn reconcile(
     *state = placed;
 }
 
+/// The driver's mutable state behind one lock: the window math, the range currently in the DOM (so
+/// the measure pass can find each item's node), and the cross-axis extent measurements were taken
+/// at (so a width change can invalidate them).
+struct DriverState {
+    virt: Virtualizer,
+    materialized: Range<usize>,
+    last_cross: Option<u16>,
+}
+
 /// Mount a virtualized list: a scroll container holding a lead spacer, the live item window, and a
 /// trail spacer, driven by a [`Virtualizer`] off the container's own scroll offset and viewport.
 ///
@@ -878,10 +946,17 @@ fn mount_virtualized(
     place(doc, parent, container, before)?;
     register_remove(doc, parent, container, scope);
 
-    // Sibling order under the container: lead spacer, the item window, trail spacer.
+    // An inner content box sized to its children, so items keep their natural height and overflow
+    // rather than being shrunk to fit the (smaller) viewport. It is the single child of the scroll
+    // container; the spacers and item window live inside it.
+    let content = doc.create_box()?;
+    doc.set_style(content, &content_style())?;
+    doc.append_child(container, content)?;
+
+    // Sibling order under the content box: lead spacer, the item window, trail spacer.
     let lead = doc.create_box()?;
     doc.set_style(lead, &spacer_style(0))?;
-    doc.append_child(container, lead)?;
+    doc.append_child(content, lead)?;
 
     // The materialized index range: written by the driver, read by the keyed differ. Created under
     // the mount scope, so it is disposed with the rest of the subtree.
@@ -897,23 +972,30 @@ fn mount_virtualized(
             })
             .collect::<Vec<_>>()
     });
-    mount_view(doc, container, None, items, scope)?;
+    mount_view(doc, content, None, items, scope)?;
 
     let trail = doc.create_box()?;
     doc.set_style(trail, &spacer_style(0))?;
-    doc.append_child(container, trail)?;
+    doc.append_child(content, trail)?;
 
-    let virt = Arc::new(Mutex::new(Virtualizer::uniform(
-        0,
-        view.stride,
-        view.overscan,
-    )));
+    let measured = matches!(view.mode, VirtualMode::Measured { .. });
+    let virt = match view.mode {
+        VirtualMode::Uniform { stride } => Virtualizer::uniform(0, stride, view.overscan),
+        VirtualMode::Measured { estimate } => Virtualizer::measured(0, estimate, view.overscan),
+    };
+    let state = Arc::new(Mutex::new(DriverState {
+        virt,
+        materialized: 0..0,
+        last_cross: None,
+    }));
 
     // Recompute the window from the current offset and viewport, applying spacer sizes and the new
-    // item range only if something actually changed.
+    // item range only when something changed. In measured mode it first records the real extents of
+    // the on-screen items and anchors the offset so measuring an item above the fold does not
+    // shift the view.
     let recompute = {
         let doc = doc.clone();
-        let virt = virt.clone();
+        let state = state.clone();
         Arc::new(move || {
             // The viewport is unknown until the container is in the layout snapshot. Skip rather
             // than window to a zero viewport, which would dematerialize the whole list.
@@ -924,8 +1006,55 @@ fn mount_virtualized(
                 return;
             };
             let viewport = layout.scrollport.height;
+            let cross = layout.scrollport.width;
             let offset = doc.scroll_offset(container).y;
-            let update = lock(&virt).update(offset, viewport);
+
+            let mut anchor_shift: i64 = 0;
+            let update = {
+                let mut st = lock(&state);
+
+                if measured {
+                    // Recorded heights are only valid at the width they were measured at: a
+                    // narrower container wraps text taller. On a cross-axis change, drop every
+                    // measurement and let the on-screen items re-measure below.
+                    if st.last_cross != Some(cross) {
+                        if let Some(cache) = st.virt.cache_mut() {
+                            cache.invalidate_all();
+                        }
+                        st.last_cross = Some(cross);
+                    }
+
+                    // Measure the currently materialized items against the layout snapshot. An item
+                    // that sits entirely above the viewport top and changes size shifts the visible
+                    // content, so its delta is absorbed into the offset (anchoring).
+                    let range = st.materialized.clone();
+                    let kids = doc.get_children(content);
+                    // kids are [lead, items…, keyed marker, trail]; the items map to `range` in
+                    // ascending order. A mismatch means the DOM is mid-change — skip this pass.
+                    if kids.len() == range.len() + 3 {
+                        for (slot, index) in range.clone().enumerate() {
+                            let item = kids[1 + slot];
+                            let height = doc.get_node(item).and_then(|n| n.layout).map(|l| l.rect);
+                            if let Some(rect) = height {
+                                let above = st.virt.offset_of(index + 1) <= u64::from(offset);
+                                let delta = st.virt.record(index, rect.height);
+                                if above {
+                                    anchor_shift += delta;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let effective =
+                    (i64::from(offset) + anchor_shift).clamp(0, i64::from(u16::MAX)) as u16;
+                let update = st.virt.update(effective, viewport);
+                if let Some(ref update) = update {
+                    st.materialized = update.window.items.clone();
+                }
+                update
+            };
+
             if let Some(update) = update {
                 let lead_cells = clamp_cells(update.window.lead);
                 let trail_cells = clamp_cells(update.window.trail);
@@ -934,18 +1063,26 @@ fn mount_virtualized(
                 // Setting the window reruns the keyed differ, mounting and unmounting items.
                 window.set(update.window.items);
             }
+
+            // Apply the anchoring compensation last, with the lock released — `scroll_by` fires
+            // `on_scroll`, which re-enters `recompute`; that pass records nothing new and windows
+            // the same range, so it settles at once.
+            if anchor_shift != 0 {
+                let dy = anchor_shift.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                let _ = doc.scroll_by(container, 0, dy);
+            }
         })
     };
 
     // Count changes resize the collection and recompute — in an effect, so it tracks the count's
     // signals. Runs once at mount, where the container is not yet laid out, so `recompute` skips.
     {
-        let virt = virt.clone();
+        let state = state.clone();
         let count = view.count;
         let recompute = recompute.clone();
         effect(move || {
             let n = count();
-            lock(&virt).set_count(n);
+            lock(&state).virt.set_count(n);
             recompute();
         });
     }
@@ -970,6 +1107,15 @@ fn mount_virtualized(
     }
 
     Ok(vec![container])
+}
+
+/// The scroll container's inner content box: a column that sizes to its children and never shrinks,
+/// so the item window overflows the viewport rather than being squeezed into it.
+fn content_style() -> Style {
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.flex_shrink(0.0);
+    style
 }
 
 /// A virtual-list spacer: `cells` of main-axis space that must never shrink, so it faithfully
