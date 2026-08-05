@@ -38,7 +38,7 @@ mod tests;
 
 pub use computed::{Derived, derived};
 pub use effects::effect;
-pub use scope::{Scope, on_cleanup, provide_context, use_context};
+pub use scope::{Scope, on_cleanup, provide_context, spawn, use_context};
 pub use signal::{Signal, state};
 
 /// A `Copy` handle identifying one slot in the runtime arena.

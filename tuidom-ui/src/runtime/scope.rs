@@ -150,6 +150,46 @@ pub fn on_cleanup(f: impl FnOnce() + Send + Sync + 'static) {
     }
 }
 
+/// Spawn a task owned by the current scope — the ambient-scope form of [`Scope::spawn`], for
+/// calling inside a component body where the scope is implicit (the same way [`on_cleanup`] and
+/// [`state`](super::state) find their scope).
+///
+/// The task's `JoinHandle` is aborted when the scope is disposed, so an unmounted component's
+/// background work stops rather than writing into freed signals. This is how the resource pattern
+/// is written by hand — the framework ships no resource type; a task plus a tri-state signal is
+/// the whole of it:
+///
+/// ```ignore
+/// enum Resource { Loading, Ready(Data) }
+///
+/// let resource = state(Resource::Loading);
+/// spawn(async move {
+///     let data = fetch().await;          // the background work
+///     resource.set(Resource::Ready(data)); // off-task write: reaches the DOM on the next flush
+/// });
+/// // render from `resource`; unmounting the component aborts the task mid-flight.
+/// ```
+///
+/// With no scope open the task is still spawned so its work is not silently lost, but detached —
+/// nothing will abort it — which is logged, since an un-owned task outliving its intended lifetime
+/// is the surprising case. Prefer calling it where a scope is entered.
+///
+/// Requires a Tokio runtime, like [`Scope::spawn`]; an [`App`](crate::App) provides one.
+pub fn spawn<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::spawn(future);
+    let Some(sid) = current_scope() else {
+        tracing::debug!("spawn called with no scope open; task detached and will not be aborted");
+        return;
+    };
+    let mut w = rt().write();
+    if let Some(data) = w.scopes.get_mut(&sid) {
+        data.tasks.push(handle);
+    }
+}
+
 fn create_scope(parent: Option<ScopeId>) -> ScopeId {
     let mut w = rt().write();
     let id = ScopeId(w.next_scope);
