@@ -38,7 +38,7 @@ use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
 
-use crate::runtime::{Scope, effect, state};
+use crate::runtime::{Scope, effect, state, with_inline_flush};
 
 thread_local! {
     /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
@@ -594,8 +594,9 @@ impl Element {
     where
         F: Fn(&mut MouseEvent) + Send + Sync + 'static,
     {
-        self.listeners
-            .push(Box::new(move |doc, node| doc.on_click(node, handler)));
+        self.listeners.push(Box::new(move |doc, node| {
+            doc.on_click(node, move |ev| with_inline_flush(|| handler(ev)))
+        }));
         self
     }
 
@@ -604,8 +605,9 @@ impl Element {
     where
         F: Fn(&mut KeyEvent) + Send + Sync + 'static,
     {
-        self.listeners
-            .push(Box::new(move |doc, node| doc.on_key_press(node, handler)));
+        self.listeners.push(Box::new(move |doc, node| {
+            doc.on_key_press(node, move |ev| with_inline_flush(|| handler(ev)))
+        }));
         self
     }
 
@@ -657,7 +659,12 @@ pub fn mount(doc: &Document, parent: NodeId, view: impl Into<View>) -> Result<Mo
 /// dynamic block's marker) or appended. A partial mount that errors is rolled back.
 fn mount_at(doc: &Document, parent: NodeId, before: Option<NodeId>, view: View) -> Result<Mounted> {
     let scope = Scope::new();
-    match scope.run(|| with_mount_callbacks(|| mount_view(doc, parent, before, view, &scope))) {
+    // Mounting is trusted event-task work: the binding effects it runs, and any signal writes an
+    // `on_mount` callback makes, flush inline in this frame rather than deferring to the mailbox.
+    let mounted = with_inline_flush(|| {
+        scope.run(|| with_mount_callbacks(|| mount_view(doc, parent, before, view, &scope)))
+    });
+    match mounted {
         Ok(roots) => Ok(Mounted { scope, roots }),
         Err(err) => {
             scope.dispose();
@@ -1108,14 +1115,16 @@ fn mount_virtualized(
     // so a scroll and the items it reveals land in the same frame.
     {
         let recompute = recompute.clone();
-        let handle = doc.on_scroll(container, move |_| recompute())?;
+        // `recompute` writes the `window` signal; wrapping keeps that write inline so a scroll
+        // and the items it reveals land in the same frame rather than a frame later.
+        let handle = doc.on_scroll(container, move |_| with_inline_flush(|| recompute()))?;
         let doc = doc.clone();
         scope.on_cleanup(move || {
             doc.remove_listener(handle);
         });
     }
     {
-        let handle = doc.on_post_frame(move |_| recompute());
+        let handle = doc.on_post_frame(move |_| with_inline_flush(|| recompute()));
         let doc = doc.clone();
         scope.on_cleanup(move || {
             doc.remove_listener(handle);

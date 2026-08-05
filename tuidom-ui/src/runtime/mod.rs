@@ -21,11 +21,12 @@
 use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use tokio::task::JoinHandle;
 
-use crate::lock::{rw_read, rw_write};
+use crate::lock::{self, rw_read, rw_write};
 
 mod computed;
 mod effects;
@@ -126,9 +127,25 @@ impl Inner {
     }
 }
 
-/// The runtime — a lock over the arena. Held privately; all access goes through [`rt`].
+/// The runtime — a lock over the arena, plus the cross-thread flush plumbing. Held privately;
+/// all access goes through [`rt`].
+///
+/// The mailbox and waker exist for one job: a reactive write made *off* the event task (a
+/// spawned task, a foreign thread) cannot run effects there, so it deposits the dirtied effects
+/// in the mailbox and wakes the event task to drain them. Writes on the event task never touch
+/// either — they take the proven inline path through the thread-local [`PENDING`].
 pub(crate) struct Runtime {
     inner: RwLock<Inner>,
+    /// Effects dirtied by off-event-task writes, awaiting a drain on the event task.
+    mailbox: Mutex<Vec<SlotId>>,
+    /// The event-task waker an off-task write fires — in practice `Document::request_runtime_flush`.
+    waker: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// A lock-free mirror of `waker.is_some()`, so the write path can decide inline-vs-deferred
+    /// without taking the waker lock.
+    has_waker: AtomicBool,
+    /// Coalescing gate: set when a drain is already requested, so a burst of off-task writes
+    /// enqueues at most one flush. Cleared when the drain begins.
+    flush_requested: AtomicBool,
 }
 
 impl Runtime {
@@ -148,6 +165,10 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| Runtime {
         next_slot: 0,
         next_scope: 0,
     }),
+    mailbox: Mutex::new(Vec::new()),
+    waker: Mutex::new(None),
+    has_waker: AtomicBool::new(false),
+    flush_requested: AtomicBool::new(false),
 });
 
 /// The process-wide runtime.
@@ -166,6 +187,33 @@ thread_local! {
     static PENDING: RefCell<Vec<SlotId>> = const { RefCell::new(Vec::new()) };
     /// True while a flush is in progress, so a write from inside an effect does not reenter.
     static FLUSHING: Cell<bool> = const { Cell::new(false) };
+    /// True while this thread is inside a trusted event-task span — a listener handler, the
+    /// mount and `on_mount` drain, or the deferred-flush drain. A write here flushes inline;
+    /// a write with the flag unset (a spawned task, a foreign thread) defers to the mailbox.
+    /// Set only across a single synchronous span with no awaits, so task migration never
+    /// observes it mid-span.
+    static INLINE_FLUSH: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `f` inside an inline-flush span, restoring the previous flag after — even on panic, so a
+/// caught listener panic cannot leave the flag stuck on for the next write on this thread.
+pub(crate) fn with_inline_flush<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            INLINE_FLUSH.with(|f| f.set(self.0));
+        }
+    }
+
+    let prev = INLINE_FLUSH.with(|f| f.replace(true));
+    let _restore = Restore(prev);
+    f()
+}
+
+/// Whether a write off the event task should defer: a waker is registered to drain it, and this
+/// thread is not in a trusted inline span. Reads only atomics/thread-locals, no arena lock.
+fn should_defer() -> bool {
+    !INLINE_FLUSH.with(|f| f.get()) && rt().has_waker.load(Ordering::Acquire)
 }
 
 /// The scope a newly created node should attach to.
@@ -243,8 +291,26 @@ fn mark_dirty(w: &mut Inner, roots: Vec<SlotId>, pending: &mut Vec<SlotId>) {
     }
 }
 
-/// Dirty the subscribers of a changed signal, then flush unless a batch is open.
+/// Dirty the subscribers of a changed signal, then either flush inline or defer to the mailbox.
+///
+/// On the event task (or with no waker registered — the standalone-runtime case), this is the
+/// path F3 shipped: dirty into the thread-local `PENDING` and flush unless a batch is open.
+/// Off the event task with a waker registered, the effects are instead deposited in the shared
+/// mailbox and the event task is woken to drain them, so effects never run on the writing task.
 fn schedule(roots: Vec<SlotId>) {
+    if should_defer() {
+        let mut dirtied = Vec::new();
+        {
+            let mut w = rt().write();
+            mark_dirty(&mut w, roots, &mut dirtied);
+        }
+        if !dirtied.is_empty() {
+            lock::mutex(&rt().mailbox).extend(dirtied);
+            wake();
+        }
+        return;
+    }
+
     {
         let mut w = rt().write();
         PENDING.with(|p| mark_dirty(&mut w, roots, &mut p.borrow_mut()));
@@ -252,6 +318,71 @@ fn schedule(roots: Vec<SlotId>) {
     if BATCH_DEPTH.with(|d| d.get()) == 0 {
         flush();
     }
+}
+
+/// Fire the event-task waker for a deferred write, at most once per drain cycle (D4).
+///
+/// The gate collapses a burst of off-task writes to a single queued flush: the first write since
+/// the last drain wins the swap and wakes; the rest see the flag already set and return.
+fn wake() {
+    if rt().flush_requested.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let waker = lock::mutex(&rt().waker).clone();
+    match waker {
+        Some(waker) => waker(),
+        // Registration was cleared between `should_defer` and here. Un-arm so a later
+        // registration plus write can wake, rather than leaving the gate stuck set.
+        None => rt().flush_requested.store(false, Ordering::Release),
+    }
+}
+
+/// Drain the mailbox and run the deferred effects on the event task.
+///
+/// Registered as the engine's flush hook (via `Document::set_runtime_flush_hook`) so it runs
+/// between runtime events, serialized with input dispatch. The gate is cleared *before* the
+/// drain so a write that races in after the drain re-arms the waker rather than being lost. The
+/// drain runs under an inline span, so an effect's cascading writes stay inline instead of
+/// bouncing back through the mailbox.
+///
+/// Framework plumbing: `App` wires this to the engine's flush hook. Applications built
+/// on the framework do not call it directly.
+pub fn flush_deferred() {
+    rt().flush_requested.store(false, Ordering::Release);
+    let batch: Vec<SlotId> = std::mem::take(&mut *lock::mutex(&rt().mailbox));
+    if batch.is_empty() {
+        return;
+    }
+    with_inline_flush(|| {
+        // The effects are already marked dirty; running them clears the bits.
+        PENDING.with(|p| p.borrow_mut().extend(batch));
+        flush();
+    });
+}
+
+/// Register the waker an off-event-task write fires to request a mailbox drain.
+///
+/// The framework's `App` registers `Document::request_runtime_flush` here at startup, pairing it
+/// with [`flush_deferred`] on the engine's flush hook. Registering enables the deferred path;
+/// [`clear_flush_waker`] disables it again at shutdown.
+///
+/// Framework plumbing: applications wire this through `App`, not directly.
+pub fn set_flush_waker(waker: Arc<dyn Fn() + Send + Sync>) {
+    *lock::mutex(&rt().waker) = Some(waker);
+    rt().has_waker.store(true, Ordering::Release);
+}
+
+/// Unregister the waker and drop any undrained deferred work, so a torn-down app leaves no stale
+/// mailbox entries or armed gate behind.
+///
+/// Framework plumbing: `App` calls this on shutdown.
+pub fn clear_flush_waker() {
+    // Disable the deferred path first, so any write racing this teardown takes the inline path
+    // rather than enqueuing into a mailbox nothing will drain.
+    rt().has_waker.store(false, Ordering::Release);
+    *lock::mutex(&rt().waker) = None;
+    rt().flush_requested.store(false, Ordering::Release);
+    lock::mutex(&rt().mailbox).clear();
 }
 
 /// Run every pending effect, at most once each per cycle, until the queue drains.
