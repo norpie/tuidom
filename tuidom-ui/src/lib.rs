@@ -31,11 +31,13 @@
 // downstream crates and here; this alias is what makes those paths resolve in-crate.
 extern crate self as tuidom_ui;
 
+mod app;
 mod callback;
 mod lock;
 mod runtime;
 mod view;
 
+pub use app::{App, AppSession};
 pub use callback::Callback;
 pub use runtime::{
     Derived, Scope, Signal, batch, clear_flush_waker, derived, effect, flush_deferred, on_cleanup,
