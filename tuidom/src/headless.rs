@@ -15,7 +15,9 @@ use crate::render::paint::FrameClearBase;
 use crate::render::{
     RenderCursor, flush_changes_into, flush_full_into, render_into_grid, should_flush_full,
 };
-use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
+use crate::runtime_event::{
+    RuntimeEvent, RuntimeEventState, drain_and_coalesce, process_runtime_event,
+};
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
 
@@ -83,6 +85,30 @@ impl HeadlessRuntime {
     pub fn advance_time(&mut self, delta: Duration) {
         self.doc.advance_manual_time(delta);
         for event in self.doc.run_animation_upkeep() {
+            process_runtime_event(&self.doc, event, &mut self.event_state);
+        }
+    }
+
+    /// Drain and process the queued runtime events, including any queued flush request.
+    ///
+    /// Simulated input is processed inline, so the runtime-event queue is normally empty; the
+    /// live `run()` loop is the only thing that drains it. A flush requested off the event task
+    /// with [`Document::request_runtime_flush`](crate::Document::request_runtime_flush) lands on
+    /// that queue, so tests need a way to service it without a terminal. This drains everything
+    /// queued — through the same coalescing the live loop uses — and processes it on the calling
+    /// (event-task) side.
+    pub fn pump(&mut self) {
+        // The document owns the receiver; in a headless test nothing else contends for it, so the
+        // non-blocking lock always succeeds. If it somehow did not, there is nothing to drain.
+        let Ok(mut rx) = self.doc.inner.event_rx.try_lock() else {
+            return;
+        };
+        let Ok(first) = rx.try_recv() else {
+            return;
+        };
+        let batch = drain_and_coalesce(first, &mut rx);
+        drop(rx);
+        for event in batch {
             process_runtime_event(&self.doc, event, &mut self.event_state);
         }
     }
@@ -1410,6 +1436,37 @@ mod tests {
         runtime.advance_time(Duration::from_secs(2));
 
         assert_eq!(*fired.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn pump_runs_a_flush_requested_off_thread() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
+
+        let doc = Document::new().unwrap();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let runs_in_hook = runs.clone();
+        doc.set_runtime_flush_hook(Arc::new(move || {
+            runs_in_hook.fetch_add(1, Ordering::Relaxed);
+        }));
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        let doc = runtime.document().clone();
+
+        let writer = doc.clone();
+        thread::spawn(move || writer.request_runtime_flush())
+            .join()
+            .unwrap();
+
+        // Queued, not yet run: nothing drains the runtime queue until the pump.
+        assert_eq!(runs.load(Ordering::Relaxed), 0);
+
+        runtime.pump();
+        assert_eq!(runs.load(Ordering::Relaxed), 1);
+
+        // A second pump with nothing queued is a no-op.
+        runtime.pump();
+        assert_eq!(runs.load(Ordering::Relaxed), 1);
     }
 
     #[test]

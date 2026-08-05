@@ -290,6 +290,13 @@ pub(crate) struct DocumentInner {
     /// detected. It is an assumption used for resolving colors and blending translucent ones —
     /// never a color that gets painted.
     pub terminal_background: Mutex<Color>,
+
+    /// Opaque callback run on the event task when a [`RuntimeEvent::Flush`] is processed.
+    ///
+    /// The engine holds it without knowing what it does — the framework layer registers one
+    /// (via [`Document::set_runtime_flush_hook`](crate::Document::set_runtime_flush_hook)) to
+    /// route off-thread reactive writes back onto the event task. `None` until registered.
+    pub flush_hook: RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl DocumentInner {

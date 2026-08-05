@@ -57,6 +57,12 @@ pub(crate) enum RuntimeEvent {
         handle: AnimationHandle,
         iteration: u64,
     },
+    /// A request to run the registered flush hook on the event task.
+    ///
+    /// Enqueued from any thread by [`Document::request_runtime_flush`](crate::Document::request_runtime_flush)
+    /// so a reactive write made off the event task reaches the DOM on the next drain. The
+    /// framework layer coalesces to at most one in flight, so this needs no collapsing here.
+    Flush,
 }
 
 /// Collapse redundant runs in a drained batch, leaving order otherwise intact.
@@ -288,6 +294,16 @@ pub(crate) fn process_runtime_event(
         } => {
             doc.dispatch_animation_iteration_to(node, handle, iteration);
         }
+        // The framework's reactive flush, run on the event task. The hook is cloned out
+        // and the guard dropped before the call: the hook runs effects that mutate the
+        // DOM, so it must not hold the lock — the same discipline as never dispatching an
+        // event while holding a node guard.
+        RuntimeEvent::Flush => {
+            let hook = lock::rw_read(&doc.inner.flush_hook).clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
     }
 }
 
@@ -424,8 +440,8 @@ pub(crate) fn take_pending_resize(doc: &Document) -> Option<(u16, u16)> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use super::*;
 
@@ -604,6 +620,52 @@ mod tests {
         }
 
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_flush_request_runs_the_hook_once_on_the_processing_side() {
+        use std::thread;
+
+        let doc = Document::new().unwrap();
+
+        let runs = Arc::new(AtomicUsize::new(0));
+        let hook_thread = Arc::new(Mutex::new(None));
+        let runs_in_hook = runs.clone();
+        let hook_thread_in_hook = hook_thread.clone();
+        doc.set_runtime_flush_hook(Arc::new(move || {
+            runs_in_hook.fetch_add(1, Ordering::Relaxed);
+            *hook_thread_in_hook.lock().unwrap() = Some(thread::current().id());
+        }));
+
+        // The write comes from another thread; the queue carries it back rather than running
+        // the hook there.
+        let writer = doc.clone();
+        let writer_thread = thread::spawn(move || {
+            writer.request_runtime_flush();
+            thread::current().id()
+        });
+        let writer_id = writer_thread.join().unwrap();
+        assert_eq!(
+            runs.load(Ordering::Relaxed),
+            0,
+            "the writer never runs the hook"
+        );
+
+        // Draining on this thread — standing in for the event task — runs it exactly once.
+        let mut state = RuntimeEventState::default();
+        let mut rx = doc.inner.event_rx.try_lock().unwrap();
+        let first = rx.try_recv().unwrap();
+        for event in drain_and_coalesce(first, &mut rx) {
+            process_runtime_event(&doc, event, &mut state);
+        }
+
+        assert_eq!(runs.load(Ordering::Relaxed), 1);
+        assert_eq!(*hook_thread.lock().unwrap(), Some(thread::current().id()));
+        assert_ne!(
+            *hook_thread.lock().unwrap(),
+            Some(writer_id),
+            "the hook runs on the processing side, not the writer"
+        );
     }
 
     #[test]

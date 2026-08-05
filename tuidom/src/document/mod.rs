@@ -32,6 +32,7 @@ mod focus_context;
 mod input;
 mod layout;
 mod pseudo;
+mod runtime;
 mod scroll;
 pub(crate) mod selection;
 mod snapshot;
@@ -147,6 +148,7 @@ impl Document {
                 window_blur_listeners: Mutex::new(Vec::new()),
                 color_vars: Mutex::new(HashMap::new()),
                 terminal_background: Mutex::new(Color::black()),
+                flush_hook: RwLock::new(None),
             }),
         };
         document.register_layout_node(root)?;
