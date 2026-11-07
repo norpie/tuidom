@@ -2414,27 +2414,16 @@ fn transition_end_fires_once_the_transition_finishes() {
     let mut h = Harness::new(4, 1, move || {
         crate::view! {
             box {
-                test_id: "fade",
                 style: {
                     let mut style = sized_box_style();
                     style.background(if dark.get() { Color::black() } else { Color::white() });
                     style
                 },
+                transitions: background_over(100),
                 on_transition_end: move || ended.update(|n| *n += 1),
             }
         }
     });
-    let fade = h.find_attr("test_id", "fade").unwrap();
-    h.document()
-        .set_transition(
-            fade,
-            TransitionConfig::new(
-                TransitionProperty::Background,
-                Duration::from_millis(100),
-                Easing::Linear,
-            ),
-        )
-        .unwrap();
 
     dark.set(true);
     h.advance(Duration::from_millis(50));
@@ -2751,4 +2740,81 @@ fn input_only_properties_on_a_box_are_ignored() {
     rt.render().unwrap();
     assert_eq!(row0(&rt, 4).trim_end(), "");
     assert_eq!(mounted.roots().len(), 1);
+}
+
+// ---- Declared transitions ---------------------------------------------------------------
+
+fn background_over(millis: u64) -> [TransitionConfig; 1] {
+    [TransitionConfig::new(
+        TransitionProperty::Background,
+        Duration::from_millis(millis),
+        Easing::Linear,
+    )]
+}
+
+#[test]
+fn a_declared_transition_does_not_animate_the_initial_style() {
+    // Opacity, because it defaults to a concrete 1.0: a transition installed before the first
+    // style would fade the box out from fully opaque. An unset background has nothing to
+    // interpolate from and snaps either way, so it could not tell the two orders apart.
+    let mut h = Harness::new(4, 1, || {
+        crate::view! {
+            box {
+                style: { let mut s = white_box(); s.opacity(0.0); s },
+                transitions: [TransitionConfig::new(
+                    TransitionProperty::Opacity,
+                    Duration::from_millis(1000),
+                    Easing::Linear,
+                )],
+            }
+        }
+    });
+    assert_eq!(h.cell(0, 0).unwrap().bg, None);
+}
+
+#[test]
+fn a_declared_transition_animates_a_later_style_change() {
+    let dark = state(false);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                style: {
+                    let mut style = sized_box_style();
+                    style.background(if dark.get() { Color::black() } else { Color::white() });
+                    style
+                },
+                transitions: background_over(1000),
+            }
+        }
+    });
+
+    dark.set(true);
+    h.advance(Duration::from_millis(500));
+    let midway = h.cell(0, 0).unwrap().bg;
+    assert_ne!(midway, white());
+    assert_ne!(midway, black());
+    h.advance(Duration::from_millis(500));
+    assert_eq!(h.cell(0, 0).unwrap().bg, black());
+}
+
+#[test]
+fn a_declared_transition_animates_a_focus_style() {
+    let mut h = Harness::new(4, 1, || {
+        crate::view! {
+            box {
+                style: white_box(),
+                focusable: true,
+                focus_style: black_bg(),
+                transitions: background_over(1000),
+            }
+        }
+    });
+
+    h.press(KeyCode::Tab);
+    h.advance(Duration::from_millis(500));
+    let midway = h.cell(0, 0).unwrap().bg;
+    assert_ne!(midway, white());
+    assert_ne!(midway, black());
+    h.advance(Duration::from_millis(500));
+    assert_eq!(h.cell(0, 0).unwrap().bg, black());
 }

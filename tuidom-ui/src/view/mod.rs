@@ -33,6 +33,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use tuidom::animation::TransitionConfig;
 use tuidom::event::{
     AnimationEndEvent, AnimationIterationEvent, FocusEvent, InputEvent, KeyEvent, ListenerHandle,
     MouseEvent, ScrollEvent, TransitionEndEvent, WheelEvent,
@@ -242,6 +243,7 @@ pub struct Element {
     focus_style: Option<Source<Style>>,
     active_style: Option<Source<Style>>,
     disabled_style: Option<Source<Style>>,
+    transitions: Vec<TransitionConfig>,
     input: InputProps,
     listeners: Vec<ListenerReg>,
     children: Vec<View>,
@@ -569,6 +571,7 @@ fn element(kind: ElementKind) -> Element {
         focus_style: None,
         active_style: None,
         disabled_style: None,
+        transitions: Vec::new(),
         input: InputProps::default(),
         listeners: Vec::new(),
         children: Vec::new(),
@@ -619,6 +622,17 @@ impl Element {
         F: Fn() -> bool + Send + Sync + 'static,
     {
         self.focusable = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Declare the transitions this element's style changes animate with, at most one per
+    /// property. A later call replaces the list.
+    ///
+    /// They are installed once at mount, after the initial style is applied, so the element
+    /// does not animate in from default values. Changes to the base style and to the focus,
+    /// active, and disabled styles all animate, since the engine compares the merged style.
+    pub fn transitions(mut self, transitions: impl IntoIterator<Item = TransitionConfig>) -> Self {
+        self.transitions = transitions.into_iter().collect();
         self
     }
 
@@ -924,6 +938,9 @@ fn mount_view(
             bind_node(doc, node, "style", element.style, |d, n, s: Style| {
                 d.set_style(n, &s)
             });
+            for transition in element.transitions {
+                doc.set_transition(node, transition)?;
+            }
             for (key, value) in element.attrs {
                 let d = doc.clone();
                 bind(value, move |value| {

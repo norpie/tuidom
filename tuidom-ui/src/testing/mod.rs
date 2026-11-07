@@ -26,8 +26,7 @@
 //! outside. [`find_text`](Harness::find_text) and [`click_text`](Harness::click_text) work from
 //! what is on screen, the way a user would. [`find_attr`](Harness::find_attr) finds a node tagged
 //! with an attribute in `view!` (`test_id: "save"`), for engine calls that need the node itself,
-//! such as [`focus`](Harness::focus) or `set_transition` through
-//! [`document`](Harness::document).
+//! such as [`focus`](Harness::focus) or `scroll_to` through [`document`](Harness::document).
 //!
 //! # Time
 //!

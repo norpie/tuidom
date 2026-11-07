@@ -58,8 +58,11 @@ use syn::{
 ///   `on_input:`, … — one per `Element` listener method) takes a `|ev| …` or `|| …` closure.
 ///   An `input` also takes `value:` (stringified like an attribute), `bind_value:` (a
 ///   `Signal<String>`, bound both ways), `multiline:` (a bool), and `mask:` (an
-///   `Option<char>`); these are errors on `box`. Any other key is a string attribute. A literal
-///   value is applied once; anything else binds reactively.
+///   `Option<char>`); these are errors on `box`. `transitions:` takes an iterable of
+///   `TransitionConfig` and is evaluated once, when the element is built: a signal read there
+///   does not update the transitions, and inside an `if` or `match` it would rebuild the branch.
+///   Any other key is a string attribute. A literal value is applied once; anything else binds
+///   reactively.
 /// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
@@ -1108,6 +1111,9 @@ impl Attr {
                 }
             }
             "bind_value" => quote! { .bind_value(#value) },
+            // Evaluated once as the element is built, so a signal read here is not tracked by the
+            // element. Inside an `if`/`match`, it would subscribe the enclosing dynamic block.
+            "transitions" => quote! { .transitions(#value) },
             "mask" => quote! { .dyn_mask(move || #value) },
             "focusable" | "disabled" | "multiline" => {
                 if is_bool_literal(value) {

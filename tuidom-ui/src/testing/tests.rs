@@ -36,6 +36,14 @@ fn Button(label: String, on_press: Callback<()>) -> View {
     }
 }
 
+fn fade_over(millis: u64) -> TransitionConfig {
+    TransitionConfig::new(
+        TransitionProperty::Background,
+        Duration::from_millis(millis),
+        Easing::Linear,
+    )
+}
+
 fn column() -> Style {
     let mut style = Style::new();
     style.flex_direction(FlexDirection::Column);
@@ -196,7 +204,6 @@ fn advance_steps_a_transition_partway_then_to_its_end() {
     let mut h = Harness::new(4, 1, move || {
         crate::view! {
             box {
-                test_id: "fade",
                 focusable: true,
                 style: {
                     let mut style = Style::new();
@@ -205,25 +212,14 @@ fn advance_steps_a_transition_partway_then_to_its_end() {
                     style.background(if dark.get() { Color::black() } else { Color::white() });
                     style
                 },
+                transitions: [fade_over(1000)],
                 on_key_press: move |_| dark.set(true),
             }
         }
     });
-
-    let fade = h.find_attr("test_id", "fade").unwrap();
-    h.document()
-        .set_transition(
-            fade,
-            TransitionConfig::new(
-                TransitionProperty::Background,
-                Duration::from_millis(1000),
-                Easing::Linear,
-            ),
-        )
-        .unwrap();
     let white = h.cell(0, 0).unwrap().bg;
 
-    h.focus(fade);
+    h.press(KeyCode::Tab);
     h.press(KeyCode::Enter);
     h.advance(Duration::from_millis(500));
     let midway = h.cell(0, 0).unwrap().bg;
@@ -256,7 +252,6 @@ fn advance_applies_a_test_body_write_before_moving_the_clock() {
     let mut h = Harness::new(4, 1, move || {
         crate::view! {
             box {
-                test_id: "fade",
                 style: {
                     let mut style = Style::new();
                     style.width(Length::Cells(2));
@@ -264,20 +259,10 @@ fn advance_applies_a_test_body_write_before_moving_the_clock() {
                     style.background(if dark.get() { Color::black() } else { Color::white() });
                     style
                 },
+                transitions: [fade_over(1000)],
             }
         }
     });
-    let fade = h.find_attr("test_id", "fade").unwrap();
-    h.document()
-        .set_transition(
-            fade,
-            TransitionConfig::new(
-                TransitionProperty::Background,
-                Duration::from_millis(1000),
-                Easing::Linear,
-            ),
-        )
-        .unwrap();
 
     // Had the write applied after the clock moved, the transition would start at 1000ms and
     // still be white here.
@@ -309,6 +294,7 @@ fn TaskItem(
                 style.background(if highlighted { Color::black() } else { Color::white() });
                 style
             },
+            transitions: [fade_over(200)],
             on_key_press: move |ev| {
                 if ev.code == KeyCode::Enter {
                     on_pick.call(name.get());
@@ -344,22 +330,6 @@ fn worked_example_task_picker() {
     let picked = state(None);
     let mut h = Harness::new(16, 5, move || task_picker(tasks, picked));
     assert_eq!(h.screen(), "write\ntest\nship\nDone\nnothing picked");
-
-    // The engine animates background changes once a transition is set, which a test reaches
-    // through the tagged nodes.
-    for name in ["write", "test", "ship"] {
-        let node = h.find_attr("test_id", name).unwrap();
-        h.document()
-            .set_transition(
-                node,
-                TransitionConfig::new(
-                    TransitionProperty::Background,
-                    Duration::from_millis(200),
-                    Easing::Linear,
-                ),
-            )
-            .unwrap();
-    }
 
     // Tab twice lands on "test"; Enter picks it, and the highlight fades in.
     h.press(KeyCode::Tab);
