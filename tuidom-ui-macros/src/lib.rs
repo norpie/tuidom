@@ -52,17 +52,20 @@ use syn::{
 ///   attributes and children; a nested element or `text(..)` is a child.
 /// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
 ///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
-/// - **Attributes** — `key: value`. `style:` binds the whole `Style`, and `focus_style:`,
-///   `active_style:`, and `disabled_style:` bind the pseudo-state styles the same way;
-///   `focusable:` and `disabled:` take a bool; an event key (`on_click:`, `on_focus:`,
-///   `on_input:`, … — one per `Element` listener method) takes a `|ev| …` or `|| …` closure.
-///   An `input` also takes `value:` (stringified like an attribute), `bind_value:` (a
-///   `Signal<String>`, bound both ways), `multiline:` (a bool), and `mask:` (an
-///   `Option<char>`); these are errors on `box`. `transitions:` takes an iterable of
-///   `TransitionConfig` and is evaluated once, when the element is built: a signal read there
-///   does not update the transitions, and inside an `if` or `match` it would rebuild the branch.
-///   Any other key is a string attribute. A literal value is applied once; anything else binds
-///   reactively.
+/// - **Attributes** — `key: value`, dispatched by key:
+///   - `style:`, `focus_style:`, `active_style:`, `disabled_style:` — a whole `Style`, always
+///     bound reactively.
+///   - `focusable:`, `disabled:`, and on `input` `multiline:` — a bool.
+///   - An event key (`on_click:`, `on_focus:`, `on_input:`, … — one per `Element` listener
+///     method) — a `|ev| …` or `|| …` closure.
+///   - On `input` only: `value:` (stringified through `ToString`), `bind_value:` (a
+///     `Signal<String>`, bound both ways), and `mask:` (an `Option<char>`). These and
+///     `multiline:` are compile errors on `box`.
+///   - `transitions:` — an iterable of `TransitionConfig`, evaluated once when the element is
+///     built. A signal read there does not update the transitions, and inside an `if` or
+///     `match` it would rebuild the branch.
+///   - Any other key — a string attribute, stringified through `ToString`. A misspelled typed
+///     key lands here too, silently; only `on_*` names are checked.
 /// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
@@ -73,8 +76,11 @@ use syn::{
 /// The macro emits absolute `::tuidom_ui::…` paths, so the crate must be reachable under that
 /// name — which it is for downstream users, and in-crate via `extern crate self as tuidom_ui`.
 ///
-/// The one dispatch rule is **literal-vs-expression**: a literal value is applied once and
-/// statically, anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). An `if`,
+/// Values dispatch on **literal-vs-expression**: a literal is applied once and statically,
+/// anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). The exceptions follow
+/// the key's type: a `Style` is never a literal, so the style keys always bind reactively; events
+/// take their closure as the handler; `bind_value:` passes its signal through; and
+/// `transitions:` is applied once whatever it is. An `if`,
 /// `match`, or view hole lowers to a single `dynamic` block, so a change to a condition re-runs
 /// only that block and never its siblings. An `each` lowers to a keyed differ: a `key = …` clause
 /// preserves item identity (and thus scroll/focus/transition state) across reorders, while an
