@@ -17,8 +17,9 @@ use crate::style::{Color, ResolvedColor, Style};
 impl Document {
     /// Set a transition configuration for a node.
     ///
-    /// When the given property changes (via [`update_style`] or [`set_style`]),
-    /// the engine will animate the change over the specified duration and easing.
+    /// When the given property changes (via [`update_style`](Self::update_style) or
+    /// [`set_style`](Self::set_style)), the engine will animate the change over the specified
+    /// duration and easing.
     ///
     /// Returns [`TuidomError::NodeNotFound`] if `id` does not exist.
     pub fn set_transition(&self, id: NodeId, config: TransitionConfig) -> Result<()> {

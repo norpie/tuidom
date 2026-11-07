@@ -27,7 +27,7 @@ pub(crate) fn next_document_id() -> u64 {
 ///
 /// NodeIds are cheap to copy and pass around. They remain valid until the
 /// referenced node is removed. Using a stale [`NodeId`] (after removal) will
-/// return `None` from [`Document`] methods.
+/// return `None` from [`Document`](crate::Document) methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId {
     pub(crate) document_id: u64,
