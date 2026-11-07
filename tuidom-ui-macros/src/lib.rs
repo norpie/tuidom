@@ -132,7 +132,8 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// At the call site `view!` decides how each prop value flows in by its **syntax**: a literal
 /// (`start: 0`) seeds the signal once; any other expression (`start: base.get()`) stays synced to
 /// a parent signal through an effect owned by the caller; and a **closure** is a callback prop
-/// (below), never a signal.
+/// (below), never a signal. A signal prop given an expression must be `PartialEq`, so the sync
+/// can skip unchanged values.
 ///
 /// # Optional props
 ///
@@ -162,7 +163,25 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// A [`Callback<A>`] parameter is how a child talks back to its parent: the parent passes a
 /// closure, the child invokes `on_x.call(arg)`. It is stored raw (not a signal), and `view!`
 /// lowers a closure-valued prop to it automatically. A callback is required unless
-/// `#[prop(default)]` gives it the no-op default.
+/// `#[prop(default)]` gives it the no-op default. A callback already built (`on_x: handler`, with
+/// `handler` a `Callback`) passes through as it is.
+///
+/// # Node ref props
+///
+/// A [`NodeRef`] parameter is how a component exposes one of its nodes: the caller creates the
+/// ref, passes it in, and the body binds it with `ref:`. Like a callback it is stored raw, and
+/// `#[prop(default)]` gives a fresh ref the caller never sees, so the body can bind it either way.
+///
+/// ```ignore
+/// #[component]
+/// fn Field(#[prop(default)] node_ref: NodeRef) -> View {
+///     view! { input { ref: node_ref } }
+/// }
+///
+/// let field = node_ref();
+/// let ui = view! { Field { node_ref: field } };
+/// // Later, from a handler: `field.focus()`.
+/// ```
 ///
 /// # Context and lifecycle
 ///
@@ -176,6 +195,7 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// [`view!`]: macro.view.html
 /// [`Signal`]: ../tuidom_ui/struct.Signal.html
 /// [`Callback<A>`]: ../tuidom_ui/struct.Callback.html
+/// [`NodeRef`]: ../tuidom_ui/struct.NodeRef.html
 /// [`provide_context`]: ../tuidom_ui/fn.provide_context.html
 /// [`use_context`]: ../tuidom_ui/fn.use_context.html
 /// [`on_mount`]: ../tuidom_ui/fn.on_mount.html
@@ -260,19 +280,21 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
             }
             saw_children = true;
         }
-        // Two parameter kinds are stored raw as their declared type rather than signal-wrapped,
-        // because they carry structure or behavior, not a reactive value:
+        // Some parameter kinds are stored raw as their declared type rather than signal-wrapped,
+        // because they carry structure, behavior, or identity, not a reactive value:
         //   - `children` — the deferred-child slot, always optional (empty when none is given).
         //   - a `Callback<A>` prop — a handler; required unless `#[prop(default)]` opts into the
-        //     no-op default. Detected syntactically by the type's last path segment (like
-        //     `Option`), so a type aliased to `Callback` would slip through — accepted.
+        //     no-op default.
+        //   - a `NodeRef` prop — a ref the component binds; `#[prop(default)]` gives a fresh one.
+        // The last two are detected syntactically by the type's last path segment (like
+        // `Option`), so an alias of either would slip through — accepted.
         // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
         let (field_ty, default) = if is_children {
             (
                 quote! { #ty },
                 Some(quote! { ::core::default::Default::default() }),
             )
-        } else if is_callback_type(ty) {
+        } else if is_raw_prop_type(ty) {
             (quote! { #ty }, parse_prop_default(param_attrs, ty)?)
         } else {
             let value_default = parse_prop_default(param_attrs, ty)?;
@@ -340,11 +362,17 @@ fn is_option_type(ty: &Type) -> bool {
     matches!(ty, Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Option"))
 }
 
-/// Whether a type is spelled `Callback<..>` (by its last path segment). A callback prop is stored
-/// raw rather than signal-wrapped; the check mirrors [`is_option_type`] — syntactic, so an alias
-/// of `Callback` would not be recognized.
-fn is_callback_type(ty: &Type) -> bool {
-    matches!(ty, Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Callback"))
+/// Whether a type is spelled `Callback<..>` or `NodeRef` (by its last path segment). Such a prop is
+/// stored raw rather than signal-wrapped; the check mirrors [`is_option_type`] — syntactic, so an
+/// alias of either would not be recognized.
+fn is_raw_prop_type(ty: &Type) -> bool {
+    let Type::Path(tp) = ty else {
+        return false;
+    };
+    tp.path
+        .segments
+        .last()
+        .is_some_and(|s| s.ident == "Callback" || s.ident == "NodeRef")
 }
 
 /// Generate `NameProps`, its typestate builder, and the constructor `NameProps::builder()`.
@@ -1005,12 +1033,14 @@ impl Node {
 ///   never steals one — a `Signal<T>` prop's `T` could not be a closure.)
 /// - A **literal** seeds a plain signal once (`state(value)`) — it never changes, so it needs no
 ///   effect.
-/// - **Anything else** is a *reactive* prop: it may read a parent signal, so the prop stays synced
-///   to the expression through an effect. The expression is captured in a single re-runnable
-///   closure, evaluated once to seed the signal and again on every dependency change — so it
-///   appears once in the source (no double-move) and picks up parent-signal changes without
-///   re-running the component body. A reactive prop's type must be `PartialEq` (for the
-///   equality-skipping `set`); a literal prop escapes that, since it is never set.
+/// - **Anything else** is captured as `move || expr` and handed to `prop_expr`, whose return type
+///   is the setter's parameter type, so the prop's type picks the conversion. A signal prop stays
+///   synced to the expression through an effect: the closure seeds the signal and reruns on every
+///   dependency change, so the expression appears once in the source (no double-move) and picks
+///   up parent-signal changes without re-running the component body. Its type must be `PartialEq`
+///   (for the equality-skipping `set`); a literal prop escapes that, since it is never set. A raw
+///   prop (`Callback`, `NodeRef`) takes the closure's value once, so a callback or ref held in a
+///   variable passes straight through.
 ///
 /// [`Callback`]: ../tuidom_ui/struct.Callback.html
 fn prop_init(attr: &Attr) -> TokenStream2 {
@@ -1021,12 +1051,7 @@ fn prop_init(attr: &Attr) -> TokenStream2 {
     } else if is_literal(value) {
         quote! { ::tuidom_ui::state(#value) }
     } else {
-        quote! {{
-            let __prop_sync = move || #value;
-            let __prop = ::tuidom_ui::state(__prop_sync());
-            ::tuidom_ui::effect(move || __prop.set(__prop_sync()));
-            __prop
-        }}
+        quote! { ::tuidom_ui::__private::prop_expr(move || #value) }
     }
 }
 

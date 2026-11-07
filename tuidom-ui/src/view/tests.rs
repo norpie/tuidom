@@ -2901,16 +2901,47 @@ fn an_effect_reading_a_ref_reruns_when_it_fills_and_empties() {
     assert_eq!(*seen.lock().unwrap(), [false, true, false]);
 }
 
+/// A component exposing its inner node through a ref the caller passes in.
+#[crate::component]
+fn RefField(node_ref: crate::NodeRef) -> View {
+    crate::view! { box { box { ref: node_ref, test_id: "inner" } } }
+}
+
+/// A component binding a ref the caller may omit, reporting whether it filled.
+#[crate::component]
+fn OptionalRef(#[prop(default)] node_ref: crate::NodeRef, filled: Callback<bool>) -> View {
+    crate::on_mount(move || filled.call(node_ref.node().is_some()));
+    crate::view! { box { ref: node_ref } }
+}
+
 #[test]
 fn a_component_fills_a_ref_its_caller_passes_in() {
-    fn labelled(r: crate::NodeRef) -> View {
-        crate::view! { box { box { ref: r, test_id: "inner" } } }
-    }
     let r = node_ref();
-    let mut h = Harness::new(4, 1, move || super::component(move || labelled(r)));
+    let mut h = Harness::new(4, 1, move || crate::view! { RefField { node_ref: r } });
     let inner = h.find_attr("test_id", "inner");
     assert!(inner.is_some());
     assert_eq!(r.node(), inner);
+}
+
+#[test]
+fn an_omitted_ref_prop_defaults_to_a_fresh_ref() {
+    let filled = state(false);
+    let _h = Harness::new(4, 1, move || {
+        crate::view! { OptionalRef { filled: move |f| filled.set(f) } }
+    });
+    assert!(filled.get());
+}
+
+#[test]
+fn a_callback_held_in_a_variable_passes_as_a_prop() {
+    let received = state(0i64);
+    let mut h = Harness::new(4, 1, move || {
+        let on_fire = Callback::new(move |n: i32| received.set(n as i64));
+        crate::view! { Emitter { on_fire: on_fire } }
+    });
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::Char('x'));
+    assert_eq!(received.get(), 7);
 }
 
 /// A component that records the root of whatever document `use_document` finds for it.

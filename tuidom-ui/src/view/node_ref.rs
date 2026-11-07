@@ -36,6 +36,14 @@ impl Clone for NodeRef {
 
 impl Copy for NodeRef {}
 
+/// A fresh, empty ref: what an optional `NodeRef` prop holds when the caller passes none, so the
+/// component can bind it unconditionally.
+impl Default for NodeRef {
+    fn default() -> Self {
+        node_ref()
+    }
+}
+
 #[derive(Clone)]
 struct Bound {
     doc: Document,

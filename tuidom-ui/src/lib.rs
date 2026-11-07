@@ -34,6 +34,7 @@ extern crate self as tuidom_ui;
 mod app;
 mod callback;
 mod lock;
+mod prop;
 mod runtime;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -45,6 +46,12 @@ pub use runtime::{
     Derived, Scope, Signal, batch, derived, effect, on_cleanup, provide_context, spawn, state,
     use_context,
 };
+/// Support for code `view!` and `#[component]` expand to. Not public API.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::prop::{FromPropExpr, prop_expr};
+}
+
 // `component` names two things in two namespaces: the attribute macro (macro namespace) that
 // rewrites a component function, and the `view::component` value (below) it lowers to. They
 // coexist under one path — `#[component]` finds the macro, `component(..)` the function.
