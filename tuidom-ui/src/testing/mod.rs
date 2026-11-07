@@ -10,6 +10,33 @@
 //! event-task span and so defers like an off-thread write, is therefore visible on the next read
 //! with nothing to call.
 //!
+//! ```ignore
+//! let picked = state(None);
+//! let mut h = Harness::new(16, 4, move || view! { TaskList { on_pick: move |n| picked.set(Some(n)) } });
+//! h.press(KeyCode::Tab);
+//! h.press(KeyCode::Enter);
+//! assert_eq!(picked.get(), Some("write"));
+//! h.click_text("Done");
+//! assert_eq!(h.row(3), "done write");
+//! ```
+//!
+//! # Finding things
+//!
+//! A component body never sees the `NodeId`s it creates, so tests locate what they need from
+//! outside. [`find_text`](Harness::find_text) and [`click_text`](Harness::click_text) work from
+//! what is on screen, the way a user would. [`find_attr`](Harness::find_attr) finds a node tagged
+//! with an attribute in `view!` (`test_id: "save"`), for engine calls that need the node itself,
+//! such as [`focus`](Harness::focus) or `set_transition` through
+//! [`document`](Harness::document).
+//!
+//! # Time
+//!
+//! The document clock is frozen. [`advance`](Harness::advance) steps it exactly, so transitions,
+//! keyframe animations, and `Frames` nodes can be asserted partway through. Timers inside spawned
+//! tasks run on Tokio's clock instead; use `#[tokio::test(start_paused = true)]` for those.
+//!
+//! # Unsettled state
+//!
 //! [`document`](Harness::document) and [`runtime`](Harness::runtime) reach the underlying pieces
 //! for tests that need to observe a state before it settles.
 //!

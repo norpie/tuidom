@@ -8,7 +8,7 @@ use tuidom::headless::ScreenColor;
 use tuidom::style::{Color, FlexDirection, Length, Style};
 
 use super::Harness;
-use crate::{Callback, View, component, dyn_text, on_cleanup, state, text, virtual_list};
+use crate::{Callback, Signal, View, component, dyn_text, on_cleanup, state, text, virtual_list};
 
 #[crate::component]
 fn Counter(start: i32) -> View {
@@ -235,4 +235,105 @@ fn advance_steps_a_transition_partway_then_to_its_end() {
     assert_eq!(black, Some(ScreenColor::from_rgb(0, 0, 0)));
     assert_ne!(midway, white);
     assert_ne!(midway, black);
+}
+
+// ---- Worked example: a task picker, tested only through the harness ---------------------
+
+/// One task row: focusable, picked with Enter, highlighted while it is the picked one.
+#[crate::component]
+fn TaskItem(
+    name: &'static str,
+    picked: Option<&'static str>,
+    on_pick: Callback<&'static str>,
+) -> View {
+    crate::view! {
+        box {
+            test_id: name.get().to_string(),
+            focusable: true,
+            style: {
+                let mut style = Style::new();
+                style.height(Length::Cells(1));
+                let highlighted = picked.get() == Some(name.get());
+                style.background(if highlighted { Color::black() } else { Color::white() });
+                style
+            },
+            on_key_press: move |ev| {
+                if ev.code == KeyCode::Enter {
+                    on_pick.call(name.get());
+                }
+            },
+            text(name.get()),
+        }
+    }
+}
+
+/// A keyed list of tasks, a Done button, and a status line reporting the pick.
+fn task_picker(tasks: Signal<Vec<&'static str>>, picked: Signal<Option<&'static str>>) -> View {
+    let done = state(false);
+    crate::view! {
+        box {
+            style: column(),
+            each _, name in tasks.get() key = name {
+                TaskItem { name: name, picked: picked.get(), on_pick: move |n| picked.set(Some(n)) }
+            },
+            Button { label: "Done".to_string(), on_press: move |_| done.set(true) },
+            text(match (picked.get(), done.get()) {
+                (None, _) => "nothing picked".to_string(),
+                (Some(name), false) => format!("picked {name}"),
+                (Some(name), true) => format!("done {name}"),
+            }),
+        }
+    }
+}
+
+#[test]
+fn worked_example_task_picker() {
+    let tasks = state(vec!["write", "test", "ship"]);
+    let picked = state(None);
+    let mut h = Harness::new(16, 5, move || task_picker(tasks, picked));
+    assert_eq!(h.screen(), "write\ntest\nship\nDone\nnothing picked");
+
+    // The engine animates background changes once a transition is set, which a test reaches
+    // through the tagged nodes.
+    for name in ["write", "test", "ship"] {
+        let node = h.find_attr("test_id", name).unwrap();
+        h.document()
+            .set_transition(
+                node,
+                TransitionConfig::new(
+                    TransitionProperty::Background,
+                    Duration::from_millis(200),
+                    Easing::Linear,
+                ),
+            )
+            .unwrap();
+    }
+
+    // Tab twice lands on "test"; Enter picks it, and the highlight fades in.
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::Enter);
+    assert_eq!(picked.get(), Some("test"));
+    assert_eq!(h.row(4), "picked test");
+
+    let white = Some(ScreenColor::from_rgb(255, 255, 255));
+    let black = Some(ScreenColor::from_rgb(0, 0, 0));
+    h.advance(Duration::from_millis(100));
+    let midway = h.cell(0, 1).unwrap().bg;
+    assert_ne!(midway, white);
+    assert_ne!(midway, black);
+    h.advance(Duration::from_millis(100));
+    assert_eq!(h.cell(0, 1).unwrap().bg, black);
+
+    // Reversing the list moves the keyed rows. Focus and the highlight go with "test", which
+    // stays in the middle, while "ship" moves to the top.
+    tasks.set(vec!["ship", "test", "write"]);
+    assert_eq!(h.screen(), "ship\ntest\nwrite\nDone\npicked test");
+    assert_eq!(h.cell(0, 0).unwrap().bg, white);
+    assert_eq!(h.cell(0, 1).unwrap().bg, black);
+    let test_row = h.find_attr("test_id", "test").unwrap();
+    assert_eq!(h.document().focused(), Some(test_row));
+
+    h.click_text("Done");
+    assert_eq!(h.row(4), "done test");
 }
