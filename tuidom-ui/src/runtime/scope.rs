@@ -28,9 +28,28 @@ impl Scope {
     /// Open a child scope. Disposing this scope disposes the child; disposing the parent
     /// disposes it too.
     pub fn child(&self) -> Scope {
+        Scope::child_of(self.id)
+    }
+
+    /// Open a child of the scope `parent` names, for callers that hold an owner's id rather than
+    /// its handle — a dynamic block's effect, which outlives the borrow of the scope it was
+    /// built under.
+    pub(crate) fn child_of(parent: ScopeId) -> Scope {
         Scope {
-            id: create_scope(Some(self.id)),
+            id: create_scope(Some(parent)),
         }
+    }
+
+    pub(crate) fn id(&self) -> ScopeId {
+        self.id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn child_count(&self) -> usize {
+        rt().read()
+            .scopes
+            .get(&self.id)
+            .map_or(0, |data| data.children.len())
     }
 
     /// Run `f` with this scope entered, so reactive nodes it creates are owned here.

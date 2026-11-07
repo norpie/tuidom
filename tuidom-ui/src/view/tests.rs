@@ -1315,10 +1315,9 @@ fn component_omitted_callback_prop_defaults_to_a_noop() {
 
 // ---- F5 step 7: lifecycle (on_mount / on_cleanup) ---------------------------------------
 
-/// Marks its body and its mount through a `mark` callback, then instantiates `Inner` directly
-/// (not through `children`, so the parent scope chain is preserved and context reaches it). It
-/// provides the callback as context — proving a context can carry behavior, not just data — so
-/// `Inner` injects the same sink without a prop threaded through.
+/// Marks its body and its mount through a `mark` callback, then instantiates `Inner`. It provides
+/// the callback as context — proving a context can carry behavior, not just data — so `Inner`
+/// injects the same sink without a prop threaded through.
 #[crate::component]
 fn Outer(mark: Callback<&'static str>) -> View {
     crate::provide_context(mark.clone());
@@ -1506,6 +1505,159 @@ fn worked_composition_of_section_counters_and_callbacks() {
     title.set("Total".to_string());
     rt.render().unwrap();
     assert_eq!(row0(&rt, 5), "Total");
+}
+
+// ---- Remounted content nests under its owner scope --------------------------------------
+
+#[derive(Clone)]
+struct Theme(&'static str);
+
+/// Paints the nearest provided `Theme`, or "none" when context does not reach it.
+#[crate::component]
+fn ThemeReader() -> View {
+    let theme = crate::use_context::<Theme>().map_or("none", |t| t.0);
+    crate::view! { text(theme) }
+}
+
+#[crate::component]
+fn ThemeProvider(children: Children) -> View {
+    crate::provide_context(Theme("dark"));
+    crate::view! { box { { children.clone() } } }
+}
+
+#[crate::component]
+fn ThemedIf(show: bool) -> View {
+    crate::provide_context(Theme("dark"));
+    crate::view! {
+        box {
+            if show.get() { ThemeReader {} } else { text("hidden") }
+        }
+    }
+}
+
+#[crate::component]
+fn ThemedList(keys: Vec<&'static str>) -> View {
+    crate::provide_context(Theme("dark"));
+    keyed(move || {
+        keys.get()
+            .into_iter()
+            .map(|k| (k, move || crate::view! { ThemeReader {} }))
+            .collect::<Vec<_>>()
+    })
+}
+
+#[test]
+fn context_reaches_children_content() {
+    let doc = Document::new().unwrap();
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { ThemeProvider { ThemeReader {} } },
+    )
+    .unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "dark");
+}
+
+#[test]
+fn context_reaches_content_an_if_mounts_on_a_rerun() {
+    // The reader is absent at first, so it mounts only when the block reruns — from inside a
+    // flush, where the thread's scope stack is not the owner's.
+    let doc = Document::new().unwrap();
+    let show = state(false);
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { ThemedIf { show: show.get() } },
+    )
+    .unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 6), "hidden");
+
+    show.set(true);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 6), "dark  ");
+}
+
+#[test]
+fn context_reaches_keyed_items_including_ones_added_later() {
+    let doc = Document::new().unwrap();
+    let keys = state(vec!["a"]);
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { ThemedList { keys: keys.get() } },
+    )
+    .unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4), "dark");
+
+    keys.set(vec!["a", "b"]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 8), "darkdark");
+}
+
+/// A `CleanupComp` that counts its cleanup into `count`.
+fn counted_cleanup(count: Arc<AtomicUsize>) -> View {
+    crate::view! {
+        CleanupComp { on_gone: move |_| { count.fetch_add(1, Ordering::SeqCst); } }
+    }
+}
+
+/// A keyed list of two `counted_cleanup` items.
+fn counted_cleanup_list(count: Arc<AtomicUsize>) -> View {
+    keyed(move || {
+        ["a", "b"]
+            .into_iter()
+            .map(|k| {
+                let count = count.clone();
+                (k, move || counted_cleanup(count.clone()))
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
+#[test]
+fn disposing_the_owner_disposes_nested_content_once() {
+    // One cleanup inside a dynamic block, two inside a keyed list. Unmounting the owner reaches all three
+    // through the scope tree, and each runs exactly once.
+    let doc = Document::new().unwrap();
+    let cleaned = Arc::new(AtomicUsize::new(0));
+
+    let c = cleaned.clone();
+    let view = boxed()
+        .child(dynamic(move || counted_cleanup(c.clone())))
+        .child(counted_cleanup_list(cleaned.clone()));
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    assert_eq!(cleaned.load(Ordering::SeqCst), 0);
+
+    mounted.unmount();
+    assert_eq!(cleaned.load(Ordering::SeqCst), 3);
+    assert_eq!(doc.get_children(doc.root()).len(), 0);
+}
+
+#[test]
+fn swapping_dynamic_content_does_not_accumulate_child_scopes() {
+    let doc = Document::new().unwrap();
+    let show = state(false);
+    let mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { if show.get() { text("a") } else { text("b") } },
+    )
+    .unwrap();
+    assert_eq!(mounted.scope.child_count(), 1);
+
+    for _ in 0..50 {
+        show.update(|s| *s = !*s);
+    }
+    assert_eq!(mounted.scope.child_count(), 1);
 }
 
 // ---- Keyed lists: identity-preserving reconciliation ------------------------------------

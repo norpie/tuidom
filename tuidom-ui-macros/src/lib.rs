@@ -154,8 +154,9 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// A component body runs inside its own owner scope, so the ambient runtime functions work with
 /// nothing threaded: [`provide_context`]/[`use_context`] pass a value down a subtree without
 /// prop-drilling, and [`on_mount`]/[`on_cleanup`] tie a side effect to the component's mount and
-/// unmount. Context resolves up the scope chain, which a directly-instantiated child extends but
-/// a `{ children }` block does not.
+/// unmount. Context resolves up the scope chain from where content is mounted, so it reaches
+/// content inside `if`, `match`, and `each`, and `{ children }` content sees the context of the
+/// component that places it.
 ///
 /// [`view!`]: macro.view.html
 /// [`Signal`]: ../tuidom_ui/struct.Signal.html

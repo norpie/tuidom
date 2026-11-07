@@ -38,7 +38,7 @@ use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
 
-use crate::runtime::{Scope, effect, state, with_inline_flush};
+use crate::runtime::{Scope, ScopeId, effect, state, with_inline_flush};
 
 thread_local! {
     /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
@@ -652,13 +652,26 @@ impl From<&str> for View {
 ///
 /// A partial mount that errors partway is fully rolled back before the error returns.
 pub fn mount(doc: &Document, parent: NodeId, view: impl Into<View>) -> Result<Mounted> {
-    mount_at(doc, parent, None, view.into())
+    mount_at(doc, parent, None, view.into(), None)
 }
 
-/// Mount a view under its own owner scope, placing its top-level nodes before `before` (a
-/// dynamic block's marker) or appended. A partial mount that errors is rolled back.
-fn mount_at(doc: &Document, parent: NodeId, before: Option<NodeId>, view: View) -> Result<Mounted> {
-    let scope = Scope::new();
+/// Mount a view under a fresh scope, placing its top-level nodes before `before` (a dynamic
+/// block's marker) or appended. A partial mount that errors is rolled back.
+///
+/// With an `owner`, the fresh scope is its child, so content a dynamic block or keyed list
+/// remounts stays on the owner's parent chain: context resolves through it, and disposing the
+/// owner disposes the content structurally.
+fn mount_at(
+    doc: &Document,
+    parent: NodeId,
+    before: Option<NodeId>,
+    view: View,
+    owner: Option<ScopeId>,
+) -> Result<Mounted> {
+    let scope = match owner {
+        Some(owner) => Scope::child_of(owner),
+        None => Scope::new(),
+    };
     // Mounting is trusted event-task work: the binding effects it runs, and any signal writes an
     // `on_mount` callback makes, flush inline in this frame rather than deferring to the mailbox.
     let mounted = with_inline_flush(|| {
@@ -759,15 +772,7 @@ fn mount_view(
             // The content mounted before the marker right now, swapped whole on every rerun.
             let current: Arc<Mutex<Option<Mounted>>> = Arc::new(Mutex::new(None));
 
-            // Disposing the owner scope tears down whatever content is live — the content's
-            // own scope is a root, so it is not freed structurally and needs this hook.
-            let held = current.clone();
-            scope.on_cleanup(move || {
-                if let Some(mounted) = lock(&held).take() {
-                    mounted.unmount();
-                }
-            });
-
+            let owner = scope.id();
             let produce = dynamic.produce;
             let doc = doc.clone();
             effect(move || {
@@ -778,7 +783,7 @@ fn mount_view(
                 if let Some(old) = slot.take() {
                     old.unmount();
                 }
-                match mount_at(&doc, parent, Some(marker), view) {
+                match mount_at(&doc, parent, Some(marker), view, Some(owner)) {
                     Ok(mounted) => *slot = Some(mounted),
                     Err(err) => tracing::warn!(?marker, "dynamic block failed to mount: {err}"),
                 }
@@ -798,16 +803,7 @@ fn mount_view(
             // state are disposed independently when its key leaves.
             let items: Arc<Mutex<Vec<(ErasedKey, Mounted)>>> = Arc::new(Mutex::new(Vec::new()));
 
-            // Each item's content mounts under a root scope (as a dynamic block's does), not under
-            // the owner scope, so disposing the owner does not reach them structurally — tear them
-            // down explicitly.
-            let held = items.clone();
-            scope.on_cleanup(move || {
-                for (_, mounted) in std::mem::take(&mut *lock(&held)) {
-                    mounted.unmount();
-                }
-            });
-
+            let owner = scope.id();
             let produce = keyed.produce;
             let doc = doc.clone();
             effect(move || {
@@ -815,7 +811,7 @@ fn mount_view(
                 // building the key sequence — the collection, not the items' own bindings.
                 let produced = produce();
                 let mut state = lock(&items);
-                reconcile(&doc, parent, marker, &mut state, produced);
+                reconcile(&doc, parent, marker, owner, &mut state, produced);
             });
 
             Ok(vec![marker])
@@ -854,6 +850,7 @@ fn reconcile(
     doc: &Document,
     parent: NodeId,
     marker: NodeId,
+    owner: ScopeId,
     state: &mut Vec<(ErasedKey, Mounted)>,
     produced: Vec<(ErasedKey, ItemThunk)>,
 ) {
@@ -907,7 +904,7 @@ fn reconcile(
     let mut placed: Vec<(ErasedKey, Mounted)> = Vec::with_capacity(order.len());
     for (key, slot) in order.into_iter().rev() {
         let mounted = match slot {
-            Slot::New(item) => match mount_at(doc, parent, Some(anchor), item()) {
+            Slot::New(item) => match mount_at(doc, parent, Some(anchor), item(), Some(owner)) {
                 Ok(mounted) => mounted,
                 Err(err) => {
                     tracing::warn!(?parent, "keyed item failed to mount: {err}");
