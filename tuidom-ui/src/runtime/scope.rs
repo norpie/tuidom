@@ -4,6 +4,9 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::future::Future;
 
+use tokio::runtime::Handle;
+use tokio::task::JoinHandle;
+
 use super::{BoxAny, Inner, SCOPE, ScopeData, ScopeId, SessionId, SlotId, current_scope, rt};
 
 /// An ownership boundary for reactive state.
@@ -88,11 +91,15 @@ impl Scope {
 
     /// Spawn a task the scope owns. Its `JoinHandle` is aborted on dispose, so an unmounted
     /// component stops working rather than burning CPU on stale writes.
+    ///
+    /// Outside a Tokio runtime the task is dropped unrun, with a warning.
     pub fn spawn<F>(&self, future: F)
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let handle = tokio::spawn(future);
+        let Some(handle) = spawn_on_runtime(future) else {
+            return;
+        };
         let mut w = rt().write();
         if let Some(data) = w.scopes.get_mut(&self.id) {
             data.tasks.push(handle);
@@ -201,12 +208,15 @@ pub fn on_cleanup(f: impl FnOnce() + Send + Sync + 'static) {
 /// nothing will abort it — which is logged, since an un-owned task outliving its intended lifetime
 /// is the surprising case. Prefer calling it where a scope is entered.
 ///
-/// Requires a Tokio runtime, like [`Scope::spawn`]; an [`App`](crate::App) provides one.
+/// Requires a Tokio runtime, like [`Scope::spawn`]: outside one the task is dropped unrun, with
+/// a warning.
 pub fn spawn<F>(future: F)
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let handle = tokio::spawn(future);
+    let Some(handle) = spawn_on_runtime(future) else {
+        return;
+    };
     let Some(sid) = current_scope() else {
         tracing::debug!("spawn called with no scope open; task detached and will not be aborted");
         return;
@@ -214,6 +224,21 @@ where
     let mut w = rt().write();
     if let Some(data) = w.scopes.get_mut(&sid) {
         data.tasks.push(handle);
+    }
+}
+
+/// Spawn `future` on the current Tokio runtime. `tokio::spawn` panics without one, so this checks
+/// first and drops the task instead.
+fn spawn_on_runtime<F>(future: F) -> Option<JoinHandle<()>>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    match Handle::try_current() {
+        Ok(handle) => Some(handle.spawn(future)),
+        Err(_) => {
+            tracing::warn!("spawn called outside a Tokio runtime; task dropped");
+            None
+        }
     }
 }
 

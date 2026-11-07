@@ -12,7 +12,7 @@ use std::thread;
 
 use super::{
     Scope, SessionId, batch, derived, effect, flush_session, provide_context, register_session,
-    remove_session, state, use_context,
+    remove_session, spawn, state, use_context,
 };
 
 /// A shared counter an effect or compute closure can bump, so a test can assert how many
@@ -532,4 +532,29 @@ fn an_effect_without_a_session_flushes_inline_while_a_session_exists() {
     assert_eq!(count(&wakes), 0);
 
     remove_session(session);
+}
+
+// ---- Spawning without a runtime ---------------------------------------------------------
+
+#[test]
+fn spawning_outside_a_runtime_drops_the_task_instead_of_panicking() {
+    // A plain `#[test]` has no Tokio runtime. Both spawn forms must drop the future unrun: the
+    // `Arc` it captured goes back to one strong reference, so it was dropped rather than leaked.
+    let ran = counter();
+    let scope = Scope::new();
+
+    let r = ran.clone();
+    scope.spawn(async move {
+        r.fetch_add(1, Ordering::SeqCst);
+    });
+    let r = ran.clone();
+    scope.run(|| {
+        spawn(async move {
+            r.fetch_add(1, Ordering::SeqCst);
+        })
+    });
+
+    assert_eq!(Arc::strong_count(&ran), 1);
+    assert_eq!(count(&ran), 0);
+    scope.dispose();
 }
