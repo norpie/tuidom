@@ -36,6 +36,13 @@
 //! the document itself, for document-wide operations such as quitting or setting a color
 //! variable.
 //!
+//! Following another node's geometry goes through the same ref. Inside an effect,
+//! [`NodeRef::layout`] reruns it when the node is laid out differently, and
+//! [`NodeRef::screen_rect`], the position to place a tooltip from, also reruns it when an
+//! ancestor scrolls. Both report the frame that just finished, so anything drawn from them lands
+//! one frame later. An effect that resizes the node it reads can keep changing the layout it
+//! reads and never settle.
+//!
 //! Focus trapping is declared instead: `trap_focus: true` traps focus inside an element for as
 //! long as it is mounted, and gives focus back to where it was when the element unmounts.
 
