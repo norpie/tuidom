@@ -655,6 +655,17 @@ pub fn mount(doc: &Document, parent: NodeId, view: impl Into<View>) -> Result<Mo
     mount_at(doc, parent, None, view.into(), None)
 }
 
+/// Mount `view` under `parent` with its scope a child of `owner`, so it inherits the owner's
+/// session and context.
+pub(crate) fn mount_owned(
+    doc: &Document,
+    parent: NodeId,
+    view: View,
+    owner: &Scope,
+) -> Result<Mounted> {
+    mount_at(doc, parent, None, view, Some(owner.id()))
+}
+
 /// Mount a view under a fresh scope, placing its top-level nodes before `before` (a dynamic
 /// block's marker) or appended. A partial mount that errors is rolled back.
 ///
@@ -673,7 +684,7 @@ fn mount_at(
         None => Scope::new(),
     };
     // Mounting is trusted event-task work: the binding effects it runs, and any signal writes an
-    // `on_mount` callback makes, flush inline in this frame rather than deferring to the mailbox.
+    // `on_mount` callback makes, flush inline in this frame rather than deferring to a session mailbox.
     let mounted = with_inline_flush(|| {
         scope.run(|| with_mount_callbacks(|| mount_view(doc, parent, before, view, &scope)))
     });

@@ -4,12 +4,7 @@
 //! value and carry on — a poisoned reactive arena is no less usable than a live one — than
 //! propagate the poison as a second failure, so every acquisition here swallows it.
 
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-/// Lock a mutex, recovering the inner value if the mutex was poisoned.
-pub(crate) fn mutex<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
-    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Acquire a read lock, recovering the inner value if the lock was poisoned.
 pub(crate) fn rw_read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {

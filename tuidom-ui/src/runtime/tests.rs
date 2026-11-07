@@ -8,7 +8,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::{Scope, batch, derived, effect, provide_context, state, use_context};
+use std::thread;
+
+use super::{
+    Scope, SessionId, batch, derived, effect, flush_session, provide_context, register_session,
+    remove_session, state, use_context,
+};
 
 /// A shared counter an effect or compute closure can bump, so a test can assert how many
 /// times it ran.
@@ -363,4 +368,168 @@ fn a_disposed_scope_drops_its_provided_context() {
 
     scope.dispose();
     assert!(weak.upgrade().is_none()); // dropped along with the scope
+}
+
+// ---- Session routing ----------------------------------------------------------------------
+//
+// A test thread is outside any inline span, so its writes take the deferred path just like a
+// spawned task's. A counting waker stands in for the engine's flush request.
+
+/// Register a session whose waker counts how often it fired.
+fn counted_session() -> (SessionId, Arc<AtomicUsize>) {
+    let wakes = counter();
+    let w = wakes.clone();
+    let id = register_session(Arc::new(move || {
+        w.fetch_add(1, Ordering::SeqCst);
+    }));
+    (id, wakes)
+}
+
+/// An effect owned by `scope` that reads `s` and counts its runs.
+fn counted_effect_in(scope: &Scope, s: super::Signal<i32>) -> Arc<AtomicUsize> {
+    let runs = counter();
+    let r = runs.clone();
+    scope.run(|| {
+        effect(move || {
+            s.get();
+            r.fetch_add(1, Ordering::SeqCst);
+        })
+    });
+    runs
+}
+
+#[test]
+fn an_off_task_write_defers_to_its_session_until_drained() {
+    let (session, wakes) = counted_session();
+    let root = Scope::for_session(session);
+    let s = state(0);
+    let runs = counted_effect_in(&root, s);
+    assert_eq!(count(&runs), 1);
+
+    let writer_runs = runs.clone();
+    let ran_on_writer = thread::spawn(move || {
+        s.set(1);
+        count(&writer_runs)
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        ran_on_writer, 1,
+        "the effect did not run on the writing thread"
+    );
+    assert_eq!(count(&wakes), 1);
+
+    flush_session(session);
+    assert_eq!(count(&runs), 2);
+
+    root.dispose();
+    remove_session(session);
+}
+
+#[test]
+fn a_burst_of_off_task_writes_wakes_once_per_drain() {
+    let (session, wakes) = counted_session();
+    let root = Scope::for_session(session);
+    let s = state(0);
+    let runs = counted_effect_in(&root, s);
+
+    for v in 1..=5 {
+        s.set(v);
+    }
+    assert_eq!(count(&wakes), 1);
+    flush_session(session);
+    assert_eq!(count(&runs), 2, "five writes, one rerun");
+
+    // The drain re-armed the gate, so the next write wakes again.
+    s.set(6);
+    assert_eq!(count(&wakes), 2);
+
+    root.dispose();
+    remove_session(session);
+}
+
+#[test]
+fn child_scopes_inherit_their_session() {
+    let (session, wakes) = counted_session();
+    let root = Scope::for_session(session);
+    let grandchild = root.child().child();
+    let s = state(0);
+    let runs = counted_effect_in(&grandchild, s);
+
+    s.set(1);
+    assert_eq!(count(&runs), 1, "deferred, not run inline");
+    assert_eq!(count(&wakes), 1);
+    flush_session(session);
+    assert_eq!(count(&runs), 2);
+
+    root.dispose();
+    remove_session(session);
+}
+
+#[test]
+fn sessions_route_only_their_own_effects() {
+    let (a, a_wakes) = counted_session();
+    let (b, b_wakes) = counted_session();
+    let (a_root, b_root) = (Scope::for_session(a), Scope::for_session(b));
+    let s = state(0);
+    let a_runs = counted_effect_in(&a_root, s);
+    let other = state(0);
+    let b_runs = counted_effect_in(&b_root, other);
+
+    s.set(1);
+    assert_eq!(count(&a_wakes), 1);
+    assert_eq!(count(&b_wakes), 0, "a write to A's effect does not wake B");
+
+    flush_session(b);
+    assert_eq!(count(&a_runs), 1, "draining B does not run A's effect");
+    flush_session(a);
+    assert_eq!(count(&a_runs), 2);
+    assert_eq!(count(&b_runs), 1);
+
+    a_root.dispose();
+    b_root.dispose();
+    remove_session(a);
+    remove_session(b);
+}
+
+#[test]
+fn removing_one_session_leaves_the_other_routing() {
+    let (a, _) = counted_session();
+    let (b, b_wakes) = counted_session();
+    let (a_root, b_root) = (Scope::for_session(a), Scope::for_session(b));
+    let s = state(0);
+    let _a_runs = counted_effect_in(&a_root, s);
+    let b_runs = counted_effect_in(&b_root, s);
+
+    a_root.dispose();
+    remove_session(a);
+
+    s.set(1);
+    assert_eq!(count(&b_wakes), 1);
+    assert_eq!(count(&b_runs), 1);
+    flush_session(b);
+    assert_eq!(count(&b_runs), 2);
+
+    b_root.dispose();
+    remove_session(b);
+}
+
+#[test]
+fn an_effect_without_a_session_flushes_inline_while_a_session_exists() {
+    // The parallel-test case: one test has an app registered, another writes to its own
+    // session-free graph and must still see its effect run immediately.
+    let (session, wakes) = counted_session();
+    let s = state(0);
+    let runs = counter();
+    let r = runs.clone();
+    effect(move || {
+        s.get();
+        r.fetch_add(1, Ordering::SeqCst);
+    });
+
+    s.set(1);
+    assert_eq!(count(&runs), 2);
+    assert_eq!(count(&wakes), 0);
+
+    remove_session(session);
 }

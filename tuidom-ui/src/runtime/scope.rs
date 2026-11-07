@@ -4,7 +4,7 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::future::Future;
 
-use super::{BoxAny, Inner, SCOPE, ScopeData, ScopeId, SlotId, current_scope, rt};
+use super::{BoxAny, Inner, SCOPE, ScopeData, ScopeId, SessionId, SlotId, current_scope, rt};
 
 /// An ownership boundary for reactive state.
 ///
@@ -21,7 +21,15 @@ impl Scope {
     /// Open a root scope, owning nothing until code runs inside [`run`](Scope::run).
     pub fn new() -> Scope {
         Scope {
-            id: create_scope(None),
+            id: create_scope(None, None),
+        }
+    }
+
+    /// Open a root scope whose effects, and those of every scope beneath it, defer off-task
+    /// writes to `session`.
+    pub(crate) fn for_session(session: SessionId) -> Scope {
+        Scope {
+            id: create_scope(None, Some(session)),
         }
     }
 
@@ -36,7 +44,7 @@ impl Scope {
     /// built under.
     pub(crate) fn child_of(parent: ScopeId) -> Scope {
         Scope {
-            id: create_scope(Some(parent)),
+            id: create_scope(Some(parent), None),
         }
     }
 
@@ -209,10 +217,12 @@ where
     }
 }
 
-fn create_scope(parent: Option<ScopeId>) -> ScopeId {
+/// Open a scope under `parent`, inheriting the parent's session unless `session` names one.
+fn create_scope(parent: Option<ScopeId>, session: Option<SessionId>) -> ScopeId {
     let mut w = rt().write();
     let id = ScopeId(w.next_scope);
     w.next_scope += 1;
+    let session = session.or_else(|| parent.and_then(|p| w.scopes.get(&p)?.session));
     w.scopes.insert(
         id,
         ScopeData {
@@ -222,6 +232,7 @@ fn create_scope(parent: Option<ScopeId>) -> ScopeId {
             cleanups: Vec::new(),
             tasks: Vec::new(),
             contexts: HashMap::new(),
+            session,
         },
     );
     if let Some(p) = parent
