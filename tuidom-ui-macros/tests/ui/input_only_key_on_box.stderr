@@ -1,0 +1,5 @@
+error: `value` applies only to `input`, not `box`
+ --> tests/ui/input_only_key_on_box.rs:5:15
+  |
+5 |         box { value: "hi" }
+  |               ^^^^^

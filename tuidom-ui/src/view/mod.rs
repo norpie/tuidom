@@ -41,7 +41,7 @@ use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
 
-use crate::runtime::{Scope, ScopeId, effect, state, with_inline_flush};
+use crate::runtime::{Scope, ScopeId, Signal, effect, state, with_inline_flush};
 
 thread_local! {
     /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
@@ -242,8 +242,23 @@ pub struct Element {
     focus_style: Option<Source<Style>>,
     active_style: Option<Source<Style>>,
     disabled_style: Option<Source<Style>>,
+    input: InputProps,
     listeners: Vec<ListenerReg>,
     children: Vec<View>,
+}
+
+/// The properties only an `Input` node has. Set on a `Box`, they are ignored with a warning.
+#[derive(Default)]
+struct InputProps {
+    value: Option<Source<String>>,
+    multiline: Option<Source<bool>>,
+    mask: Option<Source<Option<char>>>,
+}
+
+impl InputProps {
+    fn is_empty(&self) -> bool {
+        self.value.is_none() && self.multiline.is_none() && self.mask.is_none()
+    }
 }
 
 /// A mounted subtree. Dropping the handle leaves the subtree in place; call [`unmount`] to
@@ -532,8 +547,13 @@ pub fn boxed() -> Element {
 }
 
 /// Begin building an editable input element. The engine node is focusable by default and
-/// starts empty; a template sets its value and observes edits through attributes and events
-/// in later F4 steps.
+/// starts empty.
+///
+/// [`value`](Element::value) and [`dyn_value`](Element::dyn_value) write its value, and
+/// [`on_input`](Element::on_input) reports each edit a key press makes;
+/// [`bind_value`](Element::bind_value) does both against one signal. The signal does not force the
+/// value: an edit the handler does not record stays in the input until something writes a new
+/// value. To block an edit, call `prevent_default` on the key press.
 pub fn input() -> Element {
     element(ElementKind::Input)
 }
@@ -549,6 +569,7 @@ fn element(kind: ElementKind) -> Element {
         focus_style: None,
         active_style: None,
         disabled_style: None,
+        input: InputProps::default(),
         listeners: Vec::new(),
         children: Vec::new(),
     }
@@ -661,6 +682,64 @@ impl Element {
         F: Fn() -> Style + Send + Sync + 'static,
     {
         self.disabled_style = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set an input's value once, at mount.
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.input.value = Some(Source::Static(value.into()));
+        self
+    }
+
+    /// Bind an input's value reactively. A write is skipped when the input already holds the
+    /// same string, which is the usual case right after a key press the signal just recorded.
+    ///
+    /// When a new value replaces the old one, the engine clamps the cursor and selection into it,
+    /// so clearing the input moves the cursor to the start and a longer value leaves it where it
+    /// was.
+    pub fn dyn_value<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> String + Send + Sync + 'static,
+    {
+        self.input.value = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Bind an input's value to `signal` in both directions: the signal writes the value, and
+    /// each edit a key press makes sets the signal.
+    pub fn bind_value(self, signal: Signal<String>) -> Self {
+        self.dyn_value(move || signal.get())
+            .on_input(move |ev| signal.set(ev.value.clone()))
+    }
+
+    /// Set whether an input accepts newlines. A multiline input inserts one on Enter.
+    pub fn multiline(mut self, multiline: bool) -> Self {
+        self.input.multiline = Some(Source::Static(multiline));
+        self
+    }
+
+    /// Bind whether an input accepts newlines reactively.
+    pub fn dyn_multiline<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.input.multiline = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set the character an input paints in place of each character of its value, such as `*`
+    /// for a password. The stored value is unchanged.
+    pub fn mask(mut self, mask: Option<char>) -> Self {
+        self.input.mask = Some(Source::Static(mask));
+        self
+    }
+
+    /// Bind an input's mask reactively.
+    pub fn dyn_mask<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Option<char> + Send + Sync + 'static,
+    {
+        self.input.mask = Some(Source::Reactive(Box::new(f)));
         self
     }
 
@@ -888,6 +967,13 @@ fn mount_view(
                 element.disabled_style,
                 |d, n, s: Style| d.set_disabled_style(n, &s),
             );
+            match element.kind {
+                ElementKind::Input => bind_input(doc, node, element.input),
+                ElementKind::Box if !element.input.is_empty() => {
+                    tracing::warn!(?node, "input-only properties set on a box; ignored");
+                }
+                ElementKind::Box => {}
+            }
             for register in element.listeners {
                 let handle = register(doc, node)?;
                 let d = doc.clone();
@@ -1346,6 +1432,24 @@ fn bind_node<T>(
         if let Err(err) = set(&d, node, value) {
             tracing::warn!(?node, "{what} binding failed: {err}");
         }
+    });
+}
+
+/// Bind the properties only an input has.
+fn bind_input(doc: &Document, node: NodeId, props: InputProps) {
+    bind_node(
+        doc,
+        node,
+        "multiline",
+        props.multiline,
+        Document::set_input_multiline,
+    );
+    bind_node(doc, node, "mask", props.mask, Document::set_input_mask);
+    bind_node(doc, node, "value", props.value, |d, n, value: String| {
+        if d.input_value(n)? == value {
+            return Ok(());
+        }
+        d.set_input_value(n, value)
     });
 }
 

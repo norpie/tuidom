@@ -2614,3 +2614,141 @@ fn an_active_style_paints_between_mouse_down_and_up() {
     h.runtime().simulate_mouse_up(0, 0, MouseButton::Left);
     assert_eq!(h.cell(0, 0).unwrap().bg, white());
 }
+
+// ---- Input value, multiline, mask -------------------------------------------------------
+
+fn field_style(height: u16) -> Style {
+    let mut style = Style::new();
+    style.width(Length::Cells(8));
+    style.height(Length::Cells(height));
+    style
+}
+
+/// The harness's input cursor, as a byte offset into its value.
+fn field_cursor(h: &mut Harness) -> usize {
+    let field = h.find_attr("test_id", "field").unwrap();
+    h.document().input_cursor(field).unwrap()
+}
+
+#[test]
+fn typing_updates_a_bound_signal() {
+    let name = state(String::new());
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! { input { test_id: "field", style: field_style(1), bind_value: name } }
+    });
+
+    h.press(KeyCode::Tab);
+    h.type_text("hey");
+    assert_eq!(name.get(), "hey");
+    assert_eq!(h.row(0), "hey");
+}
+
+#[test]
+fn an_outside_write_replaces_the_value_and_clamps_the_cursor() {
+    let name = state("hi".to_string());
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! { input { test_id: "field", style: field_style(1), bind_value: name } }
+    });
+    assert_eq!(h.row(0), "hi");
+
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::End);
+    assert_eq!(field_cursor(&mut h), 2);
+
+    // A longer value keeps the cursor's offset; clearing moves it to the start.
+    name.set("hello".to_string());
+    assert_eq!((h.row(0), field_cursor(&mut h)), ("hello".to_string(), 2));
+    name.set(String::new());
+    assert_eq!((h.row(0), field_cursor(&mut h)), (String::new(), 0));
+}
+
+#[test]
+fn typing_mid_string_keeps_the_cursor_in_place() {
+    let name = state(String::new());
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! { input { test_id: "field", style: field_style(1), bind_value: name } }
+    });
+
+    h.press(KeyCode::Tab);
+    h.type_text("ac");
+    h.press(KeyCode::Left);
+    h.type_text("b");
+    assert_eq!(name.get(), "abc");
+    assert_eq!(field_cursor(&mut h), 2);
+}
+
+#[test]
+fn an_edit_the_handler_does_not_record_stays_until_the_next_write() {
+    let text = state(String::new());
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! {
+            input { style: field_style(1), value: text.get(), on_input: move || {} }
+        }
+    });
+
+    h.press(KeyCode::Tab);
+    h.type_text("z");
+    assert_eq!((text.get(), h.row(0)), (String::new(), "z".to_string()));
+
+    text.set("q".to_string());
+    assert_eq!(h.row(0), "q");
+}
+
+#[test]
+fn a_handler_can_rewrite_the_value() {
+    let text = state(String::new());
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! {
+            input {
+                test_id: "field",
+                style: field_style(1),
+                value: text.get(),
+                on_input: move |ev| text.set(ev.value.to_uppercase()),
+            }
+        }
+    });
+
+    h.press(KeyCode::Tab);
+    h.type_text("ab");
+    assert_eq!((text.get(), h.row(0)), ("AB".to_string(), "AB".to_string()));
+    assert_eq!(field_cursor(&mut h), 2);
+}
+
+#[test]
+fn a_mask_paints_in_place_of_the_value() {
+    let mut h = Harness::new(8, 1, || {
+        crate::view! { input { style: field_style(1), value: "abc", mask: Some('*') } }
+    });
+    assert_eq!(h.row(0), "***");
+}
+
+#[test]
+fn a_multiline_input_takes_enter_as_a_newline() {
+    let text = state(String::new());
+    let mut h = Harness::new(8, 2, move || {
+        crate::view! { input { style: field_style(2), multiline: true, bind_value: text } }
+    });
+
+    h.press(KeyCode::Tab);
+    h.type_text("a");
+    h.press(KeyCode::Enter);
+    h.type_text("b");
+    assert_eq!(text.get(), "a\nb");
+    assert_eq!(h.screen(), "a\nb");
+}
+
+#[test]
+fn input_only_properties_on_a_box_are_ignored() {
+    let doc = Document::new().unwrap();
+    let view = boxed()
+        .style(sized_box_style())
+        .value("x")
+        .multiline(true)
+        .mask(Some('*'));
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 4).trim_end(), "");
+    assert_eq!(mounted.roots().len(), 1);
+}

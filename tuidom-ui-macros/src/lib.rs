@@ -55,9 +55,11 @@ use syn::{
 /// - **Attributes** — `key: value`. `style:` binds the whole `Style`, and `focus_style:`,
 ///   `active_style:`, and `disabled_style:` bind the pseudo-state styles the same way;
 ///   `focusable:` and `disabled:` take a bool; an event key (`on_click:`, `on_focus:`,
-///   `on_input:`, … — one per `Element` listener method) takes a `|ev| …` or `|| …` closure;
-///   any other key is a string attribute. A literal value is applied once; anything else binds
-///   reactively.
+///   `on_input:`, … — one per `Element` listener method) takes a `|ev| …` or `|| …` closure.
+///   An `input` also takes `value:` (stringified like an attribute), `bind_value:` (a
+///   `Signal<String>`, bound both ways), `multiline:` (a bool), and `mask:` (an
+///   `Option<char>`); these are errors on `box`. Any other key is a string attribute. A literal
+///   value is applied once; anything else binds reactively.
 /// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
@@ -673,6 +675,14 @@ impl Parse for Node {
                 let body;
                 braced!(body in input);
                 let (attrs, children) = parse_body(&body, true)?;
+                if name != "input"
+                    && let Some(attr) = attrs.iter().find(|a| is_input_only(&a.name.to_string()))
+                {
+                    return Err(syn::Error::new(
+                        attr.name.span(),
+                        format!("`{}` applies only to `input`, not `{name}`", attr.name),
+                    ));
+                }
                 Ok(Node::Element {
                     name,
                     attrs,
@@ -852,6 +862,11 @@ const KNOWN_EVENTS: &[&str] = &[
 
 fn is_known_event(name: &str) -> bool {
     KNOWN_EVENTS.contains(&name)
+}
+
+/// Keys that set a property only an `Input` node has.
+fn is_input_only(name: &str) -> bool {
+    matches!(name, "value" | "bind_value" | "multiline" | "mask")
 }
 
 impl Node {
@@ -1085,7 +1100,16 @@ impl Attr {
             // the engine animates the diff. A signal-free value (an inline `style!`) just runs
             // its effect once, which is the accepted cost of the literal-only static split.
             "style" => quote! { .dyn_style(move || #value) },
-            "focusable" | "disabled" => {
+            "value" => {
+                if is_str_literal(value) {
+                    quote! { .value(#value) }
+                } else {
+                    quote! { .dyn_value(move || ::std::string::ToString::to_string(&(#value))) }
+                }
+            }
+            "bind_value" => quote! { .bind_value(#value) },
+            "mask" => quote! { .dyn_mask(move || #value) },
+            "focusable" | "disabled" | "multiline" => {
                 if is_bool_literal(value) {
                     quote! { .#name(#value) }
                 } else {
