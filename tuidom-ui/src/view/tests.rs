@@ -3158,3 +3158,173 @@ fn a_command_inside_an_effect_does_not_subscribe_it() {
     h.screen();
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
+
+// ---- Focus traps -------------------------------------------------------------------------
+
+/// A column that is a stacking context, so it can trap focus.
+fn modal_style() -> Style {
+    let mut style = column();
+    style.stacking_context(true);
+    style
+}
+
+/// A focusable box tagged and labelled `id`.
+fn focusable(id: &'static str) -> View {
+    crate::view! { box { test_id: id, focusable: true, text(id) } }
+}
+
+/// An "open" button above a modal holding "ok" and "cancel", shown while `shown` is true.
+fn opener_and_modal(shown: Signal<bool>, opened: Signal<i32>) -> View {
+    crate::view! {
+        box {
+            style: column(),
+            box { test_id: "open", focusable: true, on_click: move || opened.update(|n| *n += 1), text("open") },
+            if shown.get() {
+                box { style: modal_style(), trap_focus: true, { focusable("ok") }, { focusable("cancel") } }
+            },
+        }
+    }
+}
+
+#[test]
+fn a_trap_moves_focus_inside_and_tab_stays_within_it() {
+    let shown = state(false);
+    let mut h = Harness::new(8, 3, move || opener_and_modal(shown, state(0)));
+    h.press(KeyCode::Tab);
+
+    shown.set(true);
+    let (ok, cancel) = (
+        h.find_attr("test_id", "ok"),
+        h.find_attr("test_id", "cancel"),
+    );
+    assert_eq!(h.document().focused(), ok);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), cancel);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), cancel);
+    h.press(KeyCode::BackTab);
+    h.press(KeyCode::BackTab);
+    assert_eq!(h.document().focused(), ok);
+}
+
+#[test]
+fn nodes_outside_a_trap_are_inert() {
+    let (shown, opened) = (state(true), state(0));
+    let mut h = Harness::new(8, 3, move || opener_and_modal(shown, opened));
+
+    let open = h.find_attr("test_id", "open").unwrap();
+    assert!(h.document().is_inert(open).unwrap());
+    h.click_text("open");
+    assert_eq!(opened.get(), 0);
+}
+
+#[test]
+fn unmounting_a_trap_gives_focus_back_to_the_opener() {
+    let shown = state(false);
+    let mut h = Harness::new(8, 3, move || opener_and_modal(shown, state(0)));
+    h.press(KeyCode::Tab);
+    let open = h.find_attr("test_id", "open");
+
+    shown.set(true);
+    shown.set(false);
+    h.screen();
+    assert_eq!(h.document().focused(), open);
+    assert_eq!(h.document().focus_context_depth(), 1);
+}
+
+/// A field that focuses itself once mounted.
+#[crate::component]
+fn AutofocusField() -> View {
+    let field = node_ref();
+    crate::on_mount(move || field.focus());
+    crate::view! { input { ref: field, test_id: "search" } }
+}
+
+#[test]
+fn an_autofocus_inside_a_trap_keeps_focus_and_the_opener_is_still_restored() {
+    let shown = state(false);
+    let mut h = Harness::new(8, 3, move || {
+        crate::view! {
+            box {
+                style: column(),
+                { focusable("open") },
+                if shown.get() {
+                    box { style: modal_style(), trap_focus: true, { focusable("ok") }, AutofocusField {} }
+                },
+            }
+        }
+    });
+    h.press(KeyCode::Tab);
+    let open = h.find_attr("test_id", "open");
+
+    shown.set(true);
+    let search = h.find_attr("test_id", "search");
+    assert!(search.is_some());
+    assert_eq!(h.document().focused(), search);
+
+    shown.set(false);
+    h.screen();
+    assert_eq!(h.document().focused(), open);
+}
+
+#[test]
+fn nested_traps_close_innermost_first() {
+    let (outer, inner) = (state(false), state(false));
+    let mut h = Harness::new(8, 5, move || {
+        crate::view! {
+            box {
+                style: column(),
+                { focusable("open") },
+                if outer.get() {
+                    box {
+                        style: modal_style(),
+                        trap_focus: true,
+                        { focusable("outer") },
+                        if inner.get() {
+                            box { style: modal_style(), trap_focus: true, { focusable("inner") } }
+                        },
+                    }
+                },
+            }
+        }
+    });
+    h.press(KeyCode::Tab);
+    let open = h.find_attr("test_id", "open");
+
+    outer.set(true);
+    let outer_item = h.find_attr("test_id", "outer");
+    inner.set(true);
+    let inner_item = h.find_attr("test_id", "inner");
+    assert_eq!(h.document().focused(), inner_item);
+    assert_eq!(h.document().focus_context_depth(), 3);
+
+    inner.set(false);
+    h.screen();
+    assert_eq!(h.document().focused(), outer_item);
+
+    // Closing the outer trap while the inner one is open closes both.
+    inner.set(true);
+    outer.set(false);
+    h.screen();
+    assert_eq!(h.document().focused(), open);
+    assert_eq!(h.document().focus_context_depth(), 1);
+}
+
+#[test]
+fn a_trap_on_an_element_that_is_not_a_stacking_context_is_not_opened() {
+    let mut h = Harness::new(8, 2, || {
+        crate::view! {
+            box {
+                style: column(),
+                { focusable("outside") },
+                box { style: column(), trap_focus: true, { focusable("inside") } },
+            }
+        }
+    });
+
+    assert_eq!(h.document().focus_context_depth(), 1);
+    assert_eq!(h.document().focused(), None);
+    let outside = h.find_attr("test_id", "outside");
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), outside);
+}

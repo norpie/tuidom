@@ -65,6 +65,8 @@ use syn::{
 ///   - `transitions:` — an iterable of `TransitionConfig`, evaluated once when the element is
 ///     built. A signal read there does not update the transitions, and inside an `if` or
 ///     `match` it would rebuild the branch.
+///   - `trap_focus:` — a bool, evaluated once when the element is built. `true` traps focus
+///     inside the element while it is mounted; its style must make it a stacking context.
 ///   - Any other key — a string attribute, stringified through `ToString`. A misspelled typed
 ///     key lands here too, silently; only `on_*` names are checked.
 /// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
@@ -81,7 +83,7 @@ use syn::{
 /// anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). The exceptions follow
 /// the key's type: a `Style` is never a literal, so the style keys always bind reactively; events
 /// take their closure as the handler; `bind_value:` and `ref:` pass their handle through; and
-/// `transitions:` is applied once whatever it is. An `if`,
+/// `transitions:` and `trap_focus:` are applied once whatever they are. An `if`,
 /// `match`, or view hole lowers to a single `dynamic` block, so a change to a condition re-runs
 /// only that block and never its siblings. An `each` lowers to a keyed differ: a `key = …` clause
 /// preserves item identity (and thus scroll/focus/transition state) across reorders, while an
@@ -1147,6 +1149,8 @@ impl Attr {
             // Evaluated once as the element is built, so a signal read here is not tracked by the
             // element. Inside an `if`/`match`, it would subscribe the enclosing dynamic block.
             "transitions" => quote! { .transitions(#value) },
+            // Evaluated once, like `transitions`: the trap opens at mount and closes on unmount.
+            "trap_focus" => quote! { .trap_focus(#value) },
             "mask" => quote! { .dyn_mask(move || #value) },
             "focusable" | "disabled" | "multiline" => {
                 if is_bool_literal(value) {

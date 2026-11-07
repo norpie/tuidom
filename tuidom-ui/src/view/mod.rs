@@ -249,6 +249,7 @@ pub struct Element {
     active_style: Option<Source<Style>>,
     disabled_style: Option<Source<Style>>,
     transitions: Vec<TransitionConfig>,
+    trap_focus: bool,
     input: InputProps,
     listeners: Vec<ListenerReg>,
     node_ref: Option<NodeRef>,
@@ -578,6 +579,7 @@ fn element(kind: ElementKind) -> Element {
         active_style: None,
         disabled_style: None,
         transitions: Vec::new(),
+        trap_focus: false,
         input: InputProps::default(),
         listeners: Vec::new(),
         node_ref: None,
@@ -640,6 +642,20 @@ impl Element {
     /// active, and disabled styles all animate, since the engine compares the merged style.
     pub fn transitions(mut self, transitions: impl IntoIterator<Item = TransitionConfig>) -> Self {
         self.transitions = transitions.into_iter().collect();
+        self
+    }
+
+    /// Trap focus inside this element while it is mounted, as a modal does: nodes outside it
+    /// cannot be focused or interacted with, and Tab and the arrow keys stay within it. The
+    /// element's style must make it a stacking context; otherwise the trap is not opened and a
+    /// warning is logged.
+    ///
+    /// The trap opens before the children mount, so it remembers the focus from outside and gives
+    /// it back when the element unmounts. Once the children are in, focus moves to the first
+    /// focusable node inside unless something inside already took it, such as an input focusing
+    /// itself in [`on_mount`]. Set once at mount; to close the trap, unmount the element.
+    pub fn trap_focus(mut self, trap: bool) -> Self {
+        self.trap_focus = trap;
         self
     }
 
@@ -1016,8 +1032,20 @@ fn mount_view(
                     d.remove_listener(handle);
                 });
             }
+            let trapped = element.trap_focus
+                && doc
+                    .push_focus_context(node)
+                    .inspect_err(|err| tracing::warn!(?node, "focus trap not opened: {err}"))
+                    .is_ok();
             for child in element.children {
                 mount_view(doc, node, None, child, scope)?;
+            }
+            // Focus is scoped to the active context, so anything focused now is inside the trap.
+            if trapped
+                && doc.focused().is_none()
+                && let Err(err) = doc.focus_first()
+            {
+                tracing::warn!(?node, "focusing inside the trap failed: {err}");
             }
             if let Some(node_ref) = element.node_ref {
                 node_ref.fill(doc, node);
