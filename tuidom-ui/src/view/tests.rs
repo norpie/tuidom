@@ -2959,3 +2959,171 @@ fn use_document_reaches_bodies_under_mount_app_and_dynamic_content() {
 fn use_document_is_none_outside_any_mount() {
     assert!(use_document().is_none());
 }
+
+// ---- Node ref methods --------------------------------------------------------------------
+
+/// A focusable box tagged `id`, bound to `r`.
+fn focus_target(id: &'static str, r: crate::NodeRef) -> View {
+    crate::view! { box { ref: r, test_id: id, focusable: true, text(id) } }
+}
+
+#[test]
+fn focus_from_on_mount_focuses_the_bound_input() {
+    let mut h = Harness::new(8, 1, || {
+        let field = node_ref();
+        crate::on_mount(move || field.focus());
+        crate::view! { input { ref: field, test_id: "field" } }
+    });
+    let field = h.find_attr("test_id", "field");
+    assert!(field.is_some());
+    assert_eq!(h.document().focused(), field);
+}
+
+#[test]
+fn blur_clears_focus_only_from_its_own_node() {
+    let (a, b) = (node_ref(), node_ref());
+    let mut h = Harness::new(4, 2, move || {
+        crate::view! { box { style: column(), { focus_target("a", a) }, { focus_target("b", b) } } }
+    });
+    h.screen();
+
+    a.focus();
+    assert!(a.is_focused() && !b.is_focused());
+    b.blur();
+    assert!(a.is_focused());
+    a.blur();
+    assert_eq!(h.document().focused(), None);
+}
+
+#[test]
+fn scroll_methods_move_a_container_and_read_its_offset() {
+    let list = node_ref();
+    let mut h = Harness::new(4, 2, move || {
+        let mut style = column();
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(2));
+        style.overflow_y(Overflow::Scroll);
+        crate::view! {
+            box {
+                ref: list,
+                style: style.clone(),
+                text("0"), text("1"), text("2"), text("3"), text("4"),
+            }
+        }
+    });
+    h.screen();
+
+    list.scroll_to(0, 2);
+    assert_eq!(list.scroll_offset().map(|o| o.y), Some(2));
+    assert!(h.row(0).starts_with('2'), "{}", h.screen());
+    list.scroll_by(0, -1);
+    assert_eq!(list.scroll_offset().map(|o| o.y), Some(1));
+    assert!(h.row(0).starts_with('1'), "{}", h.screen());
+}
+
+#[test]
+fn animate_runs_a_keyframe_animation_on_the_node() {
+    let (pulse, ended) = (node_ref(), state(0));
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                ref: pulse,
+                style: sized_box_style(),
+                on_animation_end: move || ended.update(|n| *n += 1),
+            }
+        }
+    });
+    h.screen();
+
+    let animation = KeyframeAnimation::from_to(
+        Duration::from_millis(100),
+        [AnimatableProperty::Background(Color::white())],
+        [AnimatableProperty::Background(Color::black())],
+    );
+    assert!(pulse.animate(animation).is_some());
+    h.advance(Duration::from_millis(100));
+    assert_eq!(ended.get(), 1);
+}
+
+#[test]
+fn layout_is_empty_in_on_mount_and_set_after_a_frame() {
+    let (sized, at_mount) = (node_ref(), state(Some(false)));
+    let mut h = Harness::new(4, 2, move || {
+        crate::on_mount(move || at_mount.set(Some(sized.layout().is_some())));
+        crate::view! { box { ref: sized, style: sized_box_style() } }
+    });
+    h.screen();
+
+    assert_eq!(at_mount.get(), Some(false));
+    let rect = sized.layout().map(|layout| layout.rect);
+    assert_eq!(rect.map(|r| (r.width, r.height)), Some((4, 1)));
+}
+
+#[test]
+fn cursor_and_selection_round_trip_on_an_input_and_do_nothing_on_a_box() {
+    let (field, plain) = (node_ref(), node_ref());
+    let mut h = Harness::new(8, 2, move || {
+        crate::view! {
+            box {
+                style: column(),
+                input { ref: field, value: "hello" },
+                box { ref: plain },
+            }
+        }
+    });
+    h.screen();
+
+    field.set_cursor(2);
+    assert_eq!(field.cursor(), Some(2));
+    field.set_selection(1..3);
+    assert_eq!(field.selection(), Some(1..3));
+    field.clear_selection();
+    assert_eq!(field.selection(), None);
+
+    plain.set_cursor(1);
+    plain.set_selection(0..1);
+    plain.clear_selection();
+    assert_eq!((plain.cursor(), plain.selection()), (None, None));
+}
+
+#[test]
+fn every_method_is_inert_on_an_empty_ref() {
+    let empty = node_ref();
+    empty.focus();
+    empty.blur();
+    empty.scroll_to(0, 1);
+    empty.scroll_by(0, 1);
+    empty.set_cursor(0);
+    empty.set_selection(0..1);
+    empty.clear_selection();
+    let animation = KeyframeAnimation::from_to(
+        Duration::from_millis(100),
+        [AnimatableProperty::Opacity(0.0)],
+        [AnimatableProperty::Opacity(1.0)],
+    );
+    assert!(empty.animate(animation).is_none());
+    assert!(!empty.is_focused());
+    assert_eq!(empty.scroll_offset(), None);
+    assert!(empty.layout().is_none());
+    assert_eq!((empty.cursor(), empty.selection()), (None, None));
+}
+
+#[test]
+fn a_command_inside_an_effect_does_not_subscribe_it() {
+    let (shown, target) = (state(false), node_ref());
+    let runs = Arc::new(AtomicUsize::new(0));
+    let counted = runs.clone();
+    let mut h = Harness::new(4, 1, move || {
+        crate::effect(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            target.focus();
+        });
+        crate::view! { box { if shown.get() { { focus_target("t", target) } } } }
+    });
+
+    shown.set(true);
+    h.screen();
+    shown.set(false);
+    h.screen();
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
