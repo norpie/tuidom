@@ -25,6 +25,19 @@
 //! state. [`virtual_list`] and [`virtual_list_measured`] build on that same differ to materialize
 //! only the on-screen window of a large collection, standing in for the rest with two spacers so
 //! the scroll container's size — and thus its scrollbar — stays honest.
+//!
+//! # Reaching nodes
+//!
+//! Some engine operations are imperative rather than declared: moving focus, scrolling, starting
+//! a keyframe animation, reading layout, placing an input's cursor. A component body never sees
+//! the `NodeId`s its view creates, so it creates a [`NodeRef`] with [`node_ref`] and binds it to
+//! an element with `ref:`. The ref holds the node while that element is mounted and carries the
+//! document with it, since event handlers run outside any scope. [`use_document`] gives a body
+//! the document itself, for document-wide operations such as quitting or setting a color
+//! variable.
+//!
+//! Focus trapping is declared instead: `trap_focus: true` traps focus inside an element for as
+//! long as it is mounted, and gives focus back to where it was when the element unmounts.
 
 use std::any::Any;
 use std::cell::RefCell;
