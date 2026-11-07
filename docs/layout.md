@@ -128,7 +128,8 @@ parenting the node to the document root, which is already absolute in screen ter
 separate positioning mode would be a second way to say the same thing.
 
 Whatever the mode, **published rectangles are always screen-absolute.** Reading a node's
-layout never requires you to walk ancestors and accumulate offsets.
+layout never requires you to walk ancestors and accumulate offsets. The one thing a rect
+leaves out is scrolling, which [`screen_rect`](#reading-computed-layout) adds.
 
 ## Borders take space
 
@@ -150,7 +151,7 @@ To read a node's geometry:
 ```rust
 if let Some(view) = doc.get_node(node) {
     if let Some(layout) = view.layout {
-        let r = layout.rect;              // screen-absolute border box
+        let r = layout.rect;              // border box as laid out
         let port = layout.scrollport;     // rect deflated by the border
         let max_y = layout.max_scroll_y;
     }
@@ -159,6 +160,20 @@ if let Some(view) = doc.get_node(node) {
 
 `layout` is `Option` because a node that has never been through a layout pass has no
 geometry yet — a node created and read in the same handler, before any frame, has `None`.
+
+The rect is where layout placed the node, before any scrolling. Scroll offsets are applied
+at paint time, so a scroll never reruns layout (see
+[scrolling](scrolling.md#scroll-offset-is-runtime-state)), and a node inside a scrolled
+container keeps the same `rect` while it moves on screen. To place something next to the
+node as drawn, such as a tooltip, ask for its screen rect:
+
+```rust
+let on_screen = doc.screen_rect(node);   // Option<LayoutRect>
+```
+
+That is `rect` shifted by the offset of every ancestor scrolling on each axis, the same
+shift paint applies. It is position only: a node scrolled out of its container's viewport
+still gets a rect, lying outside that viewport.
 
 Rectangles may be negative or extend past the terminal. Layout does not clamp; clipping to
 the visible grid is a render concern.

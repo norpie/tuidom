@@ -30,7 +30,7 @@ pub struct LayoutRect {
     pub height: u16,
 }
 
-/// A node's entry in the published layout snapshot: its screen rectangle plus how far
+/// A node's entry in the published layout snapshot: its rectangle as laid out plus how far
 /// its content can scroll.
 ///
 /// The maximum scroll is published with the rect because it comes from the same layout
@@ -38,7 +38,7 @@ pub struct LayoutRect {
 /// offset needs both under one read.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeLayout {
-    /// The node's screen rectangle.
+    /// The node's rectangle as laid out, before any ancestor's scroll offset.
     pub rect: LayoutRect,
     /// Maximum horizontal scroll offset in terminal cells.
     pub max_scroll_x: u16,
@@ -53,9 +53,13 @@ pub(crate) struct NodeLayout {
 /// can actually scroll. Max scroll is zero on any axis whose overflow is not
 /// [`Overflow::Scroll`](crate::style::Overflow::Scroll), matching what
 /// [`Document::scroll_to`](crate::Document::scroll_to) clamps to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayoutView {
-    /// The node's screen rectangle (border box). May be negative when offscreen.
+    /// The node's border box as laid out, in screen cells. May be negative when offscreen.
+    ///
+    /// Scroll offsets are applied at paint time, so this is the position before any ancestor
+    /// scrolls. [`Document::screen_rect`](crate::Document::screen_rect) gives where the node
+    /// is drawn.
     pub rect: LayoutRect,
     /// The scrollport: the padding box a scrolling or clipping node bounds its
     /// descendants to. Equal to `rect` deflated by the border on any node.

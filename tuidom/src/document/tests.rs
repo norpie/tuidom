@@ -2353,6 +2353,114 @@ fn node_at_sees_scrolled_content_at_its_translated_position() {
     }
 }
 
+fn rect_of(doc: &Document, node: NodeId) -> LayoutRect {
+    doc.get_node(node).unwrap().layout.unwrap().rect
+}
+
+#[test]
+fn screen_rect_is_the_layout_rect_outside_any_scroller() {
+    let (doc, container, lines) = scrolling_column();
+
+    assert_eq!(doc.screen_rect(lines[3]), Some(rect_of(&doc, lines[3])));
+
+    // A container's own offset moves its content, not the container.
+    doc.scroll_to(container, 0, 2).unwrap();
+    assert_eq!(doc.screen_rect(container), Some(rect_of(&doc, container)));
+}
+
+#[test]
+fn screen_rect_follows_an_ancestors_scroll() {
+    let (doc, container, lines) = scrolling_column();
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    // Scrolling reran no layout: the rect stayed where layout put it.
+    let rect = rect_of(&doc, lines[3]);
+    assert_eq!(rect.y, 3);
+    assert_eq!(doc.screen_rect(lines[3]), Some(LayoutRect { y: 1, ..rect }));
+}
+
+#[test]
+fn a_clip_axis_does_not_shift_the_screen_rect() {
+    let (doc, container, lines) = scrolling_column();
+    doc.scroll_to(container, 0, 2).unwrap();
+
+    // The stored offset survives the switch to Clip; paint ignores it, and so must this.
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Clip);
+    doc.set_style(container, &style).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 2);
+
+    assert_eq!(doc.screen_rect(lines[3]), Some(rect_of(&doc, lines[3])));
+}
+
+/// A 10×4 screen: an outer scrolling column holding a two-row inner scroller of six texts,
+/// then eight texts of its own.
+fn scroller_in_a_scroller() -> (Document, NodeId, NodeId, Vec<NodeId>) {
+    let doc = Document::new().unwrap();
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    column.overflow_y(Overflow::Scroll);
+
+    let outer = doc.create_box().unwrap();
+    doc.set_style(outer, &column).unwrap();
+    doc.append_child(doc.root(), outer).unwrap();
+
+    let inner = doc.create_box().unwrap();
+    let mut inner_style = column.clone();
+    inner_style.height(Length::Cells(2));
+    inner_style.flex_shrink(0.0);
+    doc.set_style(inner, &inner_style).unwrap();
+    doc.append_child(outer, inner).unwrap();
+
+    let mut inner_lines = Vec::new();
+    for i in 0..6 {
+        let text = doc.create_text(format!("in{i}")).unwrap();
+        doc.append_child(inner, text).unwrap();
+        inner_lines.push(text);
+    }
+    for i in 0..8 {
+        let text = doc.create_text(format!("out{i}")).unwrap();
+        doc.append_child(outer, text).unwrap();
+    }
+
+    doc.compute_layout(10, 4).unwrap();
+    (doc, outer, inner, inner_lines)
+}
+
+#[test]
+fn nested_scroll_offsets_add_up_and_match_the_painted_position() {
+    let (doc, outer, inner, inner_lines) = scroller_in_a_scroller();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+
+    doc.scroll_to(outer, 0, 1).unwrap();
+    doc.scroll_to(inner, 0, 2).unwrap();
+    runtime.render().unwrap();
+
+    let rect = rect_of(&doc, inner_lines[3]);
+    assert_eq!(rect.y, 3);
+    let on_screen = doc.screen_rect(inner_lines[3]).unwrap();
+    assert_eq!(on_screen, LayoutRect { y: 0, ..rect });
+
+    let row: String = (0..3)
+        .map(|x| runtime.get_cell(x, on_screen.y).unwrap().text)
+        .collect();
+    assert_eq!(row, "in3");
+}
+
+#[test]
+fn screen_rect_is_none_without_a_layout() {
+    let (doc, container, lines) = scrolling_column();
+
+    let fresh = doc.create_text("new").unwrap();
+    doc.append_child(container, fresh).unwrap();
+    assert_eq!(doc.screen_rect(fresh), None);
+
+    doc.remove_child(container, lines[0]).unwrap();
+    assert_eq!(doc.screen_rect(lines[0]), None);
+}
+
 #[test]
 fn relayout_reclamps_scroll_offsets_when_content_shrinks() {
     let (doc, container, lines) = scrolling_column();

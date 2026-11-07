@@ -99,7 +99,9 @@ together, and none of them can catch a half-updated tree where some nodes have m
 others have not.
 
 Rects are screen-absolute regardless of how a node was positioned, and may be negative or
-offscreen — clipping to the terminal grid is a render concern, not a layout one.
+offscreen — clipping to the terminal grid is a render concern, not a layout one. Scrolling
+is a render concern too: a rect is the position before any ancestor's scroll offset, which
+`Document::screen_rect` applies (see [reading computed layout](layout.md#reading-computed-layout)).
 
 ## How a frame happens
 

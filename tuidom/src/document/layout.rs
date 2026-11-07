@@ -6,8 +6,9 @@ use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::layout::compute_layout as compute_document_layout;
 use crate::lock;
-use crate::node::{LayoutView, NodeLayout, NodeView};
+use crate::node::{LayoutRect, LayoutView, NodeLayout, NodeView};
 use crate::paint_order::entry_at;
+use crate::style::Overflow;
 use crate::style::resolution::ResolvedStyle;
 
 #[cfg(test)]
@@ -51,6 +52,33 @@ impl Document {
     pub fn get_node(&self, id: NodeId) -> Option<NodeView> {
         let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
         self.get_node_unlocked(id)
+    }
+
+    /// Where a node is drawn: its layout rect shifted by every scrolling ancestor's offset.
+    ///
+    /// [`LayoutView::rect`] is where layout placed the node, and scrolling never reruns layout,
+    /// so inside a scrolled container that rect stays put while the node moves on screen. This
+    /// applies the shift paint does: each ancestor moves its descendants by its scroll offset on
+    /// every axis whose overflow is [`Overflow::Scroll`]. It reports position only, so a node
+    /// scrolled out of its container's viewport gets a rect outside that viewport.
+    ///
+    /// Returns `None` if the node does not exist or has not been laid out yet.
+    pub fn screen_rect(&self, id: NodeId) -> Option<LayoutRect> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        let mut rect = lock::rw_read(&self.inner.layout_snapshot).get(&id)?.rect;
+        let mut ancestor = self.inner.nodes.get(&id)?.parent;
+        while let Some(node) = ancestor {
+            let resolved = self.resolved_style_unlocked(node).ok()?;
+            let offset = self.scroll_offset(node);
+            if resolved.overflow_x == Overflow::Scroll {
+                rect.x -= i32::from(offset.x);
+            }
+            if resolved.overflow_y == Overflow::Scroll {
+                rect.y -= i32::from(offset.y);
+            }
+            ancestor = self.inner.nodes.get(&node)?.parent;
+        }
+        Some(rect)
     }
 
     /// Get the topmost node at the given screen coordinate.

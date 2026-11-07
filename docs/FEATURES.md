@@ -23,6 +23,7 @@
 - [x] Attributes stored as `HashMap<String, String>`
 - [x] Public attributes API: set/get/remove
 - [x] `get_node(id)` for ID-based lookup — also exposes computed layout info (position, size)
+- [x] `screen_rect(id)` — a node's rect as drawn, shifted by its scrolling ancestors' offsets
 - [x] `node_at(x, y)` for hit testing — returns topmost node at coordinates
 - [x] Child ordering: `insert_before(parent, child, before_sibling)`, `move_child()`
 - [x] Input (text input with cursor, selection, internal state)
