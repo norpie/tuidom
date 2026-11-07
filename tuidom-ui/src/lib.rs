@@ -35,6 +35,8 @@ mod app;
 mod callback;
 mod lock;
 mod runtime;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod view;
 
 pub use app::{App, AppSession};

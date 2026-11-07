@@ -12,6 +12,10 @@ description = "Reactive signal runtime and view layer for tuidom"
 # they are not the verification path. Tests live in-crate next to the code.
 doctest = false
 
+[features]
+# Headless harness for component tests. Enable it in a crate's dev-dependencies.
+testing = []
+
 [dependencies]
 tuidom = { path = "../tuidom" }
 tuidom-ui-macros = { path = "../tuidom-ui-macros" }
