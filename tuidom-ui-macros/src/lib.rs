@@ -52,10 +52,12 @@ use syn::{
 ///   attributes and children; a nested element or `text(..)` is a child.
 /// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
 ///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
-/// - **Attributes** — `key: value`. `style:` binds the whole `Style`; `focusable:` takes a
-///   bool; an event key (`on_click:`, `on_focus:`, `on_input:`, … — one per `Element` listener
-///   method) takes a `|ev| …` or `|| …` closure; any other key is a string attribute. A
-///   literal value is applied once; anything else binds reactively.
+/// - **Attributes** — `key: value`. `style:` binds the whole `Style`, and `focus_style:`,
+///   `active_style:`, and `disabled_style:` bind the pseudo-state styles the same way;
+///   `focusable:` and `disabled:` take a bool; an event key (`on_click:`, `on_focus:`,
+///   `on_input:`, … — one per `Element` listener method) takes a `|ev| …` or `|| …` closure;
+///   any other key is a string attribute. A literal value is applied once; anything else binds
+///   reactively.
 /// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
@@ -1083,12 +1085,17 @@ impl Attr {
             // the engine animates the diff. A signal-free value (an inline `style!`) just runs
             // its effect once, which is the accepted cost of the literal-only static split.
             "style" => quote! { .dyn_style(move || #value) },
-            "focusable" => {
+            "focusable" | "disabled" => {
                 if is_bool_literal(value) {
-                    quote! { .focusable(#value) }
+                    quote! { .#name(#value) }
                 } else {
-                    quote! { .dyn_focusable(move || #value) }
+                    let setter = format_ident!("dyn_{}", key, span = name.span());
+                    quote! { .#setter(move || #value) }
                 }
+            }
+            "focus_style" | "active_style" | "disabled_style" => {
+                let setter = format_ident!("dyn_{}", key, span = name.span());
+                quote! { .#setter(move || #value) }
             }
             event if is_known_event(event) => {
                 let handler = event_handler(value);

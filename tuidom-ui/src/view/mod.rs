@@ -228,7 +228,8 @@ enum ElementKind {
     Input,
 }
 
-/// An element description: a builder for its style, attributes, focusability, and children.
+/// An element description: a builder for its style, attributes, focusability, disabled state,
+/// pseudo-state styles, listeners, and children.
 ///
 /// Every setter has a `dyn_` counterpart taking a closure, which binds the property reactively
 /// instead of to a constant.
@@ -237,6 +238,10 @@ pub struct Element {
     style: Option<Source<Style>>,
     attrs: Vec<(String, Source<String>)>,
     focusable: Option<Source<bool>>,
+    disabled: Option<Source<bool>>,
+    focus_style: Option<Source<Style>>,
+    active_style: Option<Source<Style>>,
+    disabled_style: Option<Source<Style>>,
     listeners: Vec<ListenerReg>,
     children: Vec<View>,
 }
@@ -540,6 +545,10 @@ fn element(kind: ElementKind) -> Element {
         style: None,
         attrs: Vec::new(),
         focusable: None,
+        disabled: None,
+        focus_style: None,
+        active_style: None,
+        disabled_style: None,
         listeners: Vec::new(),
         children: Vec::new(),
     }
@@ -589,6 +598,69 @@ impl Element {
         F: Fn() -> bool + Send + Sync + 'static,
     {
         self.focusable = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set whether the element is disabled. Disabling covers the whole subtree: it blocks
+    /// interaction, blurs focus inside it, and applies each node's disabled style.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = Some(Source::Static(disabled));
+        self
+    }
+
+    /// Bind the disabled state reactively.
+    pub fn dyn_disabled<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.disabled = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set a style merged over the base style while the element is focused. Unset properties
+    /// leave the base style's value.
+    pub fn focus_style(mut self, style: Style) -> Self {
+        self.focus_style = Some(Source::Static(style));
+        self
+    }
+
+    /// Bind the focus style reactively.
+    pub fn dyn_focus_style<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Style + Send + Sync + 'static,
+    {
+        self.focus_style = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set a style merged over the base style while the element is being pressed.
+    pub fn active_style(mut self, style: Style) -> Self {
+        self.active_style = Some(Source::Static(style));
+        self
+    }
+
+    /// Bind the active style reactively.
+    pub fn dyn_active_style<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Style + Send + Sync + 'static,
+    {
+        self.active_style = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set a style merged over the base style while the element is disabled, directly or
+    /// through an ancestor.
+    pub fn disabled_style(mut self, style: Style) -> Self {
+        self.disabled_style = Some(Source::Static(style));
+        self
+    }
+
+    /// Bind the disabled style reactively.
+    pub fn dyn_disabled_style<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Style + Send + Sync + 'static,
+    {
+        self.disabled_style = Some(Source::Reactive(Box::new(f)));
         self
     }
 
@@ -770,14 +842,9 @@ fn mount_view(
             place(doc, parent, node, before)?;
             register_remove(doc, parent, node, scope);
 
-            if let Some(style) = element.style {
-                let d = doc.clone();
-                bind(style, move |style| {
-                    if let Err(err) = d.set_style(node, &style) {
-                        tracing::warn!(?node, "style binding failed: {err}");
-                    }
-                });
-            }
+            bind_node(doc, node, "style", element.style, |d, n, s: Style| {
+                d.set_style(n, &s)
+            });
             for (key, value) in element.attrs {
                 let d = doc.clone();
                 bind(value, move |value| {
@@ -786,14 +853,41 @@ fn mount_view(
                     }
                 });
             }
-            if let Some(focusable) = element.focusable {
-                let d = doc.clone();
-                bind(focusable, move |focusable| {
-                    if let Err(err) = d.set_focusable(node, focusable) {
-                        tracing::warn!(?node, "focusable binding failed: {err}");
-                    }
-                });
-            }
+            bind_node(
+                doc,
+                node,
+                "focusable",
+                element.focusable,
+                Document::set_focusable,
+            );
+            bind_node(
+                doc,
+                node,
+                "disabled",
+                element.disabled,
+                Document::set_disabled,
+            );
+            bind_node(
+                doc,
+                node,
+                "focus style",
+                element.focus_style,
+                |d, n, s: Style| d.set_focus_style(n, &s),
+            );
+            bind_node(
+                doc,
+                node,
+                "active style",
+                element.active_style,
+                |d, n, s: Style| d.set_active_style(n, &s),
+            );
+            bind_node(
+                doc,
+                node,
+                "disabled style",
+                element.disabled_style,
+                |d, n, s: Style| d.set_disabled_style(n, &s),
+            );
             for register in element.listeners {
                 let handle = register(doc, node)?;
                 let d = doc.clone();
@@ -1231,6 +1325,28 @@ where
             effect(move || apply(compute()));
         }
     }
+}
+
+/// [`bind`] an optional source to one engine setter on `node`, logging a failed apply under
+/// `what`.
+fn bind_node<T>(
+    doc: &Document,
+    node: NodeId,
+    what: &'static str,
+    source: Option<Source<T>>,
+    set: fn(&Document, NodeId, T) -> Result<()>,
+) where
+    T: Send + Sync + 'static,
+{
+    let Some(source) = source else {
+        return;
+    };
+    let d = doc.clone();
+    bind(source, move |value| {
+        if let Err(err) = set(&d, node, value) {
+            tracing::warn!(?node, "{what} binding failed: {err}");
+        }
+    });
 }
 
 /// Place `node` under `parent`, before a sibling when one is given, else appended.

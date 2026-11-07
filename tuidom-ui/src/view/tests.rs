@@ -8,8 +8,8 @@ use std::time::Duration;
 use tuidom::animation::{
     AnimatableProperty, Easing, KeyframeAnimation, TransitionConfig, TransitionProperty,
 };
-use tuidom::event::KeyCode;
-use tuidom::headless::HeadlessRuntime;
+use tuidom::event::{KeyCode, MouseButton};
+use tuidom::headless::{HeadlessRuntime, ScreenColor};
 use tuidom::style::{Color, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Style};
 use tuidom::{Document, NodeId};
 
@@ -2470,4 +2470,147 @@ fn animation_iteration_and_end_fire_at_their_boundaries() {
     h.advance(Duration::from_millis(100));
     // The final boundary is reported as the end, not as another iteration.
     assert_eq!((iterations.get(), ended.get()), (1, 1));
+}
+
+// ---- Disabled state and pseudo-state styles ---------------------------------------------
+
+fn white_box() -> Style {
+    let mut style = sized_box_style();
+    style.background(Color::white());
+    style
+}
+
+fn black_bg() -> Style {
+    let mut style = Style::new();
+    style.background(Color::black());
+    style
+}
+
+fn white() -> Option<ScreenColor> {
+    Some(ScreenColor::from_rgb(255, 255, 255))
+}
+
+fn black() -> Option<ScreenColor> {
+    Some(ScreenColor::from_rgb(0, 0, 0))
+}
+
+#[test]
+fn a_disabled_element_ignores_clicks_and_tab_skips_it() {
+    let clicks = state(0);
+    let mut h = Harness::new(4, 2, move || {
+        crate::view! {
+            box {
+                style: column(),
+                box {
+                    style: sized_box_style(),
+                    focusable: true,
+                    disabled: true,
+                    on_click: move || clicks.update(|c| *c += 1),
+                    text("off"),
+                },
+                box { test_id: "on", focusable: true, text("on") },
+            }
+        }
+    });
+
+    h.click(0, 0);
+    assert_eq!(clicks.get(), 0);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), h.find_attr("test_id", "on"));
+}
+
+#[test]
+fn a_reactive_disabled_toggles_both_ways() {
+    let (off, clicks) = (state(true), state(0));
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                test_id: "button",
+                style: sized_box_style(),
+                focusable: true,
+                disabled: off.get(),
+                on_click: move || clicks.update(|c| *c += 1),
+            }
+        }
+    });
+    let button = h.find_attr("test_id", "button");
+
+    h.click(0, 0);
+    h.press(KeyCode::Tab);
+    assert_eq!((clicks.get(), h.document().focused()), (0, None));
+
+    off.set(false);
+    h.click(0, 0);
+    h.press(KeyCode::Tab);
+    assert_eq!((clicks.get(), h.document().focused()), (1, button));
+
+    // Disabling the focused element blurs it.
+    off.set(true);
+    h.click(0, 0);
+    assert_eq!((clicks.get(), h.document().focused()), (1, None));
+}
+
+#[test]
+fn disabling_a_container_disables_what_is_inside_it() {
+    let clicks = state(0);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                disabled: true,
+                box { style: sized_box_style(), on_click: move || clicks.update(|c| *c += 1) },
+            }
+        }
+    });
+
+    h.click(0, 0);
+    assert_eq!(clicks.get(), 0);
+}
+
+#[test]
+fn a_focus_style_paints_only_while_focused() {
+    let mut h = Harness::new(4, 2, || {
+        crate::view! {
+            box {
+                style: column(),
+                box { style: white_box(), focusable: true, focus_style: black_bg() },
+                box { focusable: true, text("b") },
+            }
+        }
+    });
+    assert_eq!(h.cell(0, 0).unwrap().bg, white());
+
+    h.press(KeyCode::Tab);
+    assert_eq!(h.cell(0, 0).unwrap().bg, black());
+
+    h.press(KeyCode::Tab);
+    assert_eq!(h.cell(0, 0).unwrap().bg, white());
+}
+
+#[test]
+fn a_disabled_style_paints_while_disabled() {
+    let off = state(false);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box { style: white_box(), disabled: off.get(), disabled_style: black_bg() }
+        }
+    });
+    assert_eq!(h.cell(0, 0).unwrap().bg, white());
+
+    off.set(true);
+    assert_eq!(h.cell(0, 0).unwrap().bg, black());
+}
+
+#[test]
+fn an_active_style_paints_between_mouse_down_and_up() {
+    let mut h = Harness::new(4, 1, || {
+        crate::view! {
+            box { style: white_box(), focusable: true, active_style: black_bg() }
+        }
+    });
+
+    // `click` sends down and up together, so press through the raw runtime.
+    h.runtime().simulate_mouse_down(0, 0, MouseButton::Left);
+    assert_eq!(h.cell(0, 0).unwrap().bg, black());
+    h.runtime().simulate_mouse_up(0, 0, MouseButton::Left);
+    assert_eq!(h.cell(0, 0).unwrap().bg, white());
 }
