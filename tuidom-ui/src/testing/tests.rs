@@ -237,6 +237,58 @@ fn advance_steps_a_transition_partway_then_to_its_end() {
     assert_ne!(midway, black);
 }
 
+#[test]
+fn an_action_sees_a_test_body_write_made_before_it() {
+    let on = state(false);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! { box { test_id: "target", focusable: on.get(), text("x") } }
+    });
+
+    // Had the write applied only after the key, Tab would have found nothing to focus.
+    on.set(true);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), h.find_attr("test_id", "target"));
+}
+
+#[test]
+fn advance_applies_a_test_body_write_before_moving_the_clock() {
+    let dark = state(false);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                test_id: "fade",
+                style: {
+                    let mut style = Style::new();
+                    style.width(Length::Cells(2));
+                    style.height(Length::Cells(1));
+                    style.background(if dark.get() { Color::black() } else { Color::white() });
+                    style
+                },
+            }
+        }
+    });
+    let fade = h.find_attr("test_id", "fade").unwrap();
+    h.document()
+        .set_transition(
+            fade,
+            TransitionConfig::new(
+                TransitionProperty::Background,
+                Duration::from_millis(1000),
+                Easing::Linear,
+            ),
+        )
+        .unwrap();
+
+    // Had the write applied after the clock moved, the transition would start at 1000ms and
+    // still be white here.
+    dark.set(true);
+    h.advance(Duration::from_millis(1000));
+    assert_eq!(
+        h.cell(0, 0).unwrap().bg,
+        Some(ScreenColor::from_rgb(0, 0, 0))
+    );
+}
+
 // ---- Worked example: a task picker, tested only through the harness ---------------------
 
 /// One task row: focusable, picked with Enter, highlighted while it is the picked one.

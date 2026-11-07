@@ -3,12 +3,12 @@
 //!
 //! [`Harness`] wires its root through [`App::mount_on`], so a test exercises the same session
 //! wiring a real app uses, and each harness has its own session, so tests using it run in
-//! parallel. It keeps the screen **settled**: every action settles afterwards and every read
-//! settles first. Settling pumps queued flushes, then renders until two consecutive frames
+//! parallel. It keeps the screen **settled**: every action settles before and after, and every
+//! read settles first. Settling pumps queued flushes, then renders until two consecutive frames
 //! match, since a frame can schedule work that only shows on the next one (a virtualized list
 //! learning its viewport, for instance). A write from the test body, which runs outside any
-//! event-task span and so defers like an off-thread write, is therefore visible on the next read
-//! with nothing to call.
+//! event-task span and so defers like an off-thread write, is therefore in place before the next
+//! action and visible on the next read, with nothing to call.
 //!
 //! ```ignore
 //! let picked = state(None);
@@ -102,41 +102,35 @@ impl Harness {
 
     /// Press a key on the focused node.
     pub fn press(&mut self, code: KeyCode) {
-        self.rt.simulate_key(code);
-        self.settle();
+        self.act(|rt| rt.simulate_key(code));
     }
 
     /// Press a key with modifiers held.
     pub fn press_with(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        self.rt.simulate_key_with_modifiers(code, modifiers);
-        self.settle();
+        self.act(|rt| rt.simulate_key_with_modifiers(code, modifiers));
     }
 
     /// Type `text` into the focused node, one key press per character.
     pub fn type_text(&mut self, text: &str) {
-        self.rt.simulate_text(text);
-        self.settle();
+        self.act(|rt| rt.simulate_text(text));
     }
 
     /// Click the cell at `(x, y)`.
     pub fn click(&mut self, x: i32, y: i32) {
-        self.rt.simulate_click(x, y);
-        self.settle();
+        self.act(|rt| rt.simulate_click(x, y));
     }
 
-    /// Turn the mouse wheel over `(x, y)`; a positive `delta` scrolls down.
+    /// Turn the mouse wheel over `(x, y)`; a negative `delta` scrolls down, a positive one up.
     pub fn scroll(&mut self, x: i32, y: i32, delta: i16) {
-        self.rt.simulate_scroll(x, y, delta);
-        self.settle();
+        self.act(|rt| rt.simulate_scroll(x, y, delta));
     }
 
     /// Resize the screen.
     pub fn resize(&mut self, width: u16, height: u16) {
-        self.rt.resize(width, height);
-        self.settle();
+        self.act(|rt| rt.resize(width, height));
     }
 
-    /// Advance the frozen document clock by exactly `delta`, then settle.
+    /// Advance the frozen document clock by exactly `delta`.
     ///
     /// Transitions, keyframe animations, and `Frames` nodes move forward by `delta`, and ones
     /// that finish dispatch their end events. A transition caught partway paints the same frame
@@ -145,8 +139,7 @@ impl Harness {
     /// This is the engine clock only. Timers inside spawned tasks run on Tokio's clock, which
     /// `#[tokio::test(start_paused = true)]` and `tokio::time::advance` control.
     pub fn advance(&mut self, delta: Duration) {
-        self.rt.advance_time(delta);
-        self.settle();
+        self.act(|rt| rt.advance_time(delta));
     }
 
     /// Move focus to `node`.
@@ -155,6 +148,7 @@ impl Harness {
     ///
     /// If the node does not exist or cannot take focus.
     pub fn focus(&mut self, node: NodeId) {
+        self.settle();
         self.doc
             .focus(node)
             .unwrap_or_else(|err| panic!("harness: focusing {node:?}: {err}"));
@@ -236,6 +230,14 @@ impl Harness {
     /// until the next harness action or read.
     pub fn runtime(&mut self) -> &mut HeadlessRuntime {
         &mut self.rt
+    }
+
+    /// Run one action between two settles, so it sees every earlier write and its own effects
+    /// are in place before the next step.
+    fn act(&mut self, action: impl FnOnce(&mut HeadlessRuntime)) {
+        self.settle();
+        action(&mut self.rt);
+        self.settle();
     }
 
     /// Pump queued flushes and render until the screen stops changing.
