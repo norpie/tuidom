@@ -95,6 +95,11 @@ focus it interrupted. A modal that opens with nothing focused would leave the ke
 stranded — they would have to Tab in blind — so the engine does it rather than making every
 caller remember to.
 
+A context pushed before its content exists has nothing to focus yet. Pushing first is how a
+caller makes the context remember the focus from outside, rather than whatever its own content
+focused while it was being built. `focus_first()` then applies the same rule once the content is
+in, focusing the first focusable node of the active context.
+
 While a context is active it scopes *everything* about focus. `focused()` reports the
 focused node within it, tab order and spatial navigation search only inside it, and
 everything outside is **inert**.

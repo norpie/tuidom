@@ -4262,6 +4262,27 @@ fn push_focus_context_focuses_the_first_focusable_inside_it() {
 }
 
 #[test]
+fn focus_first_focuses_the_first_enabled_node_in_the_active_context() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    doc.focus(background).unwrap();
+
+    // Opened while empty, the context has nothing to focus.
+    doc.push_focus_context(modal).unwrap();
+    assert_eq!(doc.focused(), None);
+    assert_eq!(doc.focus_first(), Ok(None));
+
+    let skipped = focusable_child(&doc, modal);
+    doc.set_disabled(skipped, true).unwrap();
+    let first = focusable_child(&doc, modal);
+    focusable_child(&doc, modal);
+    assert_eq!(doc.focus_first(), Ok(Some(first)));
+    assert_eq!(doc.focused(), Some(first));
+}
+
+#[test]
 fn push_focus_context_dispatches_blur_then_focus_across_the_boundary() {
     let doc = Document::new().unwrap();
     let background = focusable_child(&doc, doc.root());

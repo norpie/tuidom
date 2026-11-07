@@ -85,6 +85,24 @@ impl Document {
         }
     }
 
+    /// Focus the first focusable node in the active focus context, in DOM order, and return it.
+    ///
+    /// Disabled and hidden subtrees are skipped, as tab order skips them. This is where
+    /// [`push_focus_context`](Self::push_focus_context) puts focus, for a context whose content
+    /// was added after it opened. Returns `None`, leaving focus alone, if nothing in the context
+    /// can take focus.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if focusing the node fails.
+    pub fn focus_first(&self) -> Result<Option<NodeId>> {
+        let Some(first) = self.focusable_in_dom_order().first().copied() else {
+            return Ok(None);
+        };
+        self.focus(first)?;
+        Ok(Some(first))
+    }
+
     /// Return the currently focused node, if one exists.
     ///
     /// Focus is scoped to the active focus context, so this is the focused node *within* an

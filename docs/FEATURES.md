@@ -97,6 +97,8 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Focus stack for modal-like contexts:
   - [x] `push_focus_context()` — auto-focus first focusable in context, remember the interrupted focus
   - [x] `pop_focus_context()` — restore focus to the previous node
+  - [x] `focus_first()` — focus the first focusable node in the active context, for content
+        added after the push
   - [x] If stored node no longer exists, is unfocusable, or is disabled, focus is left cleared
   - [x] Removing an open context's node closes it, so focus is never trapped in a dead subtree
 
