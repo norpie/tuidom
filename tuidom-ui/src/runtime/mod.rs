@@ -242,6 +242,14 @@ fn insert(kind: Kind) -> SlotId {
     id
 }
 
+/// Run `f` with no observer, so the signals it reads subscribe nothing.
+pub(crate) fn untracked<R>(f: impl FnOnce() -> R) -> R {
+    let prev = OBSERVER.with(|o| o.replace(None));
+    let result = f();
+    OBSERVER.with(|o| o.set(prev));
+    result
+}
+
 /// Register the currently running observer, if any, as a subscriber of `source`.
 ///
 /// The edge is bidirectional: `source` gains a subscriber and the observer gains a source,

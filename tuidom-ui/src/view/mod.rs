@@ -44,6 +44,11 @@ use tuidom::{Document, NodeId, Result};
 
 use crate::runtime::{Scope, ScopeId, Signal, effect, state, with_inline_flush};
 
+mod node_ref;
+
+pub(crate) use node_ref::provide_document;
+pub use node_ref::{NodeRef, node_ref, use_document};
+
 thread_local! {
     /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
     /// subtree is in place. A `Vec` used as a stack of pending callbacks: each scope-establishing
@@ -246,6 +251,7 @@ pub struct Element {
     transitions: Vec<TransitionConfig>,
     input: InputProps,
     listeners: Vec<ListenerReg>,
+    node_ref: Option<NodeRef>,
     children: Vec<View>,
 }
 
@@ -574,6 +580,7 @@ fn element(kind: ElementKind) -> Element {
         transitions: Vec::new(),
         input: InputProps::default(),
         listeners: Vec::new(),
+        node_ref: None,
         children: Vec::new(),
     }
 }
@@ -757,6 +764,13 @@ impl Element {
         self
     }
 
+    /// Bind `node_ref` to this element's node while it is mounted. It fills once the element's
+    /// children have mounted and empties when the element unmounts.
+    pub fn node_ref(mut self, node_ref: NodeRef) -> Self {
+        self.node_ref = Some(node_ref);
+        self
+    }
+
     /// Append a child view.
     pub fn child(mut self, child: impl Into<View>) -> Self {
         self.children.push(child.into());
@@ -880,7 +894,11 @@ fn mount_at(
 ) -> Result<Mounted> {
     let scope = match owner {
         Some(owner) => Scope::child_of(owner),
-        None => Scope::new(),
+        None => {
+            let scope = Scope::new();
+            scope.run(|| provide_document(doc));
+            scope
+        }
     };
     // Mounting is trusted event-task work: the binding effects it runs, and any signal writes an
     // `on_mount` callback makes, flush inline in this frame rather than deferring to a session mailbox.
@@ -1000,6 +1018,10 @@ fn mount_view(
             }
             for child in element.children {
                 mount_view(doc, node, None, child, scope)?;
+            }
+            if let Some(node_ref) = element.node_ref {
+                node_ref.fill(doc, node);
+                scope.on_cleanup(move || node_ref.release(node));
             }
             Ok(vec![node])
         }

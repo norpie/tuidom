@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tuidom::{Document, Result};
 
 use crate::runtime::{Scope, SessionId, flush_session, register_session, remove_session};
-use crate::view::{Mounted, View, component, mount_owned};
+use crate::view::{Mounted, View, component, mount_owned, provide_document};
 
 /// The application entry point.
 ///
@@ -88,6 +88,7 @@ impl App {
         doc.set_runtime_flush_hook(Arc::new(move || flush_session(session)));
 
         let root = Scope::for_session(session);
+        root.run(|| provide_document(doc));
         // Mounted as a component so the root closure runs under the session's scope, inside the
         // mount's inline span, the same way any component body does.
         match mount_owned(doc, doc.root(), component(self.root), &root) {

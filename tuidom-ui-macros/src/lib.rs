@@ -61,6 +61,7 @@ use syn::{
 ///   - On `input` only: `value:` (stringified through `ToString`), `bind_value:` (a
 ///     `Signal<String>`, bound both ways), and `mask:` (an `Option<char>`). These and
 ///     `multiline:` are compile errors on `box`.
+///   - `ref:` — a `NodeRef`, filled with the element's node while it is mounted.
 ///   - `transitions:` — an iterable of `TransitionConfig`, evaluated once when the element is
 ///     built. A signal read there does not update the transitions, and inside an `if` or
 ///     `match` it would rebuild the branch.
@@ -79,7 +80,7 @@ use syn::{
 /// Values dispatch on **literal-vs-expression**: a literal is applied once and statically,
 /// anything else binds reactively (a `dyn_*` setter or a `dyn_text` hole). The exceptions follow
 /// the key's type: a `Style` is never a literal, so the style keys always bind reactively; events
-/// take their closure as the handler; `bind_value:` passes its signal through; and
+/// take their closure as the handler; `bind_value:` and `ref:` pass their handle through; and
 /// `transitions:` is applied once whatever it is. An `if`,
 /// `match`, or view hole lowers to a single `dynamic` block, so a change to a condition re-runs
 /// only that block and never its siblings. An `each` lowers to a keyed differ: a `key = …` clause
@@ -1117,6 +1118,7 @@ impl Attr {
                 }
             }
             "bind_value" => quote! { .bind_value(#value) },
+            "ref" => quote! { .node_ref(#value) },
             // Evaluated once as the element is built, so a signal read here is not tracked by the
             // element. Inside an `if`/`match`, it would subscribe the enclosing dynamic block.
             "transitions" => quote! { .transitions(#value) },

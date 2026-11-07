@@ -14,8 +14,8 @@ use tuidom::style::{Color, FlexDirection, FlexGap, FlexWrap, Length, Overflow, S
 use tuidom::{Document, NodeId};
 
 use super::{
-    Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text, virtual_list,
-    virtual_list_measured,
+    Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, node_ref, text, use_document,
+    virtual_list, virtual_list_measured,
 };
 use crate::testing::Harness;
 use crate::{Callback, Signal, state};
@@ -2817,4 +2817,145 @@ fn a_declared_transition_animates_a_focus_style() {
     assert_ne!(midway, black());
     h.advance(Duration::from_millis(500));
     assert_eq!(h.cell(0, 0).unwrap().bg, black());
+}
+
+// ---- Node refs and the document handle ---------------------------------------------------
+
+#[test]
+fn a_ref_holds_its_node_only_while_mounted() {
+    let doc = Document::new().unwrap();
+    let r = node_ref();
+    assert_eq!(r.node(), None);
+
+    let mounted = mount(&doc, doc.root(), boxed().node_ref(r)).unwrap();
+    assert_eq!(r.node(), Some(mounted.roots()[0]));
+    assert!(r.document().is_some());
+
+    mounted.unmount();
+    assert_eq!(r.node(), None);
+    assert!(r.document().is_none());
+}
+
+#[test]
+fn swapping_branches_that_share_a_ref_leaves_it_on_the_live_node() {
+    let (first, r) = (state(true), node_ref());
+    let builds = Arc::new(AtomicUsize::new(0));
+    let counted = builds.clone();
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                if { counted.fetch_add(1, Ordering::SeqCst); first.get() } {
+                    box { ref: r, test_id: "a" }
+                } else {
+                    box { ref: r, test_id: "b" }
+                }
+            }
+        }
+    });
+    let a = h.find_attr("test_id", "a");
+    assert_eq!(r.node(), a);
+
+    first.set(false);
+    let b = h.find_attr("test_id", "b");
+    assert_eq!(r.node(), b);
+    first.set(true);
+    let a = h.find_attr("test_id", "a");
+    assert_eq!(r.node(), a);
+    // Filling and emptying the ref must not rerun the block that mounts it.
+    assert_eq!(builds.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn unmounting_an_element_leaves_a_ref_a_later_element_took_over() {
+    let (shown, r) = (state(true), node_ref());
+    let mut h = Harness::new(4, 2, move || {
+        crate::view! {
+            box {
+                if shown.get() { box { ref: r, test_id: "first" } },
+                box { ref: r, test_id: "last" },
+            }
+        }
+    });
+    let last = h.find_attr("test_id", "last");
+    assert_eq!(r.node(), last);
+
+    shown.set(false);
+    h.screen();
+    assert_eq!(r.node(), last);
+}
+
+#[test]
+fn an_effect_reading_a_ref_reruns_when_it_fills_and_empties() {
+    let (shown, r) = (state(false), node_ref());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut h = Harness::new(4, 1, move || {
+        crate::effect(move || log.lock().unwrap().push(r.node().is_some()));
+        crate::view! { box { if shown.get() { box { ref: r } } } }
+    });
+
+    shown.set(true);
+    h.screen();
+    shown.set(false);
+    h.screen();
+    assert_eq!(*seen.lock().unwrap(), [false, true, false]);
+}
+
+#[test]
+fn a_component_fills_a_ref_its_caller_passes_in() {
+    fn labelled(r: crate::NodeRef) -> View {
+        crate::view! { box { box { ref: r, test_id: "inner" } } }
+    }
+    let r = node_ref();
+    let mut h = Harness::new(4, 1, move || super::component(move || labelled(r)));
+    let inner = h.find_attr("test_id", "inner");
+    assert!(inner.is_some());
+    assert_eq!(r.node(), inner);
+}
+
+/// A component that records the root of whatever document `use_document` finds for it.
+fn document_probe(found: &Arc<Mutex<Vec<Option<NodeId>>>>) -> View {
+    let found = found.clone();
+    super::component(move || {
+        let root = use_document().map(|doc| doc.root());
+        found.lock().unwrap().push(root);
+        fragment([])
+    })
+}
+
+#[test]
+fn use_document_reaches_bodies_under_mount_app_and_dynamic_content() {
+    let found = Arc::new(Mutex::new(Vec::new()));
+    let doc = Document::new().unwrap();
+    let _plain = mount(&doc, doc.root(), document_probe(&found)).unwrap();
+
+    let shown = state(false);
+    let probes = found.clone();
+    let mut h = Harness::new(4, 1, move || {
+        let nested = probes.clone();
+        fragment([
+            document_probe(&probes),
+            super::component(move || document_probe(&nested)),
+            dynamic(move || {
+                if shown.get() {
+                    document_probe(&probes)
+                } else {
+                    fragment([])
+                }
+            }),
+        ])
+    });
+    shown.set(true);
+    h.screen();
+
+    let app_root = Some(h.document().root());
+    assert_eq!(
+        *found.lock().unwrap(),
+        [Some(doc.root()), app_root, app_root, app_root]
+    );
+}
+
+#[test]
+fn use_document_is_none_outside_any_mount() {
+    assert!(use_document().is_none());
 }
