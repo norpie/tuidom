@@ -2,6 +2,6 @@ use tuidom_ui_macros::view;
 
 fn main() {
     let _ = view! {
-        box { on_scroll: move |_| {} }
+        box { on_hover: move |_| {} }
     };
 }

@@ -33,7 +33,10 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use tuidom::event::{KeyEvent, ListenerHandle, MouseEvent};
+use tuidom::event::{
+    AnimationEndEvent, AnimationIterationEvent, FocusEvent, InputEvent, KeyEvent, ListenerHandle,
+    MouseEvent, ScrollEvent, TransitionEndEvent, WheelEvent,
+};
 use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
@@ -589,28 +592,6 @@ impl Element {
         self
     }
 
-    /// Register a click listener, removed automatically on unmount.
-    pub fn on_click<F>(mut self, handler: F) -> Self
-    where
-        F: Fn(&mut MouseEvent) + Send + Sync + 'static,
-    {
-        self.listeners.push(Box::new(move |doc, node| {
-            doc.on_click(node, move |ev| with_inline_flush(|| handler(ev)))
-        }));
-        self
-    }
-
-    /// Register a key-press listener, removed automatically on unmount.
-    pub fn on_key_press<F>(mut self, handler: F) -> Self
-    where
-        F: Fn(&mut KeyEvent) + Send + Sync + 'static,
-    {
-        self.listeners.push(Box::new(move |doc, node| {
-            doc.on_key_press(node, move |ev| with_inline_flush(|| handler(ev)))
-        }));
-        self
-    }
-
     /// Append a child view.
     pub fn child(mut self, child: impl Into<View>) -> Self {
         self.children.push(child.into());
@@ -622,6 +603,59 @@ impl Element {
         self.children.extend(children);
         self
     }
+}
+
+/// One listener method per targeted engine event. They differ only in name and event type, so
+/// they come from this table. `view!` keeps its own copy of the names in `is_known_event`.
+macro_rules! element_events {
+    ($($(#[$doc:meta])* $name:ident: $event:ty;)*) => {
+        impl Element {
+            $(
+                $(#[$doc])*
+                ///
+                /// The listener is removed when the element unmounts.
+                pub fn $name<F>(mut self, handler: F) -> Self
+                where
+                    F: Fn(&mut $event) + Send + Sync + 'static,
+                {
+                    self.listeners.push(Box::new(move |doc, node| {
+                        doc.$name(node, move |ev| with_inline_flush(|| handler(ev)))
+                    }));
+                    self
+                }
+            )*
+        }
+    };
+}
+
+element_events! {
+    /// Register a click listener.
+    on_click: MouseEvent;
+    /// Register a key-press listener. It runs before the engine's default action, so
+    /// `prevent_default` can stop an input from editing.
+    on_key_press: KeyEvent;
+    /// Register a mouse-button-down listener.
+    on_mouse_down: MouseEvent;
+    /// Register a mouse-button-up listener.
+    on_mouse_up: MouseEvent;
+    /// Register a focus listener. It bubbles, so it also fires when a descendant gains focus.
+    on_focus: FocusEvent;
+    /// Register a blur listener. It bubbles, so it also fires when a descendant loses focus.
+    on_blur: FocusEvent;
+    /// Register a mouse-wheel listener.
+    on_wheel: WheelEvent;
+    /// Register a listener for this element's scroll offset changing.
+    on_scroll: ScrollEvent;
+    /// Register a listener for an input's value changing from a key press. It bubbles, so a
+    /// container sees every input inside it.
+    on_input: InputEvent;
+    /// Register a listener for a transition finishing. It bubbles.
+    on_transition_end: TransitionEndEvent;
+    /// Register a listener for a keyframe animation finishing. It bubbles.
+    on_animation_end: AnimationEndEvent;
+    /// Register a listener for a keyframe animation completing an iteration other than
+    /// its last, which is reported as the end instead. It bubbles.
+    on_animation_iteration: AnimationIterationEvent;
 }
 
 impl From<Element> for View {

@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tuidom::animation::{Easing, TransitionConfig, TransitionProperty};
+use tuidom::animation::{
+    AnimatableProperty, Easing, KeyframeAnimation, TransitionConfig, TransitionProperty,
+};
 use tuidom::event::KeyCode;
 use tuidom::headless::HeadlessRuntime;
 use tuidom::style::{Color, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Style};
@@ -15,6 +17,7 @@ use super::{
     Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, text, virtual_list,
     virtual_list_measured,
 };
+use crate::testing::Harness;
 use crate::{Callback, Signal, state};
 
 /// A column container with a one-row gap between its children.
@@ -2269,4 +2272,202 @@ fn a_windowed_list_scrolls_through_a_large_collection() {
     assert_eq!(read_row(&rt, 4, 3), "999");
     let n = doc.get_children(list_content(&doc, container)).len();
     assert!(n <= 10, "window stayed bounded, got {n} children"); // never a thousand nodes
+}
+
+// ---- Element events ---------------------------------------------------------------------
+
+#[test]
+fn every_element_event_is_accepted_and_freed_on_unmount() {
+    // Each handler holds a clone of `probe`, so the strong count shows how many the engine
+    // still holds. This `view!` also pins the macro's event list to the builder's methods: a
+    // name the macro accepts but `Element` lacks fails to compile here.
+    let probe = Arc::new(());
+    let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11] = std::array::from_fn(|_| probe.clone());
+    let view = crate::view! {
+        box {
+            on_click: move || { let _ = &p0; },
+            on_key_press: move || { let _ = &p1; },
+            on_mouse_down: move || { let _ = &p2; },
+            on_mouse_up: move || { let _ = &p3; },
+            on_focus: move || { let _ = &p4; },
+            on_blur: move || { let _ = &p5; },
+            on_wheel: move || { let _ = &p6; },
+            on_scroll: move || { let _ = &p7; },
+            on_input: move || { let _ = &p8; },
+            on_transition_end: move || { let _ = &p9; },
+            on_animation_end: move || { let _ = &p10; },
+            on_animation_iteration: move || { let _ = &p11; },
+        }
+    };
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    assert_eq!(Arc::strong_count(&probe), 13);
+
+    mounted.unmount();
+    assert_eq!(Arc::strong_count(&probe), 1);
+}
+
+#[test]
+fn a_click_fires_mouse_down_then_up_then_click() {
+    let log = state(Vec::<&'static str>::new());
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                style: sized_box_style(),
+                on_mouse_down: move || log.update(|l| l.push("down")),
+                on_mouse_up: move || log.update(|l| l.push("up")),
+                on_click: move || log.update(|l| l.push("click")),
+            }
+        }
+    });
+
+    h.click(0, 0);
+    assert_eq!(log.get(), ["down", "up", "click"]);
+}
+
+#[test]
+fn focus_and_blur_fire_as_focus_moves_and_bubble() {
+    let log = state(Vec::<&'static str>::new());
+    let mut h = Harness::new(4, 2, move || {
+        crate::view! {
+            box {
+                style: column(),
+                on_focus: move || log.update(|l| l.push("parent focus")),
+                box {
+                    focusable: true,
+                    on_focus: move || log.update(|l| l.push("a focus")),
+                    on_blur: move || log.update(|l| l.push("a blur")),
+                    text("a"),
+                },
+                box {
+                    focusable: true,
+                    on_focus: move || log.update(|l| l.push("b focus")),
+                    text("b"),
+                },
+            }
+        }
+    });
+
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::Tab);
+    assert_eq!(
+        log.get(),
+        [
+            "a focus",
+            "parent focus",
+            "a blur",
+            "b focus",
+            "parent focus"
+        ]
+    );
+}
+
+#[test]
+fn a_wheel_fires_wheel_then_scroll_with_the_new_offset() {
+    let wheels = state(0);
+    let offset = state(None);
+    let mut h = Harness::new(4, 2, move || {
+        let mut style = column();
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(2));
+        style.overflow_y(Overflow::Scroll);
+        crate::view! {
+            box {
+                style: style.clone(),
+                on_wheel: move || wheels.update(|w| *w += 1),
+                on_scroll: move |ev| offset.set(Some(ev.y)),
+                text("0"), text("1"), text("2"), text("3"), text("4"),
+            }
+        }
+    });
+
+    h.scroll(0, 0, -1);
+    assert_eq!(wheels.get(), 1);
+    assert!(
+        offset.get().is_some_and(|y| y > 0),
+        "got {:?}",
+        offset.get()
+    );
+}
+
+#[test]
+fn on_input_on_a_container_sees_typing_in_an_input_inside_it() {
+    let values = state(Vec::<String>::new());
+    let mut h = Harness::new(6, 1, move || {
+        crate::view! {
+            box {
+                on_input: move |ev| values.update(|v| v.push(ev.value.clone())),
+                input { style: sized_box_style() },
+            }
+        }
+    });
+
+    h.press(KeyCode::Tab);
+    h.type_text("hi");
+    assert_eq!(values.get(), ["h", "hi"]);
+}
+
+#[test]
+fn transition_end_fires_once_the_transition_finishes() {
+    let dark = state(false);
+    let ended = state(0);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                test_id: "fade",
+                style: {
+                    let mut style = sized_box_style();
+                    style.background(if dark.get() { Color::black() } else { Color::white() });
+                    style
+                },
+                on_transition_end: move || ended.update(|n| *n += 1),
+            }
+        }
+    });
+    let fade = h.find_attr("test_id", "fade").unwrap();
+    h.document()
+        .set_transition(
+            fade,
+            TransitionConfig::new(
+                TransitionProperty::Background,
+                Duration::from_millis(100),
+                Easing::Linear,
+            ),
+        )
+        .unwrap();
+
+    dark.set(true);
+    h.advance(Duration::from_millis(50));
+    assert_eq!(ended.get(), 0);
+    h.advance(Duration::from_millis(50));
+    assert_eq!(ended.get(), 1);
+}
+
+#[test]
+fn animation_iteration_and_end_fire_at_their_boundaries() {
+    let (iterations, ended) = (state(0), state(0));
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                test_id: "pulse",
+                style: sized_box_style(),
+                on_animation_iteration: move || iterations.update(|n| *n += 1),
+                on_animation_end: move || ended.update(|n| *n += 1),
+            }
+        }
+    });
+    let pulse = h.find_attr("test_id", "pulse").unwrap();
+    let animation = KeyframeAnimation::from_to(
+        Duration::from_millis(100),
+        [AnimatableProperty::Background(Color::white())],
+        [AnimatableProperty::Background(Color::black())],
+    )
+    .iterations(2);
+    h.document().animate(pulse, animation).unwrap();
+
+    h.advance(Duration::from_millis(100));
+    assert_eq!((iterations.get(), ended.get()), (1, 0));
+    h.advance(Duration::from_millis(100));
+    // The final boundary is reported as the end, not as another iteration.
+    assert_eq!((iterations.get(), ended.get()), (1, 1));
 }

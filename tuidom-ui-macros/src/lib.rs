@@ -53,8 +53,9 @@ use syn::{
 /// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
 ///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
 /// - **Attributes** — `key: value`. `style:` binds the whole `Style`; `focusable:` takes a
-///   bool; `on_click:` / `on_key_press:` take a `|ev| …` or `|| …` closure; any other key is a
-///   string attribute. A literal value is applied once; anything else binds reactively.
+///   bool; an event key (`on_click:`, `on_focus:`, `on_input:`, … — one per `Element` listener
+///   method) takes a `|ev| …` or `|| …` closure; any other key is a string attribute. A
+///   literal value is applied once; anything else binds reactively.
 /// - **View hole** — `{ expr }`, where `expr` is `Into<View>` (splat an iterable with
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
@@ -808,7 +809,12 @@ fn parse_body(body: ParseStream, validate_events: bool) -> syn::Result<(Vec<Attr
                 return Err(syn::Error::new(
                     name.span(),
                     format!(
-                        "unknown event handler `{key}`; F3 exposes `on_click` and `on_key_press`"
+                        "unknown event handler `{key}`; elements take {}",
+                        KNOWN_EVENTS
+                            .iter()
+                            .map(|event| format!("`{event}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
                 ));
             }
@@ -824,10 +830,26 @@ fn parse_body(body: ParseStream, validate_events: bool) -> syn::Result<(Vec<Attr
     Ok((attrs, children))
 }
 
-/// The event attributes F3's `Element` exposes. Widening this set is mechanical as the view
-/// layer grows more `on_*` setters.
+/// The `on_*` listener methods `Element` has. The view layer generates them from its own table,
+/// which this crate cannot import, so the two lists are kept in step by hand and a `view!` test
+/// that uses every name.
+const KNOWN_EVENTS: &[&str] = &[
+    "on_click",
+    "on_key_press",
+    "on_mouse_down",
+    "on_mouse_up",
+    "on_focus",
+    "on_blur",
+    "on_wheel",
+    "on_scroll",
+    "on_input",
+    "on_transition_end",
+    "on_animation_end",
+    "on_animation_iteration",
+];
+
 fn is_known_event(name: &str) -> bool {
-    matches!(name, "on_click" | "on_key_press")
+    KNOWN_EVENTS.contains(&name)
 }
 
 impl Node {
@@ -1068,7 +1090,7 @@ impl Attr {
                     quote! { .dyn_focusable(move || #value) }
                 }
             }
-            "on_click" | "on_key_press" => {
+            event if is_known_event(event) => {
                 let handler = event_handler(value);
                 quote! { .#name(#handler) }
             }
