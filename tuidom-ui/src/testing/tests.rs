@@ -1,8 +1,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
+use tuidom::animation::{Easing, TransitionConfig, TransitionProperty};
 use tuidom::event::KeyCode;
-use tuidom::style::{FlexDirection, Length, Style};
+use tuidom::headless::ScreenColor;
+use tuidom::style::{Color, FlexDirection, Length, Style};
 
 use super::Harness;
 use crate::{Callback, View, component, dyn_text, on_cleanup, state, text, virtual_list};
@@ -185,4 +188,51 @@ fn find_text_counts_wide_glyphs_as_two_columns() {
         crate::view! { box { style: column(), text("x"), text("日本 OK") } }
     });
     assert_eq!(h.find_text("OK"), Some((5, 1)));
+}
+
+#[test]
+fn advance_steps_a_transition_partway_then_to_its_end() {
+    let dark = state(false);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            box {
+                test_id: "fade",
+                focusable: true,
+                style: {
+                    let mut style = Style::new();
+                    style.width(Length::Cells(2));
+                    style.height(Length::Cells(1));
+                    style.background(if dark.get() { Color::black() } else { Color::white() });
+                    style
+                },
+                on_key_press: move |_| dark.set(true),
+            }
+        }
+    });
+
+    let fade = h.find_attr("test_id", "fade").unwrap();
+    h.document()
+        .set_transition(
+            fade,
+            TransitionConfig::new(
+                TransitionProperty::Background,
+                Duration::from_millis(1000),
+                Easing::Linear,
+            ),
+        )
+        .unwrap();
+    let white = h.cell(0, 0).unwrap().bg;
+
+    h.focus(fade);
+    h.press(KeyCode::Enter);
+    h.advance(Duration::from_millis(500));
+    let midway = h.cell(0, 0).unwrap().bg;
+
+    h.advance(Duration::from_millis(500));
+    let black = h.cell(0, 0).unwrap().bg;
+
+    assert_eq!(white, Some(ScreenColor::from_rgb(255, 255, 255)));
+    assert_eq!(black, Some(ScreenColor::from_rgb(0, 0, 0)));
+    assert_ne!(midway, white);
+    assert_ne!(midway, black);
 }

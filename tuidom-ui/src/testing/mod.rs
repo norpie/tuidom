@@ -21,6 +21,8 @@
 //!
 //! Enabled by the `testing` feature.
 
+use std::time::Duration;
+
 use tuidom::Document;
 use tuidom::NodeId;
 use tuidom::event::{KeyCode, KeyModifiers};
@@ -47,8 +49,8 @@ impl Harness {
     /// Mount `root` on a fresh headless document of `width` × `height` cells and settle.
     ///
     /// `root` is the same kind of closure [`App::new`] takes, run once as the root component.
-    /// The document clock is frozen from the start; [`runtime`](Self::runtime) gives access to
-    /// `advance_time`.
+    /// The document clock is frozen from the start and moves only through
+    /// [`advance`](Self::advance).
     pub fn new<F, V>(width: u16, height: u16, root: F) -> Harness
     where
         F: FnOnce() -> V + Send + Sync + 'static,
@@ -104,6 +106,19 @@ impl Harness {
     /// Resize the screen.
     pub fn resize(&mut self, width: u16, height: u16) {
         self.rt.resize(width, height);
+        self.settle();
+    }
+
+    /// Advance the frozen document clock by exactly `delta`, then settle.
+    ///
+    /// Transitions, keyframe animations, and `Frames` nodes move forward by `delta`, and ones
+    /// that finish dispatch their end events. A transition caught partway paints the same frame
+    /// until the next advance, so settling mid-animation still terminates.
+    ///
+    /// This is the engine clock only. Timers inside spawned tasks run on Tokio's clock, which
+    /// `#[tokio::test(start_paused = true)]` and `tokio::time::advance` control.
+    pub fn advance(&mut self, delta: Duration) {
+        self.rt.advance_time(delta);
         self.settle();
     }
 
