@@ -250,6 +250,11 @@ pub(crate) fn untracked<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// Whether a read right now would subscribe a running effect or derived.
+pub(crate) fn tracking() -> bool {
+    OBSERVER.with(|o| o.get().is_some())
+}
+
 /// Register the currently running observer, if any, as a subscriber of `source`.
 ///
 /// The edge is bidirectional: `source` gains a subscriber and the observer gains a source,

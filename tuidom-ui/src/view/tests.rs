@@ -10,7 +10,9 @@ use tuidom::animation::{
 };
 use tuidom::event::{KeyCode, MouseButton};
 use tuidom::headless::{HeadlessRuntime, ScreenColor};
-use tuidom::style::{Color, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Style};
+use tuidom::style::{
+    Color, Display, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, Style,
+};
 use tuidom::{Document, NodeId};
 
 use super::{
@@ -3136,6 +3138,7 @@ fn every_method_is_inert_on_an_empty_ref() {
     assert!(!empty.is_focused());
     assert_eq!(empty.scroll_offset(), None);
     assert!(empty.layout().is_none());
+    assert!(empty.screen_rect().is_none());
     assert_eq!((empty.cursor(), empty.selection()), (None, None));
 }
 
@@ -3157,6 +3160,205 @@ fn a_command_inside_an_effect_does_not_subscribe_it() {
     shown.set(false);
     h.screen();
     assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
+// ---- Reactive layout reads ---------------------------------------------------------------
+
+/// A box `width` cells wide and one tall.
+fn width_style(width: u16) -> Style {
+    let mut style = Style::new();
+    style.width(Length::Cells(width));
+    style.height(Length::Cells(1));
+    style
+}
+
+/// A six-wide, three-tall scroller of six rows, the third a box bound to `anchor`.
+fn scroll_list(list: crate::NodeRef, anchor: crate::NodeRef) -> View {
+    let mut style = column();
+    style.width(Length::Cells(6));
+    style.height(Length::Cells(3));
+    style.overflow_y(Overflow::Scroll);
+    crate::view! {
+        box {
+            ref: list,
+            style: style.clone(),
+            text("a0"), text("a1"),
+            box { ref: anchor, text("anc") },
+            text("a3"), text("a4"), text("a5"),
+        }
+    }
+}
+
+#[test]
+fn an_effect_reading_layout_reruns_when_the_node_is_laid_out_and_resized() {
+    let (sized, width, seen) = (node_ref(), state(4u16), state(Vec::new()));
+    let mut h = Harness::new(8, 1, move || {
+        crate::effect(move || {
+            let width = sized.layout().map(|layout| layout.rect.width);
+            seen.update(|seen| seen.push(width));
+        });
+        crate::view! { box { ref: sized, style: width_style(width.get()) } }
+    });
+    h.screen();
+    // Empty, then bound before any frame, then laid out.
+    assert_eq!(seen.get(), [None, None, Some(4)]);
+
+    width.set(6);
+    h.screen();
+    assert_eq!(seen.get().last(), Some(&Some(6)));
+
+    let runs = seen.get().len();
+    for _ in 0..3 {
+        h.runtime().render().unwrap();
+    }
+    assert_eq!(seen.get().len(), runs);
+}
+
+/// An empty box whose mount starts an effect logging `r`'s width.
+fn width_reader(r: crate::NodeRef, seen: Signal<Vec<Option<u16>>>) -> View {
+    crate::effect(move || {
+        let width = r.layout().map(|l| l.rect.width);
+        seen.update(|seen| seen.push(width));
+    });
+    crate::view! { box {} }
+}
+
+#[test]
+fn a_reader_added_after_layout_sees_it_at_once() {
+    let (sized, reading, seen) = (node_ref(), state(false), state(Vec::new()));
+    let mut h = Harness::new(8, 2, move || {
+        crate::view! {
+            box {
+                style: column(),
+                box { ref: sized, style: width_style(4) },
+                if reading.get() { { width_reader(sized, seen) } },
+            }
+        }
+    });
+    h.screen();
+
+    reading.set(true);
+    h.screen();
+    assert_eq!(seen.get().first(), Some(&Some(4)));
+}
+
+#[test]
+fn scrolling_moves_the_screen_rect_and_reruns_no_layout_reader() {
+    let (list, anchor) = (node_ref(), node_ref());
+    let (layouts, screen_ys) = (state(Vec::new()), state(Vec::new()));
+    let mut h = Harness::new(8, 3, move || {
+        crate::effect(move || {
+            let layout = anchor.layout();
+            layouts.update(|seen| seen.push(layout));
+        });
+        crate::effect(move || {
+            let y = anchor.screen_rect().map(|r| r.y);
+            screen_ys.update(|seen| seen.push(y));
+        });
+        scroll_list(list, anchor)
+    });
+    h.screen();
+    assert_eq!(screen_ys.get().last(), Some(&Some(2)));
+    let layout_runs = layouts.get().len();
+
+    list.scroll_to(0, 1);
+    h.screen();
+    assert_eq!(screen_ys.get().last(), Some(&Some(1)));
+    assert_eq!(layouts.get().len(), layout_runs);
+}
+
+#[test]
+fn a_tooltip_placed_from_its_anchors_screen_rect_follows_a_scroll() {
+    let (list, anchor) = (node_ref(), node_ref());
+    let tip_style = move || {
+        let mut style = Style::new();
+        match anchor.screen_rect() {
+            Some(rect) => style.position(Position::Absolute {
+                x: rect.x + i32::from(rect.width) + 1,
+                y: rect.y,
+            }),
+            None => style.display(Display::None),
+        };
+        style
+    };
+    let mut h = Harness::new(12, 3, move || {
+        crate::view! {
+            box {
+                style: column(),
+                { scroll_list(list, anchor) },
+                box { style: tip_style(), text("tip") },
+            }
+        }
+    });
+    assert_eq!(h.find_text("tip"), Some((7, 2)));
+
+    list.scroll_to(0, 1);
+    assert_eq!(h.find_text("tip"), Some((7, 1)));
+}
+
+#[test]
+fn one_frame_changing_two_refs_reruns_their_reader_once() {
+    let (a, b, width, seen) = (node_ref(), node_ref(), state(4u16), state(Vec::new()));
+    let mut h = Harness::new(8, 2, move || {
+        crate::effect(move || {
+            let widths = (
+                a.layout().map(|l| l.rect.width),
+                b.layout().map(|l| l.rect.width),
+            );
+            seen.update(|seen| seen.push(widths));
+        });
+        crate::view! {
+            box {
+                style: column(),
+                box { ref: a, style: width_style(width.get()) },
+                box { ref: b, style: width_style(width.get()) },
+            }
+        }
+    });
+    h.screen();
+    let runs = seen.get().len();
+
+    width.set(6);
+    h.screen();
+    let seen = seen.get();
+    assert_eq!(seen.len(), runs + 1, "{seen:?}");
+    assert_eq!(seen.last(), Some(&(Some(6), Some(6))));
+}
+
+#[test]
+fn a_read_outside_an_effect_answers_from_the_engine_without_waiting_for_a_frame() {
+    let (list, anchor) = (node_ref(), node_ref());
+    let mut h = Harness::new(8, 3, move || {
+        crate::effect(move || {
+            anchor.screen_rect();
+        });
+        scroll_list(list, anchor)
+    });
+    h.screen();
+
+    h.document().scroll_to(list.node().unwrap(), 0, 2).unwrap();
+    assert_eq!(anchor.screen_rect().map(|r| r.y), Some(0));
+}
+
+#[test]
+fn unmounting_empties_the_reads_and_stops_the_watch() {
+    let (sized, shown, seen) = (node_ref(), state(true), state(Vec::new()));
+    let mut h = Harness::new(8, 1, move || {
+        crate::effect(move || {
+            let width = sized.screen_rect().map(|r| r.width);
+            seen.update(|seen| seen.push(width));
+        });
+        crate::view! { box { if shown.get() { box { ref: sized, style: width_style(4) } } } }
+    });
+    h.screen();
+    assert_eq!(seen.get().last(), Some(&Some(4)));
+    assert_eq!(super::layout_watch::watched_count(h.document()), 1);
+
+    shown.set(false);
+    h.screen();
+    assert_eq!(seen.get().last(), Some(&None));
+    assert_eq!((sized.layout(), sized.screen_rect()), (None, None));
+    assert_eq!(super::layout_watch::watched_count(h.document()), 0);
 }
 
 // ---- Focus traps -------------------------------------------------------------------------

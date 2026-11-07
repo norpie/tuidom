@@ -4,9 +4,10 @@
 use std::ops::Range;
 
 use tuidom::animation::{AnimationHandle, KeyframeAnimation};
-use tuidom::{Document, LayoutView, NodeId, Result, ScrollOffset};
+use tuidom::{Document, LayoutRect, LayoutView, NodeId, Result, ScrollOffset};
 
-use crate::runtime::{Signal, provide_context, state, untracked, use_context};
+use super::layout_watch::{self, LayoutSignals, layout_of};
+use crate::runtime::{Signal, batch, provide_context, state, tracking, untracked, use_context};
 
 /// A handle to the node an element mounts, for the engine operations a view cannot declare.
 ///
@@ -16,16 +17,18 @@ use crate::runtime::{Signal, provide_context, state, untracked, use_context};
 /// document itself because event handlers run outside any scope, where [`use_document`] finds
 /// nothing.
 ///
-/// Reads are tracked: an effect that reads [`node`](Self::node), [`layout`](Self::layout), or
-/// another getter reruns when the ref fills or empties. It does not rerun when the value read
-/// changes, such as focus moving or layout shifting. Commands (focusing, scrolling, animating,
-/// setting the cursor) are untracked, so calling one inside an effect does not subscribe it.
+/// Reads are tracked: an effect that reads [`node`](Self::node) or another getter reruns when
+/// the ref fills or empties. Most do not rerun when the value read changes, such as focus
+/// moving. [`layout`](Self::layout) and [`screen_rect`](Self::screen_rect) do, one frame behind.
+/// Commands (focusing, scrolling, animating, setting the cursor) are untracked, so calling one
+/// inside an effect does not subscribe it.
 ///
 /// On an empty ref every command does nothing and every read returns `None` (`false` for
 /// [`is_focused`](Self::is_focused)). A command the engine refuses, such as setting the cursor of
 /// a box, is logged and ignored. A ref bound to two mounted elements holds whichever mounted last.
 pub struct NodeRef {
     slot: Signal<Option<Bound>>,
+    watched: LayoutSignals,
 }
 
 impl Clone for NodeRef {
@@ -59,7 +62,13 @@ impl PartialEq for Bound {
 
 /// Create an empty [`NodeRef`], owned by the current scope.
 pub fn node_ref() -> NodeRef {
-    NodeRef { slot: state(None) }
+    NodeRef {
+        slot: state(None),
+        watched: LayoutSignals {
+            layout: state(None),
+            screen_rect: state(None),
+        },
+    }
 }
 
 impl NodeRef {
@@ -119,14 +128,27 @@ impl NodeRef {
             .ok()
     }
 
-    /// The node's size and position as of the last frame.
+    /// The node's size and position as laid out by the last frame, before any scrolling.
     ///
-    /// Not reactive: nothing reruns when the layout changes. It is `None` in
-    /// [`on_mount`](crate::on_mount), since no frame has laid the new node out yet. To place
-    /// something relative to a node, read its layout in the handler that triggers the placement.
+    /// Read inside an effect, the effect reruns when a frame lays the node out differently.
+    /// Scrolling does not rerun it, since a scroll never reruns layout. The new value arrives
+    /// after the frame that produced it, so something drawn from it lags one frame behind. It
+    /// is `None` until the first frame after mount, so always `None` in
+    /// [`on_mount`](crate::on_mount).
+    ///
+    /// An effect that resizes the node it reads can rerun on every frame without settling.
     pub fn layout(&self) -> Option<LayoutView> {
-        let Bound { doc, node } = self.bound()?;
-        doc.get_node(node).and_then(|view| view.layout)
+        self.watched_read(self.watched.layout, layout_of)
+    }
+
+    /// Where the node is drawn: its layout rect shifted by its scrolling ancestors' offsets.
+    ///
+    /// Use this to place something beside the node, such as a tooltip. Read inside an effect,
+    /// the effect reruns when the node is laid out differently or an ancestor scrolls, one
+    /// frame behind as with [`layout`](Self::layout). A node scrolled out of its container's
+    /// viewport still has a rect, lying outside that viewport.
+    pub fn screen_rect(&self) -> Option<LayoutRect> {
+        self.watched_read(self.watched.screen_rect, Document::screen_rect)
     }
 
     /// An input's cursor, as a byte offset into its value.
@@ -173,6 +195,21 @@ impl NodeRef {
         }
     }
 
+    /// Inside an effect, read `signal` after making sure the watcher keeps it current; outside
+    /// one, ask the engine, since nothing would rerun on a later change.
+    fn watched_read<T: Clone + 'static>(
+        &self,
+        signal: Signal<Option<T>>,
+        direct: impl FnOnce(&Document, NodeId) -> Option<T>,
+    ) -> Option<T> {
+        let Bound { doc, node } = self.bound()?;
+        if !tracking() {
+            return direct(&doc, node);
+        }
+        layout_watch::watch(&doc, node, self.watched);
+        signal.try_get().flatten()
+    }
+
     fn read<T>(&self, what: &str, get: impl FnOnce(&Document, NodeId) -> Result<T>) -> Option<T> {
         let Bound { doc, node } = self.bound()?;
         get(&doc, node)
@@ -180,18 +217,36 @@ impl NodeRef {
             .ok()
     }
 
+    /// Bind the ref to `node`. A node it held before stops being watched; a reader reruns on the
+    /// change and watches the new one.
     pub(crate) fn fill(&self, doc: &Document, node: NodeId) {
-        self.slot.set(Some(Bound {
-            doc: doc.clone(),
-            node,
-        }));
+        let previous = self.bound_untracked();
+        batch(|| {
+            if let Some(previous) = previous {
+                self.unbind(&previous);
+            }
+            self.slot.set(Some(Bound {
+                doc: doc.clone(),
+                node,
+            }));
+        });
     }
 
     /// Empty the ref if it still holds `node`. A later mount may have taken it over already.
     pub(crate) fn release(&self, node: NodeId) {
-        if untracked(|| self.node()) == Some(node) {
-            self.slot.set(None);
+        if let Some(bound) = self.bound_untracked()
+            && bound.node == node
+        {
+            batch(|| {
+                self.unbind(&bound);
+                self.slot.set(None);
+            });
         }
+    }
+
+    fn unbind(&self, bound: &Bound) {
+        layout_watch::unwatch(&bound.doc, bound.node);
+        self.watched.clear();
     }
 }
 

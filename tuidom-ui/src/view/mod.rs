@@ -57,6 +57,7 @@ use tuidom::{Document, NodeId, Result};
 
 use crate::runtime::{Scope, ScopeId, Signal, effect, state, with_inline_flush};
 
+mod layout_watch;
 mod node_ref;
 
 pub(crate) use node_ref::provide_document;
