@@ -122,3 +122,67 @@ fn dropping_the_harness_disposes_the_tree() {
     assert_eq!(cleaned.load(Ordering::SeqCst), 1);
     assert_eq!(doc.get_children(doc.root()).len(), 0);
 }
+
+#[test]
+fn click_text_presses_a_button_by_its_label() {
+    let (saves, cancels) = (state(0), state(0));
+    let mut h = Harness::new(20, 2, move || {
+        crate::view! {
+            box {
+                style: column(),
+                Button { label: "Save".to_string(), on_press: move |_| saves.update(|c| *c += 1) },
+                Button { label: "Cancel".to_string(), on_press: move |_| cancels.update(|c| *c += 1) },
+            }
+        }
+    });
+
+    h.click_text("Cancel");
+    assert_eq!((saves.get(), cancels.get()), (0, 1));
+}
+
+#[test]
+fn find_attr_reaches_a_tagged_node_for_focus() {
+    // Tab would land on the counter first; the attribute picks out the second box directly.
+    let hits = state(0);
+    let mut h = Harness::new(10, 2, move || {
+        crate::view! {
+            box {
+                style: column(),
+                Counter { start: 0 },
+                box {
+                    test_id: "second",
+                    focusable: true,
+                    on_key_press: move |ev| {
+                        if ev.code == KeyCode::Char('+') {
+                            hits.update(|c| *c += 1);
+                        }
+                    },
+                    text(hits.get()),
+                },
+            }
+        }
+    });
+
+    let second = h.find_attr("test_id", "second").unwrap();
+    h.focus(second);
+    h.press(KeyCode::Char('+'));
+    assert_eq!(h.screen(), "0\n1");
+    assert_eq!(h.find_attr("test_id", "missing"), None);
+}
+
+#[test]
+fn find_text_is_none_for_absent_or_empty_text() {
+    let mut h = Harness::new(10, 1, || text("hello"));
+    assert_eq!(h.find_text("hello"), Some((0, 0)));
+    assert_eq!(h.find_text("bye"), None);
+    assert_eq!(h.find_text(""), None);
+}
+
+#[test]
+fn find_text_counts_wide_glyphs_as_two_columns() {
+    // "日本" takes four cells but two `char`s, so "OK" starts at column 5, not 3.
+    let mut h = Harness::new(10, 2, || {
+        crate::view! { box { style: column(), text("x"), text("日本 OK") } }
+    });
+    assert_eq!(h.find_text("OK"), Some((5, 1)));
+}

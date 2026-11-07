@@ -140,6 +140,51 @@ impl Harness {
         self.rt.get_cell(x, y)
     }
 
+    /// Where `needle` first appears on screen, as the `(x, y)` of the cell it starts in.
+    ///
+    /// Rows are searched top to bottom and each left to right; a match never spans rows. `None`
+    /// when the text is not on screen, or when `needle` is empty.
+    pub fn find_text(&mut self, needle: &str) -> Option<(i32, i32)> {
+        self.settle();
+        if needle.is_empty() {
+            return None;
+        }
+        (0..self.rt.height()).find_map(|y| {
+            let (text, starts) = self.row_cells(y);
+            let at = text.find(needle)?;
+            // The cell whose text begins at or before the match's first byte.
+            let cell = starts.partition_point(|&(offset, _)| offset <= at) - 1;
+            Some((starts[cell].1, y as i32))
+        })
+    }
+
+    /// Click the first cell of the first place `needle` appears on screen.
+    ///
+    /// # Panics
+    ///
+    /// If `needle` is not on screen.
+    pub fn click_text(&mut self, needle: &str) {
+        let Some((x, y)) = self.find_text(needle) else {
+            panic!(
+                "harness: no {needle:?} on screen to click:\n{}",
+                self.screen()
+            );
+        };
+        self.click(x, y);
+    }
+
+    /// The first node in document order whose attribute `key` is `value`, such as one tagged
+    /// `test_id: "save"` in `view!`.
+    pub fn find_attr(&mut self, key: &str, value: &str) -> Option<NodeId> {
+        self.settle();
+        self.doc
+            .snapshot()
+            .nodes
+            .into_iter()
+            .find(|node| node.attrs.get(key).is_some_and(|v| v == value))
+            .map(|node| node.id)
+    }
+
     /// The document the app is mounted on.
     pub fn document(&self) -> &Document {
         &self.doc
@@ -179,10 +224,26 @@ impl Harness {
     }
 
     fn row_text(&self, y: u16) -> String {
-        let text: String = (0..self.rt.width() as i32)
-            .filter_map(|x| self.rt.get_cell(x, y as i32).map(|c| c.text))
-            .collect();
-        text.trim_end().to_string()
+        self.row_cells(y).0.trim_end().to_string()
+    }
+
+    /// Row `y`'s joined cell text, plus the byte offset and column where each cell's text
+    /// starts. A wide glyph's continuation cell contributes no text, so offsets and columns
+    /// drift apart after one and the map is how a match finds its column.
+    fn row_cells(&self, y: u16) -> (String, Vec<(usize, i32)>) {
+        let mut text = String::new();
+        let mut starts = Vec::new();
+        for x in 0..self.rt.width() as i32 {
+            let Some(cell) = self.rt.get_cell(x, y as i32) else {
+                continue;
+            };
+            if cell.is_wide_continuation {
+                continue;
+            }
+            starts.push((text.len(), x));
+            text.push_str(&cell.text);
+        }
+        (text, starts)
     }
 }
 
