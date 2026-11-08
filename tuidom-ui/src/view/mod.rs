@@ -154,6 +154,7 @@ enum ViewKind {
     // Boxed because a `VirtualizedView` (a style, two boxed closures) dwarfs the other variants.
     Virtualized(Box<VirtualizedView>),
     Component(ComponentBuild),
+    Portal(Box<View>),
 }
 
 /// A component's deferred body. Unlike a [`DynamicView`]'s closure it runs exactly **once**,
@@ -372,6 +373,23 @@ impl From<Text> for View {
 pub fn fragment(views: impl IntoIterator<Item = View>) -> View {
     View {
         kind: ViewKind::Fragment(views.into_iter().collect()),
+    }
+}
+
+/// Content mounted as the last children of the document root rather than where the portal
+/// sits, for a dropdown, modal, or toast that must draw over everything.
+///
+/// A node paints and clips as part of its parent's subtree, and its `z_index` cannot escape
+/// that subtree, so content that has to cover its surroundings has to live under the root. The
+/// portal's scope is still the one it was declared in: context reaches the content, and it
+/// unmounts with its owner. It takes no space where it is declared.
+///
+/// Color variables follow the tree, not the scope, so variables declared on an ancestor of the
+/// portal do not reach its content. Place the content with
+/// [`Position::Anchored`](tuidom::style::Position::Anchored) to keep it beside a node.
+pub fn portal(content: impl Into<View>) -> View {
+    View {
+        kind: ViewKind::Portal(Box::new(content.into())),
     }
 }
 
@@ -1175,6 +1193,12 @@ fn mount_view(
             Ok(vec![marker])
         }
         ViewKind::Virtualized(view) => mount_virtualized(doc, parent, before, *view, scope),
+        // Nothing lands under `parent`, so a keyed list moving this item's nodes leaves the
+        // portal's content where it is.
+        ViewKind::Portal(content) => {
+            mount_view(doc, doc.root(), None, *content, scope)?;
+            Ok(Vec::new())
+        }
         ViewKind::Component(build) => {
             // The body runs under a child of the mount scope, so its signals, effects, and
             // nodes belong to `child` and are freed when the mount is disposed — the child is

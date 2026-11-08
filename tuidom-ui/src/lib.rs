@@ -58,6 +58,6 @@ pub mod __private {
 pub use tuidom_ui_macros::{component, view};
 pub use view::{
     Children, Element, Mounted, NodeRef, Text, View, boxed, component, dyn_text, dynamic, fragment,
-    input, keyed, mount, node_ref, on_mount, text, use_document, virtual_list,
+    input, keyed, mount, node_ref, on_mount, portal, text, use_document, virtual_list,
     virtual_list_measured,
 };

@@ -76,6 +76,9 @@ use syn::{
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
 ///   `each i, value in collection [key = …] { … }` (`_` for an unwanted binding).
+/// - **Portal** — `portal { … }` mounts its children as the last children of the document root,
+///   so they draw over everything, while staying in the declaring component's scope. It takes
+///   children only, no attributes.
 ///
 /// # How it lowers
 ///
@@ -619,6 +622,8 @@ enum Node {
     Match(Box<MatchNode>),
     /// An `each i, value in collection { … }` loop.
     Each(Box<EachNode>),
+    /// A `portal { … }`, whose children mount under the document root.
+    Portal(Vec<Node>),
     /// A component instance, e.g. `Counter { start: 0 }`. Dispatched from an element by the
     /// name's case — PascalCase is a component. `props` reuse the `name: value` attribute
     /// grammar; each becomes a field on the generated `NameProps` struct. `children` are the body
@@ -721,6 +726,18 @@ impl Parse for Node {
                 "`else` here has no matching `if`",
             )),
             "each" => Ok(Node::Each(Box::new(parse_each(input)?))),
+            "portal" => {
+                let body;
+                braced!(body in input);
+                let (attrs, children) = parse_body(&body, true)?;
+                if let Some(attr) = attrs.first() {
+                    return Err(syn::Error::new(
+                        attr.name.span(),
+                        "`portal` takes no attributes; put them on an element inside it",
+                    ));
+                }
+                Ok(Node::Portal(children))
+            }
             // PascalCase is a component instance; lowercase is an engine element. The case split
             // is the Rust convention and needs no new sigil to tell `Counter {…}` from `box {…}`.
             _ if is_pascal_case(&name) => {
@@ -978,6 +995,10 @@ impl Node {
             }
             Node::Hole(expr) => {
                 quote! { ::tuidom_ui::dynamic(move || ::tuidom_ui::View::from(#expr)) }
+            }
+            Node::Portal(children) => {
+                let content = child_list_to_view(children);
+                quote! { ::tuidom_ui::portal(#content) }
             }
             Node::If(node) => {
                 let body = expand_if(node);

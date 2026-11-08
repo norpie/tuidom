@@ -3675,3 +3675,81 @@ fn a_trap_on_an_element_that_is_not_a_stacking_context_is_not_opened() {
     h.press(KeyCode::Tab);
     assert_eq!(h.document().focused(), outside);
 }
+
+// ---- Portals -----------------------------------------------------------------------------
+
+/// A one-cell box that clips what it holds.
+fn clipping_cell() -> Style {
+    let mut style = Style::new();
+    style.width(Length::Cells(1));
+    style.height(Length::Cells(1));
+    style.overflow(Overflow::Clip);
+    style
+}
+
+fn at(x: i32, y: i32) -> Style {
+    let mut style = Style::new();
+    style.position(Position::Absolute { x, y });
+    style
+}
+
+#[test]
+fn a_portal_mounts_under_the_root_and_escapes_its_parents_clip() {
+    let mut h = Harness::new(8, 3, || {
+        crate::view! {
+            box {
+                style: column(),
+                box {
+                    test_id: "cell",
+                    style: clipping_cell(),
+                    portal { box { test_id: "tip", style: at(0, 1), text("tooltip") } },
+                },
+                text("after"),
+            }
+        }
+    });
+    let doc = h.document().clone();
+    let tip = h.find_attr("test_id", "tip").unwrap();
+    let cell = h.find_attr("test_id", "cell").unwrap();
+    assert_eq!(doc.get_parent(tip), Some(doc.root()));
+    assert!(doc.get_children(cell).is_empty());
+
+    // The tip is the root's last child, so it paints over "after" on the row they share.
+    assert_eq!(h.row(1).trim_end(), "tooltip");
+}
+
+#[crate::component]
+fn ReadsGreeting() -> View {
+    let greeting = crate::use_context::<&'static str>().unwrap_or("none");
+    crate::view! { text(greeting) }
+}
+
+#[test]
+fn context_reaches_a_portals_content() {
+    let mut h = Harness::new(8, 1, || {
+        crate::provide_context("hello");
+        crate::view! { box { portal { ReadsGreeting {} } } }
+    });
+    assert_eq!(h.row(0).trim_end(), "hello");
+}
+
+#[test]
+fn a_portals_content_unmounts_with_its_owner() {
+    let shown = state(true);
+    let mut h = Harness::new(8, 2, move || {
+        crate::view! {
+            box {
+                if shown.get() {
+                    box { portal { box { test_id: "tip", text("tip") } } }
+                },
+            }
+        }
+    });
+    let doc = h.document().clone();
+    let tip = h.find_attr("test_id", "tip").unwrap();
+
+    shown.set(false);
+    h.screen();
+    assert!(!doc.get_children(doc.root()).contains(&tip));
+    assert!(h.find_attr("test_id", "tip").is_none());
+}

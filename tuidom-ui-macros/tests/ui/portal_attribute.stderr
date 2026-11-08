@@ -1,0 +1,5 @@
+error: `portal` takes no attributes; put them on an element inside it
+ --> tests/ui/portal_attribute.rs:5:18
+  |
+5 |         portal { style: s, box {} }
+  |                  ^^^^^
