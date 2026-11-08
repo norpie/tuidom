@@ -123,6 +123,9 @@ overlay.position(Position::Absolute { x: 4, y: 2 });
 Offsets are **signed cells**, so negative values place a node above or left of its parent,
 and an absolute node may overflow its parent's bounds freely.
 
+**`Position::Anchored { anchor, x, y }`** removes it from flow and places it against where
+another node is drawn. See [anchored positioning](#anchored-positioning).
+
 There is no `fixed` or viewport-relative mode. Screen-root placement is expressed by
 parenting the node to the document root, which is already absolute in screen terms — a
 separate positioning mode would be a second way to say the same thing.
@@ -130,6 +133,55 @@ separate positioning mode would be a second way to say the same thing.
 Whatever the mode, **published rectangles are always screen-absolute.** Reading a node's
 layout never requires you to walk ancestors and accumulate offsets. The one thing a rect
 leaves out is scrolling, which [`screen_rect`](#reading-computed-layout) adds.
+
+## Anchored positioning
+
+A tooltip, dropdown, or popover belongs next to a node elsewhere in the tree, usually drawn
+over everything, so it is parented to the root rather than to the node it points at. Its
+offset from the root then depends on where that node ended up, scrolling included.
+`Position::Anchored` names the node and lets layout do the placing:
+
+```rust
+use tuidom::style::{AnchorAxis, AnchorEdge, Position};
+
+let mut tip = Style::new();
+tip.position(Position::Anchored {
+    anchor: field,
+    x: AnchorAxis::new(AnchorEdge::Start, AnchorEdge::Start),
+    y: AnchorAxis::new(AnchorEdge::End, AnchorEdge::Start).offset(1),
+});
+```
+
+Each axis lines one of the node's edges (`Start`, `Center`, or `End`) up with one of the
+anchor's, then adds a signed offset. The example puts the tip's top one row below the field's
+bottom, left edges aligned. Above the anchor is `anchor: Start, own: End`, which depends on
+the node's own height. That is why placement happens after taffy has sized it rather than
+being a plain offset. An uneven center rounds toward the start.
+
+The node is placed in the same layout pass as its anchor, from where the anchor is drawn:
+after every ancestor's scroll, so it follows a scroll in the same frame. That costs a layout
+pass per scroll while anchored nodes exist (see [scrolling](scrolling.md#layout-is-scroll-invariant)).
+It is sized as an absolute child of its own parent, and paints and clips as part of its
+parent's subtree, which is why it usually lives under the root.
+
+Its published `rect` is written so that its screen rect lands beside the anchor: inside a
+scrolled container of its own, the rect carries that scroll added back. Read
+[`screen_rect`](#reading-computed-layout) for where it draws.
+
+The node and its whole subtree are left out of the frame, with no layout, so nothing paints or
+hits them, when:
+
+- the anchor has no layout: removed, never attached, under `display: None`, or in another
+  document;
+- no cell of the anchor reaches the screen, for example when it is scrolled out of its
+  container. Otherwise a tooltip under the root would float over unrelated content;
+- anchors form a cycle, including a node anchored to its own descendant.
+
+Opacity does not hide an anchor here. An opacity change reaches no layout pass, so honoring it
+would leave the node showing or hidden until something unrelated relaid out.
+
+There is no flipping to the other side of the anchor at the terminal edge, and no sizing from
+the anchor, such as a dropdown matching its field's width.
 
 ## Borders take space
 
@@ -162,10 +214,10 @@ if let Some(view) = doc.get_node(node) {
 geometry yet — a node created and read in the same handler, before any frame, has `None`.
 
 The rect is where layout placed the node, before any scrolling. Scroll offsets are applied
-at paint time, so a scroll never reruns layout (see
+at paint time, so a scroll does not move layout (see
 [scrolling](scrolling.md#scroll-offset-is-runtime-state)), and a node inside a scrolled
-container keeps the same `rect` while it moves on screen. To place something next to the
-node as drawn, such as a tooltip, ask for its screen rect:
+container keeps the same `rect` while it moves on screen. To know where the node is drawn,
+ask for its screen rect:
 
 ```rust
 let on_screen = doc.screen_rect(node);   // Option<LayoutRect>
@@ -183,8 +235,9 @@ let shown = doc.visible_rect(node);      // Option<LayoutRect>
 That is the screen rect cut down by every ancestor that clips on an axis (`Scroll` or `Clip`,
 to its padding box) and by the terminal edge, which is what paint does. It is `None` when no
 cell of the node is drawn, which includes a zero-size node and one under an ancestor with
-`display: None` or zero opacity. A tooltip can hide on `None` and still place itself from the
-screen rect. Being painted over does not count: a node under a modal is still visible.
+`display: None` or zero opacity. Being painted over does not count: a node under a modal is
+still visible. To place a tooltip, prefer [anchored positioning](#anchored-positioning),
+which does both in the layout pass rather than a frame later.
 
 Rectangles may be negative or extend past the terminal. Layout does not clamp; clipping to
 the visible grid is a render concern.

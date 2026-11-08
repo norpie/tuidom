@@ -7,8 +7,7 @@ use crate::id::NodeId;
 use crate::layout::compute_layout as compute_document_layout;
 use crate::lock;
 use crate::node::{LayoutRect, LayoutView, NodeLayout, NodeView};
-use crate::paint_order::entry_at;
-use crate::render::grid::ClipRect;
+use crate::paint_order::{DrawContext, entry_at};
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{Display, Overflow};
 
@@ -113,41 +112,17 @@ impl Document {
                 .collect::<Option<Vec<_>>>()?
         };
 
-        let mut translation = (0, 0);
-        let mut clip = ClipRect::UNBOUNDED
-            .bound_x(0, i64::from(width))
-            .bound_y(0, i64::from(height));
-        for (&node, mut rect) in chain.iter().zip(rects).rev() {
+        let mut context = DrawContext::screen(width, height);
+        for (&node, rect) in chain.iter().zip(rects).rev() {
             let resolved = self.resolved_style_unlocked(node).ok()?;
             if resolved.display == Display::None || resolved.opacity <= 0.0 {
                 return None;
             }
-            rect.x -= translation.0;
-            rect.y -= translation.1;
+            let drawn = context.place(rect);
             if node == id {
-                return clip.visible_part(rect);
+                return context.clip.visible_part(drawn);
             }
-
-            let viewport = rect.padding_box(&resolved);
-            if resolved.overflow_x != Overflow::Visible {
-                clip = clip.bound_x(
-                    i64::from(viewport.x),
-                    i64::from(viewport.x) + i64::from(viewport.width),
-                );
-            }
-            if resolved.overflow_y != Overflow::Visible {
-                clip = clip.bound_y(
-                    i64::from(viewport.y),
-                    i64::from(viewport.y) + i64::from(viewport.height),
-                );
-            }
-            let offset = self.scroll_offset(node);
-            if resolved.overflow_x == Overflow::Scroll {
-                translation.0 += i32::from(offset.x);
-            }
-            if resolved.overflow_y == Overflow::Scroll {
-                translation.1 += i32::from(offset.y);
-            }
+            context = context.children_of(drawn, &resolved, || self.scroll_offset(node));
         }
         None
     }

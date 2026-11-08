@@ -46,6 +46,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Position::Absolute** — Node removed from flow and offset by signed cells from its parent's box origin. See [positioning](layout.md#positioning).
 
+**Position::Anchored** — Node removed from flow and placed against where another node, its anchor, is drawn, by lining up one edge per axis. Left out of the frame while the anchor is not on screen. See [anchored positioning](layout.md#anchored-positioning).
+
 ## Virtualization
 
 *Explained in [virtualization](virtualization.md).*

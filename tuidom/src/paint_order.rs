@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::document::Document;
 use crate::id::{NodeId, NodeSet};
 use crate::lock;
-use crate::node::{LayoutRect, NodeKindView};
+use crate::node::{LayoutRect, NodeKindView, ScrollOffset};
 use crate::render::grid::ClipRect;
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{Display, Overflow, ScrollbarShow};
@@ -42,6 +42,78 @@ pub(crate) struct ScrollbarPaint {
     pub alpha: f64,
 }
 
+/// How a node's layout rect maps to where it draws: shifted up and left by its scrolling
+/// ancestors' offsets, and bounded by its scrolling and clipping ancestors' padding boxes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DrawContext {
+    /// Cells subtracted from a layout rect's position.
+    pub translation: (i32, i32),
+    /// The bound on everything drawn in this context.
+    pub clip: ClipRect,
+}
+
+impl DrawContext {
+    /// The context the root draws in. The grid cuts at its own bounds.
+    pub const ROOT: Self = Self {
+        translation: (0, 0),
+        clip: ClipRect::UNBOUNDED,
+    };
+
+    /// The root's context bounded by the terminal, for asking what reaches the screen.
+    pub fn screen(width: u16, height: u16) -> Self {
+        Self {
+            clip: ClipRect::UNBOUNDED
+                .bound_x(0, i64::from(width))
+                .bound_y(0, i64::from(height)),
+            ..Self::ROOT
+        }
+    }
+
+    /// Where a node laid out at `rect` draws.
+    pub fn place(&self, rect: LayoutRect) -> LayoutRect {
+        LayoutRect {
+            x: rect.x.saturating_sub(self.translation.0),
+            y: rect.y.saturating_sub(self.translation.1),
+            ..rect
+        }
+    }
+
+    /// The context a node's children draw in, given where the node itself draws. A `Scroll`
+    /// axis shifts them by the node's offset, and a `Scroll` or `Clip` axis bounds them to
+    /// its padding box. `offset` is only called for a node that scrolls.
+    pub fn children_of(
+        self,
+        drawn: LayoutRect,
+        resolved: &ResolvedStyle,
+        offset: impl FnOnce() -> ScrollOffset,
+    ) -> Self {
+        let mut child = self;
+        let viewport = drawn.padding_box(resolved);
+        if resolved.overflow_x != Overflow::Visible {
+            child.clip = child.clip.bound_x(
+                i64::from(viewport.x),
+                i64::from(viewport.x) + i64::from(viewport.width),
+            );
+        }
+        if resolved.overflow_y != Overflow::Visible {
+            child.clip = child.clip.bound_y(
+                i64::from(viewport.y),
+                i64::from(viewport.y) + i64::from(viewport.height),
+            );
+        }
+        if resolved.overflow_x == Overflow::Scroll || resolved.overflow_y == Overflow::Scroll {
+            let offset = offset();
+            if resolved.overflow_x == Overflow::Scroll {
+                child.translation.0 += i32::from(offset.x);
+            }
+            if resolved.overflow_y == Overflow::Scroll {
+                child.translation.1 += i32::from(offset.y);
+            }
+        }
+        child
+    }
+}
+
 pub(crate) fn paint_order(doc: &Document) -> Vec<PaintEntry> {
     let mut entries = Vec::new();
     let focus_path = focused_path(doc);
@@ -49,8 +121,7 @@ pub(crate) fn paint_order(doc: &Document) -> Vec<PaintEntry> {
         doc,
         doc.root(),
         None,
-        (0, 0),
-        ClipRect::UNBOUNDED,
+        DrawContext::ROOT,
         &focus_path,
         &mut entries,
     );
@@ -113,47 +184,22 @@ fn collect_ordered_entries(
     doc: &Document,
     node_id: NodeId,
     resolved: Option<Arc<ResolvedStyle>>,
-    translation: (i32, i32),
-    clip: ClipRect,
+    context: DrawContext,
     focus_path: &NodeSet,
     entries: &mut Vec<PaintEntry>,
 ) {
     let Some(mut entry) = collect_entry(doc, node_id, resolved) else {
         return;
     };
-    entry.layout.x -= translation.0;
-    entry.layout.y -= translation.1;
-    entry.clip = clip;
+    entry.layout = context.place(entry.layout);
+    entry.clip = context.clip;
+    let clip = context.clip;
 
-    // Children paint in this node's context: a Scroll axis translates them by the scroll
-    // offset, and a Scroll or Clip axis bounds them to this node's padding box. Both are
-    // computed in translated space, since the node itself may sit inside another scroller.
-    let mut child_translation = translation;
-    let mut child_clip = clip;
+    // Children paint in this node's context, computed in translated space, since the node
+    // itself may sit inside another scroller.
+    let child_context =
+        context.children_of(entry.layout, &entry.resolved, || doc.scroll_offset(node_id));
     let viewport = entry.layout.padding_box(&entry.resolved);
-    if entry.resolved.overflow_x != Overflow::Visible {
-        child_clip = child_clip.bound_x(
-            i64::from(viewport.x),
-            i64::from(viewport.x) + i64::from(viewport.width),
-        );
-    }
-    if entry.resolved.overflow_y != Overflow::Visible {
-        child_clip = child_clip.bound_y(
-            i64::from(viewport.y),
-            i64::from(viewport.y) + i64::from(viewport.height),
-        );
-    }
-    if entry.resolved.overflow_x == Overflow::Scroll
-        || entry.resolved.overflow_y == Overflow::Scroll
-    {
-        let offset = doc.scroll_offset(node_id);
-        if entry.resolved.overflow_x == Overflow::Scroll {
-            child_translation.0 += i32::from(offset.x);
-        }
-        if entry.resolved.overflow_y == Overflow::Scroll {
-            child_translation.1 += i32::from(offset.y);
-        }
-    }
 
     // Culling: a node whose rect lies entirely outside its clip paints nothing, so it is
     // dropped from the entries — still in the DOM, never painted and never hit. Its
@@ -175,7 +221,7 @@ fn collect_ordered_entries(
         entries.push(entry);
     }
 
-    if !child_clip.is_empty() {
+    if !child_context.clip.is_empty() {
         let mut children = doc
             .get_children(node_id)
             .into_iter()
@@ -192,8 +238,7 @@ fn collect_ordered_entries(
                 doc,
                 child,
                 Some(resolved),
-                child_translation,
-                child_clip,
+                child_context,
                 focus_path,
                 entries,
             );

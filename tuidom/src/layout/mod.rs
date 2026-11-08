@@ -4,6 +4,8 @@
 //! layout through taffy, and stores absolute screen-space layout rectangles back
 //! onto DOM nodes.
 
+mod anchor;
+
 use std::collections::{HashMap, HashSet};
 
 use taffy::prelude::*;
@@ -16,6 +18,7 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::{LayoutRect, NodeKind, NodeLayout, ScrollOffset};
 use crate::style::resolution::ResolvedStyle;
+use anchor::Anchoring;
 // `Position` shadows `taffy::prelude::Position`; taffy's own positioning types are
 // referenced through `taffy::style::` below.
 use crate::style::{
@@ -34,9 +37,9 @@ pub(crate) struct LayoutEngine {
     reverse_mapping: HashMap<taffy::prelude::NodeId, NodeId>,
     /// Whether a layout input has changed since the last successful compute.
     ///
-    /// Every layout input reaches taffy through one of this type's mutating
+    /// Every layout input reaches the engine through one of this type's mutating
     /// methods, so marking there covers every DOM path by construction: a path
-    /// that failed to mark would be one that failed to tell taffy, and would
+    /// that failed to mark would be one that failed to tell the engine, and would
     /// already be broken. Marking is deliberately unconditional rather than
     /// compared against the previous value — a spurious mark costs one
     /// redundant pass, a missed one renders a stale frame.
@@ -44,6 +47,8 @@ pub(crate) struct LayoutEngine {
     /// Screen size at the last compute. It arrives as a `compute` argument
     /// rather than a mutation, so it is the one input `dirty` cannot see.
     last_dimensions: Option<(u16, u16)>,
+    /// Whether the published snapshot placed any anchored node.
+    has_anchored: bool,
 }
 
 // Taffy stores compact length values in tagged raw pointers, which prevents
@@ -68,6 +73,7 @@ impl LayoutEngine {
             // Nothing has been computed yet, so the first pass must run.
             dirty: true,
             last_dimensions: None,
+            has_anchored: false,
         }
     }
 
@@ -78,6 +84,14 @@ impl LayoutEngine {
     /// snapshot, so the caller can keep the one it has.
     pub fn needs_compute(&self, screen_width: u16, screen_height: u16) -> bool {
         self.dirty || self.last_dimensions != Some((screen_width, screen_height))
+    }
+
+    /// Note that a scroll offset changed. An anchored node is placed from the scroll offsets
+    /// above it and above its anchor, so while one exists a scroll needs a layout pass.
+    pub fn scrolled(&mut self) {
+        if self.has_anchored {
+            self.dirty = true;
+        }
     }
 
     /// The screen size the published snapshot was computed for.
@@ -350,8 +364,16 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
 
         let mut visible = HashSet::new();
         let mut visible_children = HashMap::new();
-        collect_visible_tree(doc, root, &mut visible, &mut visible_children)?;
+        let mut anchored = Vec::new();
+        collect_visible_tree(
+            doc,
+            root,
+            &mut visible,
+            &mut visible_children,
+            &mut anchored,
+        )?;
         span.record("nodes", visible.len());
+        let anchoring = Anchoring::collect(doc, &anchored, &visible)?;
 
         let mut engine = lock::mutex(&doc.inner.layout);
         let layouts = if visible.contains(&root) {
@@ -381,6 +403,15 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
                 }
             }
         }
+
+        // After the re-clamp, so anchored nodes are placed with the offsets this frame draws.
+        anchoring.place(
+            &mut layout_snapshot,
+            &visible_children,
+            &scroll_offsets,
+            (screen_width, screen_height),
+        );
+        engine.has_anchored = !anchoring.is_empty();
         reclamped
     };
 
@@ -398,6 +429,7 @@ fn collect_visible_tree(
     node_id: NodeId,
     visible: &mut HashSet<NodeId>,
     visible_children: &mut HashMap<NodeId, Vec<NodeId>>,
+    anchored: &mut Vec<NodeId>,
 ) -> Result<()> {
     let resolved = doc.resolved_style_unlocked(node_id)?;
     if resolved.display == Display::None {
@@ -405,6 +437,9 @@ fn collect_visible_tree(
     }
 
     visible.insert(node_id);
+    if matches!(resolved.position, Position::Anchored { .. }) {
+        anchored.push(node_id);
+    }
 
     let mut children = Vec::new();
     for child in doc.get_children_unlocked(node_id) {
@@ -417,7 +452,7 @@ fn collect_visible_tree(
     visible_children.insert(node_id, children.clone());
 
     for child in children {
-        collect_visible_tree(doc, child, visible, visible_children)?;
+        collect_visible_tree(doc, child, visible, visible_children, anchored)?;
     }
 
     Ok(())
@@ -544,22 +579,25 @@ fn to_taffy_overflow(overflow: Overflow) -> taffy::style::Overflow {
 fn to_taffy_position(position: Position) -> taffy::style::Position {
     match position {
         Position::Flow => taffy::style::Position::Relative,
-        Position::Absolute { .. } => taffy::style::Position::Absolute,
+        Position::Absolute { .. } | Position::Anchored { .. } => taffy::style::Position::Absolute,
     }
 }
 
-/// Absolute offsets are anchored from the parent's top-left, so only `left`/`top`
+/// Absolute offsets are measured from the parent's top-left, so only `left`/`top`
 /// are set. Leaving `right`/`bottom` auto keeps the node sized by its own style
-/// rather than stretched between opposing insets.
+/// rather than stretched between opposing insets. An anchored node is laid out at the
+/// parent's origin and moved once its anchor is placed.
 fn to_taffy_inset(position: Position) -> Rect<LengthPercentageAuto> {
-    match position {
-        Position::Flow => Rect::auto(),
-        Position::Absolute { x, y } => Rect {
-            left: LengthPercentageAuto::length(x as f32),
-            top: LengthPercentageAuto::length(y as f32),
-            right: LengthPercentageAuto::auto(),
-            bottom: LengthPercentageAuto::auto(),
-        },
+    let (x, y) = match position {
+        Position::Flow => return Rect::auto(),
+        Position::Absolute { x, y } => (x, y),
+        Position::Anchored { .. } => (0, 0),
+    };
+    Rect {
+        left: LengthPercentageAuto::length(x as f32),
+        top: LengthPercentageAuto::length(y as f32),
+        right: LengthPercentageAuto::auto(),
+        bottom: LengthPercentageAuto::auto(),
     }
 }
 

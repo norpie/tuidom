@@ -122,6 +122,7 @@ impl Document {
             offsets.insert(node, clamped);
         }
         drop(offsets);
+        lock::mutex(&self.inner.layout).scrolled();
 
         if resolved.scrollbar_show == ScrollbarShow::WhenScrolling {
             self.record_scroll_activity(node);

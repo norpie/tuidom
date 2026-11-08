@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,9 +17,9 @@ use crate::paint_order::paint_order;
 use crate::performance::PerformanceDetail;
 use crate::render::grid::ClipRect;
 use crate::style::{
-    AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
-    EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, ResolvedColor,
-    ScrollbarShow, Sides, Style, StyleValue,
+    AlignContent, AlignItems, AlignSelf, AnchorAxis, AnchorEdge, Border, BorderCharset, Color,
+    CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position,
+    ResolvedColor, ScrollbarShow, Sides, Style, StyleValue,
 };
 use crate::virtualize::Virtualizer;
 
@@ -4283,6 +4284,304 @@ fn document_root_defaults_to_full_viewport_size() {
     assert_eq!(root_style.height, Length::Percent(100.0));
     assert_eq!(normal_style.width, Length::Auto);
     assert_eq!(normal_style.height, Length::Auto);
+}
+
+// ---------------------------------------------------------------------------
+// Anchored positioning
+// ---------------------------------------------------------------------------
+
+fn anchored_to(anchor: NodeId, x: AnchorAxis, y: AnchorAxis) -> Style {
+    let mut style = Style::new();
+    style.position(Position::Anchored { anchor, x, y });
+    style
+}
+
+/// Right of the anchor, top edges aligned.
+fn beside(anchor: NodeId) -> Style {
+    anchored_to(
+        anchor,
+        AnchorAxis::new(AnchorEdge::End, AnchorEdge::Start),
+        AnchorAxis::new(AnchorEdge::Start, AnchorEdge::Start),
+    )
+}
+
+/// Under the anchor, left edges aligned.
+fn below(anchor: NodeId) -> Style {
+    anchored_to(
+        anchor,
+        AnchorAxis::new(AnchorEdge::Start, AnchorEdge::Start),
+        AnchorAxis::new(AnchorEdge::End, AnchorEdge::Start),
+    )
+}
+
+fn add_text(doc: &Document, parent: NodeId, text: &str, style: &Style) -> NodeId {
+    let node = doc.create_text(text).unwrap();
+    doc.set_style(node, style).unwrap();
+    doc.append_child(parent, node).unwrap();
+    node
+}
+
+fn text_at(runtime: &HeadlessRuntime, x: Range<i32>, y: i32) -> String {
+    x.map(|x| runtime.get_cell(x, y).unwrap().text).collect()
+}
+
+fn has_layout(doc: &Document, node: NodeId) -> bool {
+    doc.get_node(node).is_some_and(|view| view.layout.is_some())
+}
+
+#[test]
+fn an_anchored_node_draws_beside_its_anchor_and_follows_a_scroll_in_the_same_frame() {
+    let (doc, container, lines) = scrolling_column();
+    let tip = add_text(&doc, doc.root(), "tip", &beside(lines[1]));
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    let placed = LayoutRect {
+        x: 5,
+        y: 1,
+        width: 3,
+        height: 1,
+    };
+    assert_eq!(rect_of(&doc, tip), placed);
+    assert_eq!(text_at(&runtime, 5..8, 1), "tip");
+    assert_eq!(doc.node_at(6, 1), Some(tip));
+    assert_eq!(doc.visible_rect(tip), Some(placed));
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(rect_of(&doc, tip), LayoutRect { y: 0, ..placed });
+    assert_eq!(text_at(&runtime, 5..8, 0), "tip");
+}
+
+#[test]
+fn anchor_edges_line_up_on_each_axis() {
+    let doc = Document::new().unwrap();
+    let anchor = doc.create_box().unwrap();
+    let mut anchor_style = Style::new();
+    anchor_style.position(Position::Absolute { x: 10, y: 5 });
+    anchor_style.width(Length::Cells(6));
+    anchor_style.height(Length::Cells(3));
+    doc.set_style(anchor, &anchor_style).unwrap();
+    doc.append_child(doc.root(), anchor).unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    use AnchorEdge::{Center, End, Start};
+    let cases = [
+        // Below, left edges aligned.
+        ((Start, Start, 0), (End, Start, 0), (10, 8)),
+        // Above, right edges aligned.
+        ((End, End, 0), (Start, End, 0), (13, 3)),
+        // Centered on both axes: 11.5 and 5.5 round toward the start.
+        ((Center, Center, 0), (Center, Center, 0), (11, 5)),
+        // Offsets apply after lining up.
+        ((End, Start, 1), (Start, Start, -1), (17, 4)),
+    ];
+    for ((xa, xo, dx), (ya, yo, dy), expected) in cases {
+        let mut style = anchored_to(
+            anchor,
+            AnchorAxis::new(xa, xo).offset(dx),
+            AnchorAxis::new(ya, yo).offset(dy),
+        );
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(2));
+        doc.set_style(node, &style).unwrap();
+        doc.compute_layout(30, 12).unwrap();
+
+        let rect = rect_of(&doc, node);
+        assert_eq!(
+            (rect.x, rect.y),
+            expected,
+            "x {xa:?}/{xo:?}, y {ya:?}/{yo:?}"
+        );
+        assert_eq!((rect.width, rect.height), (3, 2));
+    }
+}
+
+#[test]
+fn an_anchored_nodes_subtree_moves_with_it() {
+    let (doc, _, lines) = scrolling_column();
+    let tip = doc.create_box().unwrap();
+    let mut style = below(lines[1]);
+    style.padding(EdgeInsets::all(1));
+    doc.set_style(tip, &style).unwrap();
+    doc.append_child(doc.root(), tip).unwrap();
+    let label = add_text(&doc, tip, "hi", &Style::new());
+    doc.compute_layout(10, 4).unwrap();
+
+    let tip_rect = rect_of(&doc, tip);
+    assert_eq!((tip_rect.x, tip_rect.y), (0, 2));
+    let label_rect = rect_of(&doc, label);
+    assert_eq!((label_rect.x, label_rect.y), (1, 3));
+}
+
+#[test]
+fn an_anchored_node_inside_a_scroller_lands_beside_an_anchor_in_another() {
+    let (doc, outer, inner, inner_lines) = scroller_in_a_scroller();
+    let tip = add_text(&doc, outer, "tip", &beside(inner_lines[3]));
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+
+    // Both offsets move the anchor; only the outer one moves the tip's own context.
+    for (outer_y, inner_y, row) in [(0, 2, 1), (1, 2, 0), (0, 3, 0)] {
+        doc.scroll_to(outer, 0, outer_y).unwrap();
+        doc.scroll_to(inner, 0, inner_y).unwrap();
+        runtime.render().unwrap();
+
+        let anchor = doc.screen_rect(inner_lines[3]).unwrap();
+        assert_eq!(anchor.y, row);
+        let x = anchor.x + i32::from(anchor.width);
+        assert_eq!(
+            doc.screen_rect(tip),
+            Some(LayoutRect {
+                x,
+                y: row,
+                width: 3,
+                height: 1,
+            }),
+            "outer {outer_y}, inner {inner_y}"
+        );
+        assert_eq!(text_at(&runtime, x..x + 3, row), "tip");
+    }
+}
+
+#[test]
+fn an_anchor_scrolled_out_of_view_hides_its_anchored_node() {
+    let (doc, container, lines) = scrolling_column();
+    let tip = doc.create_box().unwrap();
+    doc.set_style(tip, &beside(lines[1])).unwrap();
+    doc.append_child(doc.root(), tip).unwrap();
+    let label = add_text(&doc, tip, "tip", &Style::new());
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+    assert!(has_layout(&doc, tip));
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    runtime.render().unwrap();
+    assert!(!has_layout(&doc, tip));
+    assert!(!has_layout(&doc, label));
+    assert_eq!(doc.visible_rect(tip), None);
+    assert_eq!(text_at(&runtime, 5..8, 1), "   ");
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(rect_of(&doc, label).y, 0);
+}
+
+#[test]
+fn an_anchored_node_without_a_laid_out_anchor_is_left_out() {
+    let (doc, container, lines) = scrolling_column();
+    let tip = doc.create_box().unwrap();
+    doc.append_child(doc.root(), tip).unwrap();
+    let label = add_text(&doc, tip, "tip", &Style::new());
+    let place_against = |anchor| {
+        doc.set_style(tip, &beside(anchor)).unwrap();
+        doc.compute_layout(10, 4).unwrap();
+        has_layout(&doc, tip) && has_layout(&doc, label)
+    };
+
+    assert!(place_against(lines[0]));
+
+    let detached = doc.create_box().unwrap();
+    assert!(!place_against(detached));
+
+    let elsewhere = Document::new().unwrap();
+    elsewhere.compute_layout(10, 4).unwrap();
+    assert!(!place_against(elsewhere.root()));
+
+    let mut hidden = Style::new();
+    hidden.display(Display::None);
+    doc.set_style(lines[1], &hidden).unwrap();
+    assert!(!place_against(lines[1]));
+
+    doc.remove_child(container, lines[2]).unwrap();
+    assert!(!place_against(lines[2]));
+
+    // Opacity changes reach no layout pass, so they cannot hide the node either.
+    let mut transparent = Style::new();
+    transparent.opacity(0.0);
+    doc.set_style(lines[3], &transparent).unwrap();
+    assert!(place_against(lines[3]));
+}
+
+#[test]
+fn anchors_in_a_cycle_are_left_out() {
+    let (doc, _, lines) = scrolling_column();
+    let a = doc.create_box().unwrap();
+    let b = doc.create_box().unwrap();
+    doc.append_child(doc.root(), a).unwrap();
+    doc.append_child(doc.root(), b).unwrap();
+    doc.set_style(a, &beside(b)).unwrap();
+    doc.set_style(b, &beside(a)).unwrap();
+
+    let parent = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    let child = add_text(&doc, parent, "child", &Style::new());
+    doc.set_style(parent, &below(child)).unwrap();
+
+    let unrelated = add_text(&doc, doc.root(), "tip", &beside(lines[0]));
+    doc.compute_layout(10, 4).unwrap();
+
+    for node in [a, b, parent, child] {
+        assert!(!has_layout(&doc, node), "{node:?}");
+    }
+    assert!(has_layout(&doc, unrelated));
+}
+
+#[test]
+fn a_node_anchored_into_another_anchored_subtree_follows_it() {
+    let (doc, _, lines) = scrolling_column();
+    // Earlier in the tree than what it depends on, so placement cannot go in tree order.
+    let under = doc.create_text("v").unwrap();
+    doc.append_child(doc.root(), under).unwrap();
+
+    let tip = doc.create_box().unwrap();
+    doc.set_style(tip, &beside(lines[1])).unwrap();
+    doc.append_child(doc.root(), tip).unwrap();
+    let label = add_text(&doc, tip, "tip", &Style::new());
+    doc.set_style(under, &below(label)).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+
+    let label_rect = rect_of(&doc, label);
+    assert_eq!((label_rect.x, label_rect.y), (5, 1));
+    let under_rect = rect_of(&doc, under);
+    assert_eq!((under_rect.x, under_rect.y), (5, 2));
+}
+
+#[test]
+fn an_anchored_node_is_placed_with_the_offset_a_relayout_clamps_to() {
+    let (doc, container, lines) = scrolling_column();
+    let tip = add_text(&doc, doc.root(), "tip", &beside(lines[7]));
+    doc.compute_layout(10, 4).unwrap();
+    doc.scroll_to(container, 0, 4).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(rect_of(&doc, tip).y, 3);
+
+    // Six rows left: the offset clamps from 4 to 2, and line7 draws on row 3.
+    for line in &lines[..2] {
+        doc.remove_child(container, *line).unwrap();
+    }
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(doc.scroll_offset(container).y, 2);
+    assert_eq!(rect_of(&doc, tip).y, 3);
+}
+
+#[test]
+fn a_scroll_reruns_layout_only_while_an_anchored_node_exists() {
+    let (doc, container, lines) = scrolling_column();
+    let needs_layout = || lock::mutex(&doc.inner.layout).needs_compute(10, 4);
+
+    doc.scroll_to(container, 0, 1).unwrap();
+    assert!(!needs_layout());
+
+    let tip = add_text(&doc, doc.root(), "tip", &beside(lines[3]));
+    doc.compute_layout(10, 4).unwrap();
+    doc.scroll_to(container, 0, 2).unwrap();
+    assert!(needs_layout());
+
+    doc.remove_child(doc.root(), tip).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    doc.scroll_to(container, 0, 3).unwrap();
+    assert!(!needs_layout());
 }
 
 // -- Style resolution tests ---------------------------------------

@@ -1,7 +1,7 @@
 # Scrolling
 
-Scrolling in tuidom is deliberately cheap: a wheel tick never re-runs layout. Everything
-below follows from that one decision.
+Scrolling in tuidom is deliberately cheap: a wheel tick never re-runs layout, unless an
+anchored node exists. Everything below follows from that one decision.
 
 Terms in **bold** are defined in the [glossary](GLOSSARY.md#layout--positioning).
 
@@ -66,6 +66,11 @@ the container's descendants.
 That is why a wheel tick is nearly free, and why scroll offsets can be clamped against a
 layout pass that ran before the scroll happened — the geometry has not moved, only the
 window onto it.
+
+The exception is an [anchored](layout.md#anchored-positioning) node, which is placed from
+where its anchor is drawn, scrolling included. While one exists anywhere in the document, a
+scroll marks layout dirty and the next frame runs a full pass, so the node moves in the same
+frame as its anchor. Remove the anchored node and scrolling is back to paint only.
 
 ## The scrollport
 

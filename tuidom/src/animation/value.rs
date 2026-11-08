@@ -129,7 +129,7 @@ pub(crate) fn extract_animated_value(
                 x: f64::from(x),
                 y: f64::from(y),
             }),
-            Position::Flow => None,
+            Position::Flow | Position::Anchored { .. } => None,
         },
         TransitionProperty::Width => length_value(resolved.width),
         TransitionProperty::Height => length_value(resolved.height),

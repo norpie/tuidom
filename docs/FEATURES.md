@@ -172,6 +172,9 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Positioning modes:
   - [x] `Position::Flow` (default) — normal flexbox layout
   - [x] `Position::Absolute { x, y }` — signed cell offset from the parent's box origin, removed from flow
+  - [x] `Position::Anchored { anchor, x, y }` — placed against where another node is drawn, edge to edge per axis, in the same layout pass
+    - [x] Follows the anchor's scrolling in the same frame; a scroll reruns layout only while an anchored node exists
+    - [x] Left out of the frame, subtree included, when the anchor has no layout, is clipped out entirely, or anchors form a cycle
 - [x] Centering helpers (terminal cells are discrete — can't always center perfectly):
   - [x] `center_x()` / `center_y()` — returns `Centered::Even(x)` or `Centered::Uneven { low, high }` when margins differ by 1
   - [x] `any_center_x()` / `any_center_y()` — returns single coordinate (left/top-biased) when you don't care about off-by-one

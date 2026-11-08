@@ -12,6 +12,8 @@ pub mod scrollbar;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::id::NodeId;
+
 pub use border::{Border, BorderCharset, Sides};
 pub use color::{Color, ColorOp, ResolvedColor};
 pub use resolution::ResolvedStyle;
@@ -269,9 +271,10 @@ pub enum JustifyContent {
 ///
 /// Absolute offsets are parent-relative rather than screen-relative: place a node
 /// at screen coordinates by making it a child of the root, whose origin is `(0, 0)`.
-/// This keeps anchoring (badges, tooltips, dropdowns) working across reflow without
-/// downstream recomputation, and matches the paint model, where a descendant's
-/// `z_index` cannot escape its parent subtree.
+/// This keeps a badge on its parent across reflow without downstream recomputation, and
+/// matches the paint model, where a descendant's `z_index` cannot escape its parent
+/// subtree. To follow a node elsewhere in the tree, such as a tooltip's target, use
+/// [`Anchored`](Self::Anchored).
 ///
 /// Published layout rectangles are screen-absolute regardless of positioning mode.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -289,6 +292,72 @@ pub enum Position {
         /// Vertical offset from the parent's box origin.
         y: i32,
     },
+    /// Remove the node from flow and place it against where another node is drawn.
+    ///
+    /// The placement uses the anchor's drawn position, its ancestors' scrolling included,
+    /// and is resolved in the same layout pass, so the node follows the anchor without a
+    /// frame of lag. The
+    /// node is sized as an absolute child of its own parent, and is still painted and
+    /// clipped as part of its parent's subtree: parent it to the root to draw it over
+    /// everything.
+    ///
+    /// The node and its subtree are left out of the frame, with no layout, while the
+    /// anchor has none (removed, hidden, or in another document), while no cell of the
+    /// anchor reaches the screen, and when anchors form a cycle. Opacity does not hide an
+    /// anchor here.
+    Anchored {
+        /// The node to place against.
+        anchor: NodeId,
+        /// Horizontal placement.
+        x: AnchorAxis,
+        /// Vertical placement.
+        y: AnchorAxis,
+    },
+}
+
+/// Placement on one axis of a [`Position::Anchored`] node: the node's `own` edge lines up
+/// with the anchor's `anchor` edge, then moves by `offset` cells.
+///
+/// Below an anchor is `anchor: End, own: Start` on the vertical axis; above it is
+/// `anchor: Start, own: End`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnchorAxis {
+    /// The edge of the anchor to line up with.
+    pub anchor: AnchorEdge,
+    /// The edge of the anchored node that lines up.
+    pub own: AnchorEdge,
+    /// Signed cells added after lining up.
+    pub offset: i32,
+}
+
+impl AnchorAxis {
+    /// Line `own` up with `anchor`, with no offset.
+    pub fn new(anchor: AnchorEdge, own: AnchorEdge) -> Self {
+        Self {
+            anchor,
+            own,
+            offset: 0,
+        }
+    }
+
+    /// Move the placement by `offset` cells.
+    pub fn offset(self, offset: i32) -> Self {
+        Self { offset, ..self }
+    }
+}
+
+/// An edge or the middle of a box on one axis: left, center, or right horizontally, and
+/// top, center, or bottom vertically.
+///
+/// When centering cannot be exact in whole cells, the node sits one cell toward the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorEdge {
+    /// The left or top edge.
+    Start,
+    /// The middle.
+    Center,
+    /// The right or bottom edge.
+    End,
 }
 
 // ---------------------------------------------------------------------------
