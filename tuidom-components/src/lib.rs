@@ -14,6 +14,7 @@ mod panel;
 mod radio_group;
 mod select;
 mod slider;
+mod tabs;
 #[cfg(test)]
 mod test_support;
 mod text_input;
@@ -27,6 +28,7 @@ pub use panel::{Panel, PanelProps};
 pub use radio_group::{RadioGroup, RadioGroupProps};
 pub use select::{Select, SelectProps};
 pub use slider::{Slider, SliderProps};
+pub use tabs::{Tabs, TabsProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
