@@ -5,6 +5,7 @@
 //! Enter / Space     — press a button, toggle a checkbox, open or pick in a select
 //! Arrows            — move a radio selection, a slider, a select's highlight, or a split
 //! Mouse drag        — move the split's divider
+//! Click a toast     — dismiss it
 //! t                 — switch between the dark and light themes (outside a text field)
 //! q                 — quit (outside a text field)
 
@@ -13,11 +14,13 @@ use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Style};
 use tuidom_components::{
     Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Divider, DividerProps, Label,
-    LabelProps, LabelTone, Modal, ModalProps, Orientation, Panel, PanelProps, RadioGroup,
-    RadioGroupProps, Scrollable, ScrollableProps, Select, SelectProps, Slider, SliderProps, Split,
-    SplitProps, Tabs, TabsProps, TextInput, TextInputProps, Theme, install_theme,
+    LabelProps, LabelTone, Modal, ModalProps, Orientation, Panel, PanelProps, ProgressBar,
+    ProgressBarProps, RadioGroup, RadioGroupProps, Scrollable, ScrollableProps, Select,
+    SelectProps, Side, Slider, SliderProps, Spinner, SpinnerProps, Split, SplitProps, Tabs,
+    TabsProps, TextInput, TextInputProps, Theme, Toast, Toaster, ToasterProps, Tone, Tooltip,
+    TooltipProps, install_theme, use_toaster,
 };
-use tuidom_ui::{App, Signal, View, state, use_document, view};
+use tuidom_ui::{App, Signal, View, component, state, use_document, view};
 
 fn page() -> Style {
     let mut style = Style::new();
@@ -82,7 +85,7 @@ fn heading() -> Style {
 }
 
 fn sections() -> Vec<String> {
-    ["Buttons", "Inputs", "Containers", "Labels"]
+    ["Buttons", "Inputs", "Containers", "Feedback", "Labels"]
         .map(String::from)
         .to_vec()
 }
@@ -239,6 +242,54 @@ fn containers(ratio: Signal<f64>, modal: Signal<bool>) -> View {
     }
 }
 
+/// Shows a toast in `tone` from a button.
+fn toast_button(label: &'static str, tone: Tone) -> View {
+    let toaster = use_toaster();
+    let title = format!("{label} toast");
+    view! {
+        Button {
+            label: label.to_string(),
+            variant: ButtonVariant::Outline,
+            on_press: move |_| {
+                if let Some(toaster) = toaster {
+                    toaster.show(Toast {
+                        title: title.clone(),
+                        description: "Click it, or wait four seconds".to_string(),
+                        tone,
+                    });
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn Feedback(progress: Signal<f64>) -> View {
+    view! {
+        box {
+            style: section(),
+            Spinner { label: "Working".to_string() },
+            Slider { value: progress, step: 5.0, style: sized(40) },
+            ProgressBar { value: progress.get() / 100.0, style: sized(40) },
+            ProgressBar { value: progress.get() / 100.0, tone: Tone::Success, style: sized(40) },
+            ProgressBar { value: progress.get() / 100.0, tone: Tone::Warning, style: sized(40) },
+            ProgressBar { value: progress.get() / 100.0, tone: Tone::Destructive, style: sized(40) },
+            box {
+                style: row(),
+                { toast_button("Default", Tone::Default) },
+                { toast_button("Success", Tone::Success) },
+                { toast_button("Warning", Tone::Warning) },
+                { toast_button("Destructive", Tone::Destructive) },
+                Tooltip {
+                    text: "Shown while focused or hovered".to_string(),
+                    side: Side::Below,
+                    Button { label: "Tooltip".to_string(), variant: ButtonVariant::Ghost },
+                },
+            },
+        }
+    }
+}
+
 fn labels() -> View {
     view! {
         box {
@@ -269,6 +320,7 @@ async fn main() -> std::io::Result<()> {
             volume: state(40.0),
         };
         let ratio = state(0.4);
+        let progress = state(60.0);
         let modal = state(false);
 
         let doc = use_document().expect("an App body has a document");
@@ -294,6 +346,7 @@ async fn main() -> std::io::Result<()> {
         .expect("registering the key handler");
 
         view! {
+            Toaster {
             box {
                 style: page(),
                 Label { text: "tuidom-components".to_string(), style: heading() },
@@ -311,9 +364,11 @@ async fn main() -> std::io::Result<()> {
                         0 => { buttons(last) },
                         1 => { inputs(fields) },
                         2 => { containers(ratio, modal) },
+                        3 => Feedback { progress: progress },
                         _ => { labels() },
                     }
                 },
+            }
             }
         }
     })
