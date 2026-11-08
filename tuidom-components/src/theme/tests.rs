@@ -6,13 +6,7 @@ use tuidom_ui::testing::Harness;
 use tuidom_ui::{Signal, View, component, view};
 
 use super::*;
-
-fn literal(color: &Color) -> ResolvedColor {
-    match color {
-        Color::Literal(resolved) => *resolved,
-        other => panic!("palette color is not a literal: {other:?}"),
-    }
-}
+use crate::test_support::literal;
 
 fn filled(var: &str) -> Style {
     let mut style = Style::new();

@@ -5,6 +5,8 @@
 #![warn(missing_docs)]
 
 mod button;
+#[cfg(test)]
+mod test_support;
 mod theme;
 
 pub use button::{Button, ButtonProps, ButtonVariant};

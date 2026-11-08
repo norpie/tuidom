@@ -5,14 +5,8 @@ use tuidom_ui::testing::Harness;
 use tuidom_ui::{Signal, state, view};
 
 use super::*;
+use crate::test_support::literal;
 use crate::theme::{Palette, Theme, install_theme};
-
-fn literal(color: &Color) -> ResolvedColor {
-    match color {
-        Color::Literal(resolved) => *resolved,
-        other => panic!("palette color is not a literal: {other:?}"),
-    }
-}
 
 fn shaped(surface: Surface, focus: FocusMark) -> Theme {
     Theme {
