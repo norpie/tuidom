@@ -4,8 +4,8 @@
 //! A [`View`] is inert until [`mount`]ed under a parent `NodeId`. Mounting opens an owner
 //! [`Scope`], and every node, binding effect, and listener created during the mount is owned
 //! by it — so [`Mounted::unmount`] tears the whole subtree down by disposing that
-//! one scope. This is the F2→engine bridge: reads inside a binding subscribe through the
-//! runtime, and a signal change reruns only that binding's effect.
+//! one scope. This module connects the signal runtime to the engine: reads inside a binding
+//! subscribe through the runtime, and a signal change reruns only that binding's effect.
 //!
 //! # Static and reactive alike
 //!

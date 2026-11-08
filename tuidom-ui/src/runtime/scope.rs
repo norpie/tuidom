@@ -121,7 +121,7 @@ impl Default for Scope {
 /// Provide a value to the current scope's descendants, so any of them can [`use_context`] it
 /// without a prop threaded through every layer in between.
 ///
-/// The value is keyed by its concrete type `T` (D3) — you provide a `Theme` and inject a
+/// The value is keyed by its concrete type `T` — you provide a `Theme` and inject a
 /// `Theme` — so a scope holds at most one value per type. Providing the same type again in a
 /// nested scope *shadows* the outer one for that subtree, standard context semantics. The value
 /// is dropped when its scope is disposed, living exactly as long as the subtree that owns it.

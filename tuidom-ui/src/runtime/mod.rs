@@ -99,7 +99,7 @@ struct ScopeData {
     nodes: Vec<SlotId>,
     cleanups: Vec<Box<dyn FnOnce() + Send + Sync>>,
     tasks: Vec<JoinHandle<()>>,
-    /// Values provided to this scope's descendants, keyed by their concrete type (D3). A
+    /// Values provided to this scope's descendants, keyed by their concrete type. A
     /// descendant injects one by walking parent scopes to the nearest provider of that type.
     /// Dropped with the scope, so a provided value lives exactly as long as the subtree.
     contexts: HashMap<TypeId, BoxAny>,

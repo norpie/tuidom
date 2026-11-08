@@ -127,9 +127,8 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// # Props are signals
 ///
 /// Every parameter surfaces inside the body as a [`Signal`] of its declared type, not the plain
-/// value. This is deliberate: a later milestone keeps a component's layout mounted across prop
-/// changes rather than re-running its body, so a prop holding a plain value would render the one
-/// it was first given forever. As a signal, a prop change reruns only the bindings that read it.
+/// value. This is deliberate: a component's body runs once and its layout stays mounted across
+/// prop changes, so a prop holding a plain value would render the one it was first given forever. As a signal, a prop change reruns only the bindings that read it.
 ///
 /// At the call site `view!` decides how each prop value flows in by its **syntax**: a literal
 /// (`start: 0`) seeds the signal once; any other expression (`start: base.get()`) stays synced to
@@ -694,7 +693,7 @@ impl Parse for Node {
                 let body;
                 braced!(body in input);
                 // Component props are not engine events, so `on_*` names are not validated here —
-                // a callback prop like `on_press` is legitimate (F5 step 5).
+                // a callback prop like `on_press` is legitimate.
                 let (props, children) = parse_body(&body, false)?;
                 // Children are passed as body nodes, which the lowering hands to the `children`
                 // prop. A `children:` attribute would be the same thing spelled two ways, so reject
