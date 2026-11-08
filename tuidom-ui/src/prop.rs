@@ -2,7 +2,8 @@
 //!
 //! The call site cannot see a prop's type, so it hands every non-literal, non-closure value over as
 //! `move || expr` and lets the setter's parameter type pick the conversion: a signal prop stays
-//! synced to the expression, a raw prop takes its value once.
+//! synced to the expression, a raw prop takes its value once, and a bound prop takes the caller's
+//! signal itself.
 
 use crate::{Callback, NodeRef, Signal, effect, state};
 
@@ -27,6 +28,18 @@ where
         let prop = state(f());
         effect(move || prop.set(f()));
         prop
+    }
+}
+
+/// What the setter of a `Signal<T>` parameter takes: the caller's own signal, passed through.
+///
+/// A separate type because `Signal<T>` already converts from a closure producing `T`, and a second
+/// conversion from a closure producing `Signal<T>` would overlap it.
+pub struct Bound<T: 'static>(pub Signal<T>);
+
+impl<T: 'static, F: FnOnce() -> Signal<T>> FromPropExpr<F> for Bound<T> {
+    fn from_prop_expr(f: F) -> Self {
+        Bound(f())
     }
 }
 

@@ -132,7 +132,7 @@ pub fn view(input: TokenStream) -> TokenStream {
 ///
 /// # Props are signals
 ///
-/// Every parameter surfaces inside the body as a [`Signal`] of its declared type, not the plain
+/// Every ordinary parameter surfaces inside the body as a [`Signal`] of its declared type, not the plain
 /// value. This is deliberate: a component's body runs once and its layout stays mounted across
 /// prop changes, so a prop holding a plain value would render the one it was first given forever. As a signal, a prop change reruns only the bindings that read it.
 ///
@@ -172,6 +172,24 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// lowers a closure-valued prop to it automatically. A callback is required unless
 /// `#[prop(default)]` gives it the no-op default. A callback already built (`on_x: handler`, with
 /// `handler` a `Callback`) passes through as it is.
+///
+/// # Bound signal props
+///
+/// A parameter declared `Signal<T>` takes the caller's own signal rather than a signal synced from
+/// it, so the component can write a value back: an input field updating the string its caller
+/// holds. It is stored raw, the caller passes the signal by name (`value: name`), and both sides
+/// see every write. `#[prop(default = state(..))]` gives the component a signal of its own when
+/// the caller passes none.
+///
+/// ```ignore
+/// #[component]
+/// fn Toggle(on: Signal<bool>) -> View {
+///     view! { box { focusable: true, on_click: move || on.update(|v| *v = !*v) } }
+/// }
+///
+/// let dark = state(false);
+/// let ui = view! { Toggle { on: dark } };
+/// ```
 ///
 /// # Node ref props
 ///
@@ -223,6 +241,9 @@ struct PropSpec {
     /// The full field type the prop is stored and set as: `Signal<T>` for an ordinary prop, or the
     /// raw declared type for a special prop like `children: Children`.
     field_ty: TokenStream2,
+    /// What the setter takes, when that differs from `field_ty`: a declared `Signal<T>` is set
+    /// through `Bound<T>` and unwrapped.
+    bound: Option<TokenStream2>,
     /// `None` for a required prop; `Some(value)` for an optional one, holding the full default of
     /// type `field_ty` used when the call site omits it (already `state`-wrapped for signal props).
     default: Option<TokenStream2>,
@@ -293,15 +314,19 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
         //   - a `Callback<A>` prop — a handler; required unless `#[prop(default)]` opts into the
         //     no-op default.
         //   - a `NodeRef` prop — a ref the component binds; `#[prop(default)]` gives a fresh one.
-        // The last two are detected syntactically by the type's last path segment (like
-        // `Option`), so an alias of either would slip through — accepted.
+        //   - a `Signal<T>` prop — the caller's own signal, so the component can write it back.
+        //     Its setter takes `Bound<T>` (see `prop.rs` for why).
+        // The last three are detected syntactically by the type's last path segment (like
+        // `Option`), so an alias of any would slip through — accepted.
         // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
+        let bound =
+            signal_value_type(ty).map(|inner| quote! { ::tuidom_ui::__private::Bound<#inner> });
         let (field_ty, default) = if is_children {
             (
                 quote! { #ty },
                 Some(quote! { ::core::default::Default::default() }),
             )
-        } else if is_raw_prop_type(ty) {
+        } else if is_raw_prop_type(ty) || bound.is_some() {
             (quote! { #ty }, parse_prop_default(param_attrs, ty)?)
         } else {
             let value_default = parse_prop_default(param_attrs, ty)?;
@@ -313,6 +338,7 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
         props.push(PropSpec {
             name: pat_ident.ident.clone(),
             field_ty,
+            bound,
             default,
         });
     }
@@ -380,6 +406,24 @@ fn is_raw_prop_type(ty: &Type) -> bool {
         .segments
         .last()
         .is_some_and(|s| s.ident == "Callback" || s.ident == "NodeRef")
+}
+
+/// The `T` of a type spelled `Signal<T>` (by its last path segment), or `None` for any other type.
+fn signal_value_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(tp) = ty else {
+        return None;
+    };
+    let last = tp.path.segments.last()?;
+    if last.ident != "Signal" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    }
 }
 
 /// Generate `NameProps`, its typestate builder, and the constructor `NameProps::builder()`.
@@ -463,14 +507,22 @@ fn expand_props_builder(
         quote! { #n: ::core::option::Option::None }
     });
 
+    // The setter's parameter type, and how its value becomes the stored field.
+    let setter_param = |p: &PropSpec| -> (TokenStream2, TokenStream2) {
+        match &p.bound {
+            Some(bound) => (bound.clone(), quote! { value.0 }),
+            None => (p.field_ty.clone(), quote! { value }),
+        }
+    };
+
     let opt_setters = optional.iter().map(|p| {
         let n = &p.name;
-        let ty = &p.field_ty;
+        let (ty, value) = setter_param(p);
         let doc = setter_doc(n);
         quote! {
             #[doc = #doc]
             #vis fn #n(mut self, value: #ty) -> Self {
-                self.#n = ::core::option::Option::Some(value);
+                self.#n = ::core::option::Option::Some(#value);
                 self
             }
         }
@@ -481,7 +533,7 @@ fn expand_props_builder(
     let req_setters = (0..required.len()).map(|j| {
         let p = required[j];
         let n = &p.name;
-        let ty = &p.field_ty;
+        let (ty, value) = setter_param(p);
 
         let impl_gen = angle(
             &gens
@@ -534,7 +586,7 @@ fn expand_props_builder(
                 #[doc = #doc]
                 #vis fn #n(self, value: #ty) -> #builder_name #ret_ty {
                     #builder_name {
-                        #n: (value,),
+                        #n: (#value,),
                         #(#carry_req,)*
                         #(#carry_opt,)*
                     }

@@ -1295,6 +1295,48 @@ fn component_with_a_children_prop_but_none_supplied_is_empty() {
     assert_eq!(row0(&rt, 1), "T");
 }
 
+// ---- Bound signal props -----------------------------------------------------------------
+
+/// A child that writes the caller's signal: `count` is the parent's own `Signal<i32>`.
+#[crate::component]
+fn Incrementer(count: Signal<i32>) -> View {
+    crate::view! {
+        box {
+            test_id: "inc",
+            style: sized_box_style(),
+            on_click: move || count.update(|n| *n += 1),
+            text(count.get()),
+        }
+    }
+}
+
+/// A bound prop with a default: a fresh signal of its own when the caller passes none.
+#[crate::component]
+fn OwnCount(#[prop(default = state(5))] count: Signal<i32>) -> View {
+    crate::view! { text(count.get()) }
+}
+
+#[test]
+fn a_signal_prop_is_the_callers_signal() {
+    let count = state(0);
+    let mut h = Harness::new(8, 2, move || {
+        crate::view! { box { style: column(), Incrementer { count: count }, text(count.get() * 10) } }
+    });
+    h.click_text("0");
+    assert_eq!(count.get(), 1);
+    assert_eq!(h.row(0).trim_end(), "1");
+    assert_eq!(h.row(1).trim_end(), "10");
+
+    count.set(4);
+    assert_eq!(h.row(0).trim_end(), "4");
+}
+
+#[test]
+fn a_signal_prop_can_default_to_its_own_signal() {
+    let mut h = Harness::new(4, 1, || crate::view! { OwnCount {} });
+    assert_eq!(h.row(0).trim_end(), "5");
+}
+
 // ---- Callback props ---------------------------------------------------------------------
 
 /// A child that talks back to its parent through a `Callback` prop rather than reaching into
