@@ -25,6 +25,7 @@ mod test_support;
 mod text_input;
 mod theme;
 mod tone;
+mod tooltip;
 
 pub use button::{Button, ButtonProps, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxProps};
@@ -46,3 +47,4 @@ pub use theme::{
     ThemeScopeProps, install_theme, use_shape,
 };
 pub use tone::Tone;
+pub use tooltip::{Side, Tooltip, TooltipProps};
