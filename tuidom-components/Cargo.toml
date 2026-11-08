@@ -1,0 +1,20 @@
+[package]
+name = "tuidom-components"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Opinionated, themed components for tuidom"
+
+[lib]
+# Per docs/STYLE.md the crate carries no doc tests. Tests live in-crate next to the code.
+doctest = false
+
+[dependencies]
+tuidom = { path = "../tuidom" }
+tuidom-ui = { path = "../tuidom-ui" }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tuidom-ui = { path = "../tuidom-ui", features = ["testing"] }

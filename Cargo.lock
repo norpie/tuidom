@@ -1154,6 +1154,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuidom-components"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tuidom",
+ "tuidom-ui",
+]
+
+[[package]]
 name = "tuidom-macros"
 version = "0.1.0"
 dependencies = [
