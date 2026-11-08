@@ -20,7 +20,10 @@
 //! Click background     — toggle container background
 //! Wheel anywhere       — scroll the page (the center area is a scroll container)
 //! Wheel over 1st button — adjust its opacity; prevent_default keeps the page still
-//! Wheel over the list  — scroll it; its bar tracks the offset
+//! Wheel over the list  — scroll it; its bar tracks the offset, and the tip anchored to
+//!                        item 02 follows it, hiding while item 02 is scrolled out
+//! t outside input      — toggle that tip. While it exists every scroll reruns layout,
+//!                        which the FPS readout shows
 //! Drag a scrollbar     — thumb follows the cursor; pressing the track jumps it
 //! Wheel the auto-hide pane — its bar appears while scrolling, then fades away
 //! Wheel over the 10k pane — virtualized: only the visible window exists in the DOM
@@ -50,9 +53,9 @@ use tuidom::animation::{
 };
 use tuidom::event::{FocusEventRelation, FocusKeys, KeyCode, KeyModifiers};
 use tuidom::style::{
-    AlignItems, Border, BorderCharset, Color, CursorShape, Display, EdgeInsets, FlexDirection,
-    FlexGap, JustifyContent, Length, Overflow, Position, ScrollbarCharset, ScrollbarShow, Sides,
-    Style,
+    AlignItems, AnchorAxis, AnchorEdge, Border, BorderCharset, Color, CursorShape, Display,
+    EdgeInsets, FlexDirection, FlexGap, JustifyContent, Length, Overflow, Position,
+    ScrollbarCharset, ScrollbarShow, Sides, Style,
 };
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId};
@@ -143,12 +146,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     focus_style.color(Color::black());
     focus_style.background(Color::yellow());
 
-    // Anchored to the button's own box, so it follows the button as the layout
+    // Positioned from the button's own box, so it follows the button as the layout
     // recenters, and overhangs the button's bounds instead of being clipped to them.
     let mut badge_style = Style::new();
     badge_style.position(Position::Absolute { x: 15, y: -1 });
     badge_style.color(Color::black());
     badge_style.background(Color::oklch(0.75, 0.19, 40.0));
+
+    // Anchored to a list item but parented to the full-screen container, so it draws over
+    // the row instead of being clipped by the list. The modal's higher z-index covers it.
+    let mut tip_style = Style::new();
+    tip_style.z_index(5);
+    tip_style.color(Color::black());
+    tip_style.background(Color::oklch(0.75, 0.19, 40.0));
 
     let mut active_style = Style::new();
     active_style.color(Color::white());
@@ -447,11 +457,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     list_style.padding(EdgeInsets::new(0, 1, 0, 1));
     doc.set_style(list, &list_style)?;
 
+    let mut list_items = Vec::new();
     for index in 1..=12 {
         let item = doc.create_text(format!("scrollable item {index:02}"))?;
         doc.set_style(item, &label_style)?;
         doc.append_child(list, item)?;
+        list_items.push(item);
     }
+
+    let tip = doc.create_text(" ◀ anchored ")?;
+    tip_style.position(Position::Anchored {
+        anchor: list_items[1],
+        x: AnchorAxis::new(AnchorEdge::End, AnchorEdge::Start).offset(1),
+        y: AnchorAxis::new(AnchorEdge::Start, AnchorEdge::Start),
+    });
+    doc.set_style(tip, &tip_style)?;
 
     let scroll_status = doc.create_text("offset 0")?;
     doc.set_style(scroll_status, &label_style)?;
@@ -789,6 +809,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.append_child(container, top_bar)?;
     doc.append_child(container, center_area)?;
     doc.append_child(container, modal_layer)?;
+    doc.append_child(container, tip)?;
     doc.append_child(doc.root(), container)?;
 
     let mut focus_keys = FocusKeys::default();
@@ -813,6 +834,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Shared state -------------------------------------------------
 
     let opacity_visible = Arc::new(AtomicBool::new(true));
+    let tip_shown = Arc::new(AtomicBool::new(true));
     let text_background_alt = Arc::new(AtomicBool::new(false));
     let container_background_alt = Arc::new(AtomicBool::new(false));
     let text_opacity = Arc::new(Mutex::new(1.0));
@@ -848,6 +870,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let d = doc.clone();
     let ov = opacity_visible.clone();
     let opacity_for_key = text_opacity.clone();
+    let tip_shown_for_key = tip_shown.clone();
 
     doc.on_key_press(doc.root(), move |key| {
         if matches!(d.focused(), Some(node) if node == editable || node == password) {
@@ -872,6 +895,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             KeyCode::Char(']') => {
                 let _ = d.scroll_by(wide, 4, 0);
+            }
+            KeyCode::Char('t') => {
+                let was_shown = tip_shown_for_key.fetch_not(Ordering::Relaxed);
+                let display = if was_shown {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+                let _ = d.update_style(tip, |s| s.display(display));
             }
             KeyCode::Char('b') => d.bell(),
             KeyCode::Char('q') => d.quit(),
