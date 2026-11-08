@@ -1284,6 +1284,115 @@ impl Style {
     pub fn remove_custom(&mut self, name: &str) {
         self.custom.remove(name);
     }
+
+    // -- Merging -------------------------------------------------------
+
+    /// Layer `over` on top of this style.
+    ///
+    /// Every property `over` sets or inherits replaces this style's value, and every property it
+    /// leaves unset keeps this style's. Color variables and custom properties merge by name, with
+    /// `over`'s winning. This is how a component lets its user restyle it: the component's own
+    /// style first, the user's merged over it.
+    ///
+    /// `over` cannot remove a property this style sets, since unset means "no opinion". To get the
+    /// default back, set the default value explicitly.
+    pub fn merge(&mut self, over: &Style) {
+        let Style {
+            width,
+            height,
+            padding,
+            margin,
+            border,
+            border_color,
+            half_block_edges,
+            half_block_inner_color,
+            half_block_outer_color,
+            display,
+            overflow_x,
+            overflow_y,
+            scrollbar_show,
+            scrollbar_hide_delay,
+            scrollbar_fade_duration,
+            scrollbar_charset,
+            scrollbar_track_color,
+            scrollbar_thumb_color,
+            opacity,
+            color,
+            background,
+            flex_direction,
+            flex_basis,
+            flex_grow,
+            flex_shrink,
+            flex_wrap,
+            gap,
+            align_self,
+            align_items,
+            align_content,
+            justify_content,
+            position,
+            z_index,
+            stacking_context,
+            selection_boundary,
+            selection_bg,
+            selection_fg,
+            bold,
+            italic,
+            underline,
+            cursor_shape,
+            custom,
+            color_vars,
+        } = over;
+
+        layer(&mut self.width, width);
+        layer(&mut self.height, height);
+        layer(&mut self.padding, padding);
+        layer(&mut self.margin, margin);
+        layer(&mut self.border, border);
+        layer(&mut self.border_color, border_color);
+        layer(&mut self.half_block_edges, half_block_edges);
+        layer(&mut self.half_block_inner_color, half_block_inner_color);
+        layer(&mut self.half_block_outer_color, half_block_outer_color);
+        layer(&mut self.display, display);
+        layer(&mut self.overflow_x, overflow_x);
+        layer(&mut self.overflow_y, overflow_y);
+        layer(&mut self.scrollbar_show, scrollbar_show);
+        layer(&mut self.scrollbar_hide_delay, scrollbar_hide_delay);
+        layer(&mut self.scrollbar_fade_duration, scrollbar_fade_duration);
+        layer(&mut self.scrollbar_charset, scrollbar_charset);
+        layer(&mut self.scrollbar_track_color, scrollbar_track_color);
+        layer(&mut self.scrollbar_thumb_color, scrollbar_thumb_color);
+        layer(&mut self.opacity, opacity);
+        layer(&mut self.color, color);
+        layer(&mut self.background, background);
+        layer(&mut self.flex_direction, flex_direction);
+        layer(&mut self.flex_basis, flex_basis);
+        layer(&mut self.flex_grow, flex_grow);
+        layer(&mut self.flex_shrink, flex_shrink);
+        layer(&mut self.flex_wrap, flex_wrap);
+        layer(&mut self.gap, gap);
+        layer(&mut self.align_self, align_self);
+        layer(&mut self.align_items, align_items);
+        layer(&mut self.align_content, align_content);
+        layer(&mut self.justify_content, justify_content);
+        layer(&mut self.position, position);
+        layer(&mut self.z_index, z_index);
+        layer(&mut self.stacking_context, stacking_context);
+        layer(&mut self.selection_boundary, selection_boundary);
+        layer(&mut self.selection_bg, selection_bg);
+        layer(&mut self.selection_fg, selection_fg);
+        layer(&mut self.bold, bold);
+        layer(&mut self.italic, italic);
+        layer(&mut self.underline, underline);
+        layer(&mut self.cursor_shape, cursor_shape);
+        self.custom.extend(custom.clone());
+        self.color_vars.extend(color_vars.clone());
+    }
+}
+
+fn layer<T: Clone>(base: &mut StyleValue<T>, over: &StyleValue<T>) {
+    if !matches!(over, StyleValue::Unset) {
+        *base = over.clone();
+    }
 }
 
 #[cfg(test)]
@@ -1418,5 +1527,113 @@ mod tests {
         assert_eq!(style.stacking_context, StyleValue::Inherit);
         assert_eq!(style.selection_boundary, StyleValue::Inherit);
         assert_eq!(style.cursor_shape, StyleValue::Inherit);
+    }
+
+    #[test]
+    fn merge_replaces_what_over_sets_or_inherits() {
+        let mut base = Style::new();
+        base.width(Length::Cells(10));
+        base.color(Color::red());
+        base.padding(EdgeInsets::all(1));
+
+        let mut over = Style::new();
+        over.width(Length::Cells(20));
+        over.inherit_color();
+        over.bold(true);
+
+        base.merge(&over);
+
+        let mut expected = Style::new();
+        expected.width(Length::Cells(20));
+        expected.inherit_color();
+        expected.padding(EdgeInsets::all(1));
+        expected.bold(true);
+        assert_eq!(base, expected);
+    }
+
+    #[test]
+    fn merging_an_empty_style_changes_nothing() {
+        let mut base = Style::new();
+        base.background(Color::blue());
+        base.inherit_opacity();
+        base.color_var("--primary", Color::red());
+        base.set_custom("--role", "panel");
+
+        let before = base.clone();
+        base.merge(&Style::new());
+        assert_eq!(base, before);
+    }
+
+    #[test]
+    fn merge_combines_variables_and_custom_properties_by_name() {
+        let mut base = Style::new();
+        base.color_var("--primary", Color::red());
+        base.color_var("--border", Color::white());
+        base.set_custom("--role", "panel");
+        base.set_custom("--id", "base");
+
+        let mut over = Style::new();
+        over.color_var("--primary", Color::blue());
+        over.set_custom("--id", "over");
+
+        base.merge(&over);
+        assert_eq!(base.get_color_var("--primary"), Some(&Color::blue()));
+        assert_eq!(base.get_color_var("--border"), Some(&Color::white()));
+        assert_eq!(base.get_custom("--role"), Some("panel"));
+        assert_eq!(base.get_custom("--id"), Some("over"));
+    }
+
+    #[test]
+    fn merge_covers_every_property() {
+        // A literal with no `..`: a new field stops this compiling until it is listed here.
+        let over = Style {
+            width: StyleValue::Inherit,
+            height: StyleValue::Inherit,
+            padding: StyleValue::Inherit,
+            margin: StyleValue::Inherit,
+            border: StyleValue::Inherit,
+            border_color: StyleValue::Inherit,
+            half_block_edges: StyleValue::Inherit,
+            half_block_inner_color: StyleValue::Inherit,
+            half_block_outer_color: StyleValue::Inherit,
+            display: StyleValue::Inherit,
+            overflow_x: StyleValue::Inherit,
+            overflow_y: StyleValue::Inherit,
+            scrollbar_show: StyleValue::Inherit,
+            scrollbar_hide_delay: StyleValue::Inherit,
+            scrollbar_fade_duration: StyleValue::Inherit,
+            scrollbar_charset: StyleValue::Inherit,
+            scrollbar_track_color: StyleValue::Inherit,
+            scrollbar_thumb_color: StyleValue::Inherit,
+            opacity: StyleValue::Inherit,
+            color: StyleValue::Inherit,
+            background: StyleValue::Inherit,
+            flex_direction: StyleValue::Inherit,
+            flex_basis: StyleValue::Inherit,
+            flex_grow: StyleValue::Inherit,
+            flex_shrink: StyleValue::Inherit,
+            flex_wrap: StyleValue::Inherit,
+            gap: StyleValue::Inherit,
+            align_self: StyleValue::Inherit,
+            align_items: StyleValue::Inherit,
+            align_content: StyleValue::Inherit,
+            justify_content: StyleValue::Inherit,
+            position: StyleValue::Inherit,
+            z_index: StyleValue::Inherit,
+            stacking_context: StyleValue::Inherit,
+            selection_boundary: StyleValue::Inherit,
+            selection_bg: StyleValue::Inherit,
+            selection_fg: StyleValue::Inherit,
+            bold: StyleValue::Inherit,
+            italic: StyleValue::Inherit,
+            underline: StyleValue::Inherit,
+            cursor_shape: StyleValue::Inherit,
+            custom: HashMap::from([(String::from("--role"), String::from("panel"))]),
+            color_vars: HashMap::from([(String::from("--primary"), Color::red())]),
+        };
+
+        let mut merged = Style::new();
+        merged.merge(&over);
+        assert_eq!(merged, over);
     }
 }

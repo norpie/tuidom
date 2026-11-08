@@ -134,6 +134,25 @@ every value comes from without knowing a table of which properties are inherited
 For values that *should* flow down a whole subtree, [color variables](colors.md) are
 usually the better tool than `Inherit` on every node.
 
+## Layering one style over another
+
+`merge` puts one `Style` on top of another before either reaches a node. Whatever the top
+style sets or inherits replaces the value underneath, and whatever it leaves unset keeps it.
+Color variables and custom properties combine by name, with the top style's winning.
+
+```rust
+let mut style = button_style();     // the component's own look
+style.merge(&user_style);           // the caller's overrides, on top
+doc.set_style(button, &style)?;
+```
+
+This is how a component accepts restyling without listing every property as a prop. Since
+`Unset` means the top style has no opinion, it cannot take a property away from the style
+underneath. To get a default back, set the default value explicitly.
+
+Merging works on `Style` values. The [pseudo-state](#pseudo-states) merge is a separate
+thing: it happens during resolution, on the node's resolved style.
+
 ## `ResolvedStyle`: what the engine actually uses
 
 **ResolvedStyle** is a `Style` with every `StyleValue` collapsed to a concrete value:
