@@ -145,8 +145,9 @@ impl NodeRef {
 
     /// Where the node is drawn: its layout rect shifted by its scrolling ancestors' offsets.
     ///
-    /// Use this to place something beside the node, such as a tooltip. Read inside an effect,
-    /// the effect reruns when the node is laid out differently or an ancestor scrolls, one
+    /// To place a tooltip beside the node, prefer
+    /// [`Position::Anchored`](tuidom::style::Position::Anchored), which the engine resolves
+    /// without the lag. Read inside an effect, the effect reruns when the node is laid out differently or an ancestor scrolls, one
     /// frame behind as with [`layout`](Self::layout). A node scrolled out of its container's
     /// viewport still has a rect, lying outside that viewport; [`visible_rect`](Self::visible_rect)
     /// says whether any of it shows.
@@ -158,8 +159,7 @@ impl NodeRef {
     /// clipped by its scrolling and clipping ancestors and the terminal edge, or `None` when
     /// none of it is drawn.
     ///
-    /// Use this to hide a tooltip whose anchor has scrolled out of view. Read inside an effect,
-    /// the effect reruns when the visible part changes, one frame behind as with
+    /// Read inside an effect, the effect reruns when the visible part changes, one frame behind as with
     /// [`layout`](Self::layout). A node covered by something painted over it, such as a modal,
     /// still counts as visible. See [`Document::visible_rect`] for every case that is `None`.
     pub fn visible_rect(&self) -> Option<LayoutRect> {
