@@ -12,6 +12,7 @@ mod field;
 mod label;
 mod radio_group;
 mod select;
+mod slider;
 #[cfg(test)]
 mod test_support;
 mod text_input;
@@ -23,6 +24,7 @@ pub use divider::{Divider, DividerProps, Orientation};
 pub use label::{Label, LabelProps, LabelTone};
 pub use radio_group::{RadioGroup, RadioGroupProps};
 pub use select::{Select, SelectProps};
+pub use slider::{Slider, SliderProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
