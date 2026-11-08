@@ -5,7 +5,7 @@
 //! synced to the expression, a raw prop takes its value once, and a bound prop takes the caller's
 //! signal itself.
 
-use crate::{Callback, NodeRef, Signal, effect, state};
+use crate::{Callback, Children, NodeRef, Signal, View, effect, state};
 
 /// A prop type buildable from a call-site expression, given as a closure producing its value.
 pub trait FromPropExpr<F> {
@@ -52,5 +52,13 @@ impl<F: FnOnce() -> NodeRef> FromPropExpr<F> for NodeRef {
 impl<A, F: FnOnce() -> Callback<A>> FromPropExpr<F> for Callback<A> {
     fn from_prop_expr(f: F) -> Self {
         f()
+    }
+}
+
+/// A slot: the call-site expression becomes the thunk, so it is built where the component places
+/// the slot, and rebuilt when a signal it read changes.
+impl<V: Into<View>, F: Fn() -> V + Send + Sync + 'static> FromPropExpr<F> for Children {
+    fn from_prop_expr(f: F) -> Self {
+        Children::new(move || f().into())
     }
 }

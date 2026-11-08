@@ -165,6 +165,21 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// // view! { Panel { title: heading.get(), Counter { start: 0 } } }
 /// ```
 ///
+/// # Slots
+///
+/// A component that places more than one piece of caller content takes further `Children`
+/// parameters under other names. The caller fills each with an expression, usually a `view!`,
+/// which becomes the slot's thunk: it is built where the body places the slot, like `children`.
+/// A slot is required unless `#[prop(default)]` makes it empty.
+///
+/// ```ignore
+/// #[component]
+/// fn Columns(left: Children, right: Children) -> View {
+///     view! { box { { left.clone() }, { right.clone() } } }
+/// }
+/// // view! { Columns { left: view! { text("a") }, right: view! { text("b") } } }
+/// ```
+///
 /// # Callback props
 ///
 /// A [`Callback<A>`] parameter is how a child talks back to its parent: the parent passes a
@@ -314,9 +329,11 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
         //   - a `Callback<A>` prop — a handler; required unless `#[prop(default)]` opts into the
         //     no-op default.
         //   - a `NodeRef` prop — a ref the component binds; `#[prop(default)]` gives a fresh one.
+        //   - a `Children` prop under another name — a slot, filled by a `name: view! { .. }`
+        //     expression; required unless `#[prop(default)]` makes it empty.
         //   - a `Signal<T>` prop — the caller's own signal, so the component can write it back.
         //     Its setter takes `Bound<T>` (see `prop.rs` for why).
-        // The last three are detected syntactically by the type's last path segment (like
+        // The last four are detected syntactically by the type's last path segment (like
         // `Option`), so an alias of any would slip through — accepted.
         // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
         let bound =
@@ -395,9 +412,9 @@ fn is_option_type(ty: &Type) -> bool {
     matches!(ty, Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Option"))
 }
 
-/// Whether a type is spelled `Callback<..>` or `NodeRef` (by its last path segment). Such a prop is
-/// stored raw rather than signal-wrapped; the check mirrors [`is_option_type`] — syntactic, so an
-/// alias of either would not be recognized.
+/// Whether a type is spelled `Callback<..>`, `NodeRef`, or `Children` (by its last path segment).
+/// Such a prop is stored raw rather than signal-wrapped; the check mirrors [`is_option_type`] —
+/// syntactic, so an alias of any would not be recognized.
 fn is_raw_prop_type(ty: &Type) -> bool {
     let Type::Path(tp) = ty else {
         return false;
@@ -405,7 +422,7 @@ fn is_raw_prop_type(ty: &Type) -> bool {
     tp.path
         .segments
         .last()
-        .is_some_and(|s| s.ident == "Callback" || s.ident == "NodeRef")
+        .is_some_and(|s| s.ident == "Callback" || s.ident == "NodeRef" || s.ident == "Children")
 }
 
 /// The `T` of a type spelled `Signal<T>` (by its last path segment), or `None` for any other type.

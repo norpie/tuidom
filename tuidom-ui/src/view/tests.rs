@@ -1337,6 +1337,41 @@ fn a_signal_prop_can_default_to_its_own_signal() {
     assert_eq!(h.row(0).trim_end(), "5");
 }
 
+// ---- Slots --------------------------------------------------------------------------------
+
+/// Two caller-filled slots side by side, with an optional third after them.
+#[crate::component]
+fn Columns(left: Children, right: Children, #[prop(default)] footer: Children) -> View {
+    crate::view! { box { { left.clone() }, text("|"), { right.clone() }, { footer.clone() } } }
+}
+
+#[test]
+fn slots_place_the_callers_content_where_the_body_puts_them() {
+    let mut h = Harness::new(8, 1, || {
+        crate::view! { Columns { left: crate::view! { text("ab") }, right: crate::view! { text("cd") } } }
+    });
+    assert_eq!(h.row(0).trim_end(), "ab|cd");
+}
+
+#[test]
+fn a_slot_rebuilds_when_a_signal_it_read_changes() {
+    // The signal is read while building the slot, not inside a binding, so only a rebuild of
+    // the slot can show the change.
+    let long = state(false);
+    let mut h = Harness::new(12, 1, move || {
+        crate::view! {
+            Columns {
+                left: if long.get() { crate::view! { text("three") } } else { crate::view! { text("one") } },
+                right: crate::view! { text("x") },
+                footer: crate::view! { text("!") },
+            }
+        }
+    });
+    assert_eq!(h.row(0).trim_end(), "one|x!");
+    long.set(true);
+    assert_eq!(h.row(0).trim_end(), "three|x!");
+}
+
 // ---- Callback props ---------------------------------------------------------------------
 
 /// A child that talks back to its parent through a `Callback` prop rather than reaching into
