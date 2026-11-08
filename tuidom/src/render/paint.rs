@@ -131,7 +131,7 @@ fn paint_entry(
     profile: &mut PaintProfile,
     skipped_background: Option<NodeId>,
 ) -> Option<RenderCursor> {
-    let alpha = node.resolved.opacity;
+    let alpha = node.opacity;
     let skip_background = skipped_background == Some(node.id);
     let bg_rgb = if skip_background {
         None
@@ -381,7 +381,7 @@ fn paint_text_selection(
                     (col_end - col_start) as u16,
                     fg,
                     bg,
-                    node.resolved.opacity,
+                    node.opacity,
                 );
             }
         }
@@ -453,7 +453,7 @@ fn paint_input_selection(
                     (col_end - col_start) as u16,
                     fg,
                     bg,
-                    node.resolved.opacity,
+                    node.opacity,
                 );
             }
         }
@@ -505,7 +505,7 @@ fn clear_grid_for_paint(
         // A half-block edge means the node's background stops half a cell short of its own
         // rect, so it no longer covers the screen and cannot stand in for the frame clear.
         // A clipped entry likewise cannot: its fill stops at the clip, not the screen edge.
-        if entry.resolved.opacity < 1.0
+        if entry.opacity < 1.0
             || entry.resolved.draws_half_block_edges()
             || !covers_grid(entry.layout, grid)
             || !entry.clip.covers_grid(grid.width, grid.height)
@@ -600,7 +600,7 @@ fn paint_scrollbar(
         profile,
     );
     // A fading `WhenScrolling` bar rides its own alpha on top of the container's opacity.
-    let alpha = entry.resolved.opacity * bar.alpha;
+    let alpha = entry.opacity * bar.alpha;
 
     let span = if bar.vertical {
         entry.layout.height

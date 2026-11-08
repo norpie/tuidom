@@ -57,7 +57,8 @@ pub struct ResolvedStyle {
     pub scrollbar_track_color: Option<ResolvedColor>,
     /// Resolved scrollbar thumb color. `None` follows this node's resolved `color`.
     pub scrollbar_thumb_color: Option<ResolvedColor>,
-    /// Resolved opacity (0–1).
+    /// The node's own resolved opacity (0–1). It paints with this multiplied by every
+    /// ancestor's.
     pub opacity: f64,
     /// Resolved foreground text color.
     pub color: ResolvedColor,

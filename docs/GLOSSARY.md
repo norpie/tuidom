@@ -132,6 +132,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Default Foreground** — The color of every node whose `color` is unset, set with `doc.set_default_color`. An expression evaluated at each node, so a default of `Color::var(..)` follows the nearest declaration. See [the default foreground](colors.md#the-default-foreground).
 
+**Opacity** — A node's alpha scale, applied to its whole subtree: each node paints with its own opacity multiplied by every ancestor's. See [opacity](colors.md#opacity).
+
 **Rgb** — Final color format sent to the terminal, converted from OKLCH at render time. See [Rgb, and when conversion happens](colors.md#rgb-and-when-conversion-happens).
 
 ## Events

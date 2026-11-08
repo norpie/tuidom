@@ -18,6 +18,9 @@ pub(crate) struct PaintEntry {
     /// and again every child, and `ResolvedStyle` is large enough that copying it
     /// per entry was a measurable share of the frame.
     pub resolved: Arc<ResolvedStyle>,
+    /// The opacity the node paints with: its own multiplied by every ancestor's, so fading a
+    /// node fades everything inside it.
+    pub opacity: f64,
     /// The intersection of every scrolling/clipping ancestor's viewport. Painting and
     /// hit-testing outside it are dropped.
     pub clip: ClipRect,
@@ -122,6 +125,7 @@ pub(crate) fn paint_order(doc: &Document) -> Vec<PaintEntry> {
         doc.root(),
         None,
         DrawContext::ROOT,
+        1.0,
         &focus_path,
         &mut entries,
     );
@@ -185,10 +189,11 @@ fn collect_ordered_entries(
     node_id: NodeId,
     resolved: Option<Arc<ResolvedStyle>>,
     context: DrawContext,
+    opacity: f64,
     focus_path: &NodeSet,
     entries: &mut Vec<PaintEntry>,
 ) {
-    let Some(mut entry) = collect_entry(doc, node_id, resolved) else {
+    let Some(mut entry) = collect_entry(doc, node_id, resolved, opacity) else {
         return;
     };
     entry.layout = context.place(entry.layout);
@@ -212,6 +217,7 @@ fn collect_ordered_entries(
         entry.layout.width,
         entry.layout.height,
     );
+    let entry_opacity = entry.opacity;
     let scrollbars = if culled {
         Vec::new()
     } else {
@@ -239,6 +245,7 @@ fn collect_ordered_entries(
                 child,
                 Some(resolved),
                 child_context,
+                entry_opacity,
                 focus_path,
                 entries,
             );
@@ -358,6 +365,7 @@ fn strip_entry(entry: &PaintEntry, layout: LayoutRect, bar: ScrollbarPaint) -> P
         kind: NodeKindView::Box,
         layout,
         resolved: Arc::clone(&entry.resolved),
+        opacity: entry.opacity,
         clip: entry.clip,
         scrollbar: Some(bar),
     }
@@ -417,13 +425,15 @@ fn collect_entry(
     doc: &Document,
     node_id: NodeId,
     resolved: Option<Arc<ResolvedStyle>>,
+    ancestor_opacity: f64,
 ) -> Option<PaintEntry> {
     let view = doc.get_node(node_id)?;
     let resolved = match resolved {
         Some(resolved) => resolved,
         None => doc.resolved_style_arc(node_id).ok()?,
     };
-    if resolved.display == Display::None || resolved.opacity <= 0.0 {
+    let opacity = ancestor_opacity * resolved.opacity;
+    if resolved.display == Display::None || opacity <= 0.0 {
         return None;
     }
     let layout = view.layout?.rect;
@@ -433,6 +443,7 @@ fn collect_entry(
         kind: view.kind,
         layout,
         resolved,
+        opacity,
         clip: ClipRect::UNBOUNDED,
         scrollbar: None,
     })

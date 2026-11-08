@@ -2651,4 +2651,74 @@ mod tests {
         // being told anything about it beyond "a frame happened".
         assert_eq!(*seen.lock().unwrap(), vec![2, 3]);
     }
+
+    // -- Composite opacity ------------------------------------------------------
+
+    /// White text on black under a chain of boxes with the given opacities, outermost
+    /// first; the text itself takes `own`. Returns the painted color of its first cell.
+    fn faded_text(boxes: &[f64], own: f64) -> Option<ScreenColor> {
+        let doc = Document::new().unwrap();
+        let mut black = Style::new();
+        black.background(Color::black());
+        doc.set_style(doc.root(), &black).unwrap();
+        let mut parent = doc.root();
+        for &opacity in boxes {
+            let node = doc.create_box().unwrap();
+            let mut style = Style::new();
+            style.opacity(opacity);
+            doc.set_style(node, &style).unwrap();
+            doc.append_child(parent, node).unwrap();
+            parent = node;
+        }
+        let text = doc.create_text("x").unwrap();
+        let mut style = Style::new();
+        style.color(Color::white());
+        style.opacity(own);
+        doc.set_style(text, &style).unwrap();
+        doc.append_child(parent, text).unwrap();
+        let mut runtime = HeadlessRuntime::new(doc, 2, 1);
+        runtime.render().unwrap();
+        runtime.get_cell(0, 0).unwrap().fg
+    }
+
+    #[test]
+    fn a_nodes_opacity_fades_everything_inside_it() {
+        assert_eq!(faded_text(&[0.5], 1.0), faded_text(&[], 0.5));
+        assert_ne!(faded_text(&[0.5], 1.0), faded_text(&[], 1.0));
+    }
+
+    #[test]
+    fn opacities_down_the_tree_multiply() {
+        assert_eq!(faded_text(&[0.5, 0.5], 1.0), faded_text(&[], 0.25));
+        assert_eq!(faded_text(&[0.5], 0.5), faded_text(&[], 0.25));
+    }
+
+    #[test]
+    fn an_animated_opacity_fades_the_subtree_too() {
+        let doc = Document::new().unwrap();
+        let mut black = Style::new();
+        black.background(Color::black());
+        doc.set_style(doc.root(), &black).unwrap();
+        let parent = doc.create_box().unwrap();
+        doc.append_child(doc.root(), parent).unwrap();
+        let text = doc.create_text("x").unwrap();
+        let mut white = Style::new();
+        white.color(Color::white());
+        doc.set_style(text, &white).unwrap();
+        doc.append_child(parent, text).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 2, 1);
+        doc.animate(
+            parent,
+            KeyframeAnimation::from_to(
+                Duration::from_secs(1),
+                [AnimatableProperty::Opacity(1.0)],
+                [AnimatableProperty::Opacity(0.0)],
+            ),
+        )
+        .unwrap();
+        runtime.advance_time(Duration::from_millis(500));
+        runtime.render().unwrap();
+        assert_eq!(runtime.get_cell(0, 0).unwrap().fg, faded_text(&[], 0.5));
+    }
 }

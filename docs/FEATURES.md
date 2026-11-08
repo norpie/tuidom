@@ -243,6 +243,9 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Semi-transparent colors blend with buffer content below
   - [x] Translucent background fills preserve existing text content
   - [x] Enables modal overlays, frosted effects, etc.
+  - [x] Opacity applies to a node's subtree: each node paints with the product of its own and
+        its ancestors' opacity, animated values included (per-node blending, not group
+        compositing)
 - [x] Selection colors (`selection_bg`, `selection_fg`) — inherited like other colors; unset means reverse video
 
 ## Text Selection

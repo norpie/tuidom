@@ -900,12 +900,14 @@ impl Style {
 
     // -- Opacity --------------------------------------------------------
 
-    /// Set the opacity (0–1).
+    /// Set the opacity (0–1). It applies to the node's whole subtree: each node paints with its
+    /// own opacity multiplied by its ancestors'.
     pub fn opacity(&mut self, value: f64) {
         self.opacity = StyleValue::Set(value);
     }
 
-    /// Explicitly inherit opacity from the parent node.
+    /// Explicitly inherit opacity from the parent node. The inherited value multiplies with the
+    /// parent's, so a child inheriting 0.5 paints at 0.25.
     pub fn inherit_opacity(&mut self) {
         self.opacity = StyleValue::Inherit;
     }

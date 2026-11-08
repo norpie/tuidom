@@ -239,6 +239,22 @@ glyphs instead of replacing their content.
 **Over an unpainted cell**, there is nothing in the buffer to blend with, so the declared
 terminal background is used as the base — which is the second job of that declaration.
 
+### Opacity
+
+`opacity` scales the alpha of everything a node paints, and of everything inside it: a node
+paints with its own opacity multiplied by every ancestor's. Fading a box with a transition or a
+keyframe animation therefore fades its text and children along with its fill. A node at opacity
+0 paints nothing, and neither does its subtree.
+
+Each node still blends on its own, back to front, rather than the subtree being drawn first and
+blended once as a whole. Where nothing overlaps inside the subtree the two look the same. Where a
+child's fill covers its parent's, the parent's fill shows through the child's while both are
+translucent, which a browser would not show.
+
+`ResolvedStyle::opacity` is the node's own value, not the product. `opacity: Inherit` copies the
+parent's own value, which then multiplies with the parent's, so a child inheriting 0.5 paints at
+0.25.
+
 ## Rgb, and when conversion happens
 
 **Rgb** is the final form, and the only place it appears is the render pipeline. OKLCH →
