@@ -311,7 +311,7 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
         });
     }
 
-    let props_api = expand_props_builder(vis, &props_name, &props);
+    let props_api = expand_props_builder(vis, name, &props_name, &props);
     let binds = props.iter().map(|p| &p.name);
 
     Ok(quote! {
@@ -384,8 +384,19 @@ fn is_raw_prop_type(ty: &Type) -> bool {
 /// order; `build` exists only when every required parameter is set — so omitting one is a compile
 /// error naming the field (through the marker type), never a runtime panic. Optional props are
 /// stored as `Option` and filled with their default at `build`.
-fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]) -> TokenStream2 {
+fn expand_props_builder(
+    vis: &Visibility,
+    component: &Ident,
+    props_name: &Ident,
+    props: &[PropSpec],
+) -> TokenStream2 {
     let builder_name = format_ident!("{}Builder", props_name);
+    // Generated docs, so a public component in a crate with `missing_docs` on builds cleanly.
+    let props_doc =
+        format!("Props for [`{component}`], built by `view!` when it instantiates the component.");
+    let builder_doc = format!("Builder for [`{props_name}`], with one setter per prop.");
+    let start_doc = format!("Start building [`{props_name}`].");
+    let setter_doc = |field: &Ident| format!("Set the `{field}` prop.");
 
     let struct_fields = props.iter().map(|p| {
         let n = &p.name;
@@ -449,7 +460,9 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
     let opt_setters = optional.iter().map(|p| {
         let n = &p.name;
         let ty = &p.field_ty;
+        let doc = setter_doc(n);
         quote! {
+            #[doc = #doc]
             #vis fn #n(mut self, value: #ty) -> Self {
                 self.#n = ::core::option::Option::Some(value);
                 self
@@ -509,8 +522,10 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
             quote! { #qn: self.#qn }
         });
 
+        let doc = setter_doc(n);
         quote! {
             impl #impl_gen #builder_name #self_ty {
+                #[doc = #doc]
                 #vis fn #n(self, value: #ty) -> #builder_name #ret_ty {
                     #builder_name {
                         #n: (value,),
@@ -541,18 +556,21 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
     });
 
     quote! {
+        #[doc = #props_doc]
         #vis struct #props_name {
             #(#struct_fields),*
         }
 
         #(#marker_defs)*
 
+        #[doc = #builder_doc]
         #vis struct #builder_name #impl_generics {
             #(#req_fields,)*
             #(#opt_fields,)*
         }
 
         impl #props_name {
+            #[doc = #start_doc]
             #vis fn builder() -> #builder_name #builder_missing {
                 #builder_name {
                     #(#req_init,)*
@@ -568,6 +586,7 @@ fn expand_props_builder(vis: &Visibility, props_name: &Ident, props: &[PropSpec]
         #(#req_setters)*
 
         impl #builder_name #builder_set {
+            /// Finish, once every required prop is set.
             #vis fn build(self) -> #props_name {
                 #props_name {
                     #(#build_req,)*
