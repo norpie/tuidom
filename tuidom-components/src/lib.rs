@@ -9,11 +9,13 @@ mod divider;
 mod label;
 #[cfg(test)]
 mod test_support;
+mod text_input;
 mod theme;
 
 pub use button::{Button, ButtonProps, ButtonVariant};
 pub use divider::{Divider, DividerProps, Orientation};
 pub use label::{Label, LabelProps, LabelTone};
+pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
     ThemeScopeProps, install_theme, use_shape,
