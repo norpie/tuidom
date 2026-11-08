@@ -8,6 +8,7 @@ mod button;
 mod checkbox;
 mod choice;
 mod divider;
+mod field;
 mod label;
 mod radio_group;
 #[cfg(test)]

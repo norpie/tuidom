@@ -5,7 +5,7 @@ use tuidom_ui::{Signal, state, view};
 
 use super::*;
 use crate::test_support::literal;
-use crate::theme::{Palette, Theme, install_theme};
+use crate::theme::{Palette, Shape, Surface, Theme, install_theme};
 
 /// A full-width host that does not stretch the field vertically.
 fn harness(theme: Theme, field: impl Fn() -> View + Send + Sync + 'static) -> Harness {
