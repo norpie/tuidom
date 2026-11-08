@@ -5,12 +5,14 @@
 #![warn(missing_docs)]
 
 mod button;
+mod divider;
 mod label;
 #[cfg(test)]
 mod test_support;
 mod theme;
 
 pub use button::{Button, ButtonProps, ButtonVariant};
+pub use divider::{Divider, DividerProps, Orientation};
 pub use label::{Label, LabelProps, LabelTone};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
