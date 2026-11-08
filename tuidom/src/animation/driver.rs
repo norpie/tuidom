@@ -459,7 +459,11 @@ impl AnimationDriver {
     pub fn keyframe_upkeep(&mut self, now: Instant) -> Vec<KeyframeEvent> {
         let mut events = Vec::new();
         for state in self.keyframes.iter_mut().filter(|state| !state.ended) {
-            let iterations = state.iterations_elapsed(now);
+            // An upkeep that runs late must not count iterations past the last.
+            let iterations = match state.keyframes.iterations {
+                Some(count) => state.iterations_elapsed(now).min(u64::from(count)),
+                None => state.iterations_elapsed(now),
+            };
             let done = state.is_done(now);
             // The final boundary is reported as the end, not as one more iteration.
             let boundary = if done {

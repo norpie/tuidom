@@ -671,7 +671,7 @@ mod tests {
     use crate::event::EventPhase;
     use crate::id::NodeId;
     use crate::lock;
-    use crate::runtime_event::{RuntimeEventState, process_runtime_event};
+    use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
     use crate::style::{Color, Length, Position, ResolvedColor, Style};
 
     #[test]
@@ -2795,5 +2795,36 @@ mod tests {
         let (doc, node, _) = ending_animation(AnimationDirection::Alternate, 1);
         doc.run_animation_upkeep();
         assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.2);
+    }
+
+    #[test]
+    fn a_late_upkeep_reports_no_iteration_past_the_last() {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 1);
+        runtime.render().unwrap();
+        let animation = KeyframeAnimation::from_to(
+            Duration::from_millis(100),
+            [AnimatableProperty::Opacity(1.0)],
+            [AnimatableProperty::Opacity(0.2)],
+        )
+        .iterations(3);
+        doc.animate(node, animation).unwrap();
+        doc.advance_manual_time(Duration::from_millis(1000));
+
+        let events = doc.run_animation_upkeep();
+        let iterations: Vec<u64> = events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::AnimationIteration { iteration, .. } => Some(*iteration),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(iterations, vec![2]);
+        assert!(matches!(
+            events.last(),
+            Some(RuntimeEvent::AnimationEnd { .. })
+        ));
     }
 }
