@@ -5,6 +5,8 @@
 #![warn(missing_docs)]
 
 mod button;
+mod checkbox;
+mod choice;
 mod divider;
 mod label;
 #[cfg(test)]
@@ -13,6 +15,7 @@ mod text_input;
 mod theme;
 
 pub use button::{Button, ButtonProps, ButtonVariant};
+pub use checkbox::{Checkbox, CheckboxProps};
 pub use divider::{Divider, DividerProps, Orientation};
 pub use label::{Label, LabelProps, LabelTone};
 pub use text_input::{TextInput, TextInputProps};
