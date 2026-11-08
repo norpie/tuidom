@@ -3139,6 +3139,7 @@ fn every_method_is_inert_on_an_empty_ref() {
     assert_eq!(empty.scroll_offset(), None);
     assert!(empty.layout().is_none());
     assert!(empty.screen_rect().is_none());
+    assert!(empty.visible_rect().is_none());
     assert_eq!((empty.cursor(), empty.selection()), (None, None));
 }
 
@@ -3297,6 +3298,60 @@ fn a_tooltip_placed_from_its_anchors_screen_rect_follows_a_scroll() {
 }
 
 #[test]
+fn a_tooltip_hides_while_its_anchor_is_scrolled_out() {
+    let (list, anchor) = (node_ref(), node_ref());
+    let tip_style = move || {
+        let mut style = Style::new();
+        match (anchor.visible_rect(), anchor.screen_rect()) {
+            (Some(_), Some(rect)) => style.position(Position::Absolute {
+                x: rect.x + i32::from(rect.width) + 1,
+                y: rect.y,
+            }),
+            _ => style.display(Display::None),
+        };
+        style
+    };
+    let mut h = Harness::new(12, 3, move || {
+        crate::view! {
+            box {
+                style: column(),
+                { scroll_list(list, anchor) },
+                box { style: tip_style(), text("tip") },
+            }
+        }
+    });
+    assert_eq!(h.find_text("tip"), Some((7, 2)));
+
+    list.scroll_to(0, 3);
+    assert_eq!(h.find_text("tip"), None);
+
+    list.scroll_to(0, 1);
+    assert_eq!(h.find_text("tip"), Some((7, 1)));
+}
+
+#[test]
+fn a_visible_rect_reader_reruns_as_its_node_leaves_the_viewport() {
+    let (list, anchor, seen) = (node_ref(), node_ref(), state(Vec::new()));
+    let mut h = Harness::new(8, 3, move || {
+        crate::effect(move || {
+            let y = anchor.visible_rect().map(|r| r.y);
+            seen.update(|seen| seen.push(y));
+        });
+        scroll_list(list, anchor)
+    });
+    h.screen();
+    assert_eq!(seen.get().last(), Some(&Some(2)));
+
+    list.scroll_to(0, 2);
+    h.screen();
+    assert_eq!(seen.get().last(), Some(&Some(0)));
+
+    list.scroll_to(0, 3);
+    h.screen();
+    assert_eq!(seen.get().last(), Some(&None));
+}
+
+#[test]
 fn one_frame_changing_two_refs_reruns_their_reader_once() {
     let (a, b, width, seen) = (node_ref(), node_ref(), state(4u16), state(Vec::new()));
     let mut h = Harness::new(8, 2, move || {
@@ -3357,7 +3412,10 @@ fn unmounting_empties_the_reads_and_stops_the_watch() {
     shown.set(false);
     h.screen();
     assert_eq!(seen.get().last(), Some(&None));
-    assert_eq!((sized.layout(), sized.screen_rect()), (None, None));
+    assert_eq!(
+        (sized.layout(), sized.screen_rect(), sized.visible_rect()),
+        (None, None, None)
+    );
     assert_eq!(super::layout_watch::watched_count(h.document()), 0);
 }
 

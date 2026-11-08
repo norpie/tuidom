@@ -19,7 +19,8 @@ use crate::runtime::{Signal, batch, provide_context, state, tracking, untracked,
 ///
 /// Reads are tracked: an effect that reads [`node`](Self::node) or another getter reruns when
 /// the ref fills or empties. Most do not rerun when the value read changes, such as focus
-/// moving. [`layout`](Self::layout) and [`screen_rect`](Self::screen_rect) do, one frame behind.
+/// moving. [`layout`](Self::layout), [`screen_rect`](Self::screen_rect), and
+/// [`visible_rect`](Self::visible_rect) do, one frame behind.
 /// Commands (focusing, scrolling, animating, setting the cursor) are untracked, so calling one
 /// inside an effect does not subscribe it.
 ///
@@ -67,6 +68,7 @@ pub fn node_ref() -> NodeRef {
         watched: LayoutSignals {
             layout: state(None),
             screen_rect: state(None),
+            visible_rect: state(None),
         },
     }
 }
@@ -146,9 +148,22 @@ impl NodeRef {
     /// Use this to place something beside the node, such as a tooltip. Read inside an effect,
     /// the effect reruns when the node is laid out differently or an ancestor scrolls, one
     /// frame behind as with [`layout`](Self::layout). A node scrolled out of its container's
-    /// viewport still has a rect, lying outside that viewport.
+    /// viewport still has a rect, lying outside that viewport; [`visible_rect`](Self::visible_rect)
+    /// says whether any of it shows.
     pub fn screen_rect(&self) -> Option<LayoutRect> {
         self.watched_read(self.watched.screen_rect, Document::screen_rect)
+    }
+
+    /// The part of the node that reaches the screen: its [`screen_rect`](Self::screen_rect)
+    /// clipped by its scrolling and clipping ancestors and the terminal edge, or `None` when
+    /// none of it is drawn.
+    ///
+    /// Use this to hide a tooltip whose anchor has scrolled out of view. Read inside an effect,
+    /// the effect reruns when the visible part changes, one frame behind as with
+    /// [`layout`](Self::layout). A node covered by something painted over it, such as a modal,
+    /// still counts as visible. See [`Document::visible_rect`] for every case that is `None`.
+    pub fn visible_rect(&self) -> Option<LayoutRect> {
+        self.watched_read(self.watched.visible_rect, Document::visible_rect)
     }
 
     /// An input's cursor, as a byte offset into its value.

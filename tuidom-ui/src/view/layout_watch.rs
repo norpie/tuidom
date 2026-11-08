@@ -19,17 +19,20 @@ use crate::runtime::{Signal, batch, with_inline_flush};
 pub(super) struct LayoutSignals {
     pub(super) layout: Signal<Option<LayoutView>>,
     pub(super) screen_rect: Signal<Option<LayoutRect>>,
+    pub(super) visible_rect: Signal<Option<LayoutRect>>,
 }
 
 impl LayoutSignals {
     fn refresh(&self, doc: &Document, node: NodeId) {
         self.layout.set(layout_of(doc, node));
         self.screen_rect.set(doc.screen_rect(node));
+        self.visible_rect.set(doc.visible_rect(node));
     }
 
     pub(super) fn clear(&self) {
         self.layout.set(None);
         self.screen_rect.set(None);
+        self.visible_rect.set(None);
     }
 }
 
