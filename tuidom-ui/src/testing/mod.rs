@@ -51,7 +51,7 @@ use std::time::Duration;
 
 use tuidom::Document;
 use tuidom::NodeId;
-use tuidom::event::{KeyCode, KeyModifiers};
+use tuidom::event::{KeyCode, KeyModifiers, MouseButton};
 use tuidom::headless::{HeadlessRuntime, ScreenCell, ScreenCursor, ScreenRegion};
 
 use crate::app::{App, AppSession};
@@ -117,6 +117,18 @@ impl Harness {
     /// Click the cell at `(x, y)`.
     pub fn click(&mut self, x: i32, y: i32) {
         self.act(|rt| rt.simulate_click(x, y));
+    }
+
+    /// Press the left button at `from`, move to each of `through` in turn with it held, and
+    /// release at the last point, settling after every step so each move sees the layout the
+    /// previous one produced.
+    pub fn drag(&mut self, from: (i32, i32), through: &[(i32, i32)]) {
+        self.act(|rt| rt.simulate_mouse_down(from.0, from.1, MouseButton::Left));
+        for &(x, y) in through {
+            self.act(|rt| rt.simulate_mouse_drag_move(x, y, MouseButton::Left));
+        }
+        let (x, y) = through.last().copied().unwrap_or(from);
+        self.act(|rt| rt.simulate_mouse_up(x, y, MouseButton::Left));
     }
 
     /// Turn the mouse wheel over `(x, y)`; a negative `delta` scrolls down, a positive one up.

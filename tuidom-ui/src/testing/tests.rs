@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tuidom::animation::{Easing, TransitionConfig, TransitionProperty};
-use tuidom::event::KeyCode;
+use tuidom::event::{DragPhase, KeyCode};
 use tuidom::headless::ScreenColor;
 use tuidom::style::{Color, FlexDirection, Length, Style};
 
@@ -358,4 +358,24 @@ fn worked_example_task_picker() {
 
     h.click_text("Done");
     assert_eq!(h.row(4), "done test");
+}
+
+#[test]
+fn drag_moves_through_each_point_and_releases_at_the_last() {
+    let seen = state(Vec::<(i32, bool)>::new());
+    let mut h = Harness::new(10, 1, move || {
+        let mut wide = Style::new();
+        wide.width(Length::Cells(10));
+        crate::view! {
+            box {
+                style: wide.clone(),
+                on_drag: move |ev| {
+                    seen.update(|s| s.push((ev.x, ev.phase == DragPhase::End)))
+                },
+                text("handle"),
+            }
+        }
+    });
+    h.drag((1, 0), &[(3, 0), (7, 0)]);
+    assert_eq!(seen.get(), vec![(3, false), (7, false), (7, true)]);
 }
