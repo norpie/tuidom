@@ -167,6 +167,10 @@ Culled nodes are **still in the DOM and still laid out** — culling is paint-on
 what makes it exact for variably sized items: layout has already positioned everything, so
 there is no estimation involved and nothing can be wrong about which nodes were skipped.
 
+`Document::visible_rect` answers the same question for one node from outside paint: the part
+of it left inside its clip and the terminal, or `None` when paint would draw none of it (see
+[reading computed layout](layout.md#reading-computed-layout)).
+
 Culling is not [virtualization](virtualization.md), which decides what exists in the DOM at
 all. Culling makes ten thousand rows cheap to paint; it does not make them cheap to lay out.
 

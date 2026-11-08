@@ -173,7 +173,18 @@ let on_screen = doc.screen_rect(node);   // Option<LayoutRect>
 
 That is `rect` shifted by the offset of every ancestor scrolling on each axis, the same
 shift paint applies. It is position only: a node scrolled out of its container's viewport
-still gets a rect, lying outside that viewport.
+still gets a rect, lying outside that viewport. To know how much of the node actually
+shows, ask for its visible rect:
+
+```rust
+let shown = doc.visible_rect(node);      // Option<LayoutRect>
+```
+
+That is the screen rect cut down by every ancestor that clips on an axis (`Scroll` or `Clip`,
+to its padding box) and by the terminal edge, which is what paint does. It is `None` when no
+cell of the node is drawn, which includes a zero-size node and one under an ancestor with
+`display: None` or zero opacity. A tooltip can hide on `None` and still place itself from the
+screen rect. Being painted over does not count: a node under a modal is still visible.
 
 Rectangles may be negative or extend past the terminal. Layout does not clamp; clipping to
 the visible grid is a render concern.

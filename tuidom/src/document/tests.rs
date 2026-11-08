@@ -12,7 +12,9 @@ use crate::event::{
 };
 use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
+use crate::paint_order::paint_order;
 use crate::performance::PerformanceDetail;
+use crate::render::grid::ClipRect;
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, Border, BorderCharset, Color, CursorShape, Display,
     EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, ResolvedColor,
@@ -2459,6 +2461,237 @@ fn screen_rect_is_none_without_a_layout() {
 
     doc.remove_child(container, lines[0]).unwrap();
     assert_eq!(doc.screen_rect(lines[0]), None);
+}
+
+#[test]
+fn visible_rect_is_the_screen_rect_when_fully_shown() {
+    let (doc, container, lines) = scrolling_column();
+    doc.scroll_to(container, 0, 2).unwrap();
+
+    assert_eq!(doc.visible_rect(lines[3]), doc.screen_rect(lines[3]));
+    assert_eq!(doc.visible_rect(container), doc.screen_rect(container));
+}
+
+#[test]
+fn visible_rect_is_none_for_a_node_scrolled_out() {
+    let (doc, container, lines) = scrolling_column();
+    doc.scroll_to(container, 0, 2).unwrap();
+
+    // Above the viewport after the scroll, and below it from the start.
+    assert_eq!(doc.visible_rect(lines[1]), None);
+    assert_eq!(doc.visible_rect(lines[6]), None);
+    assert!(doc.screen_rect(lines[6]).is_some());
+}
+
+#[test]
+fn a_partly_scrolled_out_node_shows_its_visible_part() {
+    let doc = Document::new().unwrap();
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    column.overflow_y(Overflow::Scroll);
+    let container = doc.create_box().unwrap();
+    doc.set_style(container, &column).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let filler = doc.create_text("top").unwrap();
+    doc.append_child(container, filler).unwrap();
+    let tall = doc.create_box().unwrap();
+    let mut tall_style = Style::new();
+    tall_style.width(Length::Cells(4));
+    tall_style.height(Length::Cells(3));
+    tall_style.flex_shrink(0.0);
+    doc.set_style(tall, &tall_style).unwrap();
+    doc.append_child(container, tall).unwrap();
+    for i in 0..4 {
+        let text = doc.create_text(format!("line{i}")).unwrap();
+        doc.append_child(container, text).unwrap();
+    }
+    doc.compute_layout(10, 4).unwrap();
+
+    // Rows 1–3 of a four-row viewport: all of it shows.
+    assert_eq!(doc.visible_rect(tall), doc.screen_rect(tall));
+
+    doc.scroll_to(container, 0, 2).unwrap();
+    let on_screen = doc.screen_rect(tall).unwrap();
+    assert_eq!(on_screen.y, -1);
+    assert_eq!(
+        doc.visible_rect(tall),
+        Some(LayoutRect {
+            y: 0,
+            height: 2,
+            ..on_screen
+        })
+    );
+}
+
+#[test]
+fn a_clip_axis_bounds_to_the_padding_box_without_shifting() {
+    let (doc, container, lines) = scrolling_column();
+    doc.scroll_to(container, 0, 2).unwrap();
+
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Clip);
+    style.border(Border::new(BorderCharset::single()));
+    doc.set_style(container, &style).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+
+    // The border takes rows 0 and 3, leaving rows 1 and 2 for the first two lines; the
+    // stored offset does not shift them.
+    assert_eq!(rect_of(&doc, lines[0]).y, 1);
+    assert_eq!(doc.visible_rect(lines[0]), Some(rect_of(&doc, lines[0])));
+    assert_eq!(doc.visible_rect(lines[1]), Some(rect_of(&doc, lines[1])));
+    assert_eq!(rect_of(&doc, lines[2]).y, 3);
+    assert_eq!(doc.visible_rect(lines[2]), None);
+}
+
+#[test]
+fn the_terminal_bounds_the_visible_rect() {
+    let doc = Document::new().unwrap();
+    let left = doc.create_text("hello").unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x: -3, y: 1 });
+    doc.set_style(left, &style).unwrap();
+    doc.append_child(doc.root(), left).unwrap();
+    let below = doc.create_text("gone").unwrap();
+    style.position(Position::Absolute { x: 0, y: 4 });
+    doc.set_style(below, &style).unwrap();
+    doc.append_child(doc.root(), below).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+
+    assert_eq!(
+        doc.visible_rect(left),
+        Some(LayoutRect {
+            x: 0,
+            y: 1,
+            width: 2,
+            height: 1
+        })
+    );
+    assert_eq!(doc.visible_rect(below), None);
+}
+
+#[test]
+fn a_hidden_or_empty_node_is_never_visible() {
+    let (doc, container, lines) = scrolling_column();
+
+    doc.update_style(lines[0], |style| style.opacity(0.0))
+        .unwrap();
+    assert_eq!(doc.visible_rect(lines[0]), None);
+    assert!(doc.visible_rect(lines[1]).is_some());
+
+    doc.update_style(container, |style| style.opacity(0.0))
+        .unwrap();
+    assert_eq!(doc.visible_rect(lines[1]), None);
+    doc.update_style(container, |style| style.opacity(1.0))
+        .unwrap();
+    assert!(doc.visible_rect(lines[1]).is_some());
+
+    // Until the next layout the snapshot still holds the hidden node's rect, so the style
+    // alone has to rule it out.
+    doc.update_style(container, |style| style.display(Display::None))
+        .unwrap();
+    assert_eq!(doc.visible_rect(lines[1]), None);
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(doc.visible_rect(lines[1]), None);
+
+    let empty = doc.create_box().unwrap();
+    doc.append_child(doc.root(), empty).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(doc.screen_rect(empty).map(|rect| rect.width), Some(0));
+    assert_eq!(doc.visible_rect(empty), None);
+}
+
+#[test]
+fn visible_rect_is_none_without_a_layout() {
+    let (doc, container, lines) = scrolling_column();
+
+    let fresh = doc.create_text("new").unwrap();
+    doc.append_child(container, fresh).unwrap();
+    assert_eq!(doc.visible_rect(fresh), None);
+
+    doc.remove_child(container, lines[0]).unwrap();
+    assert_eq!(doc.visible_rect(lines[0]), None);
+
+    let never_laid_out = Document::new().unwrap();
+    assert_eq!(never_laid_out.visible_rect(never_laid_out.root()), None);
+}
+
+/// Every node's visible rect, read from the paint walk itself: the node's painted rect inside
+/// its paint clip and the grid, or `None` for a node paint skipped.
+fn painted_visible_rects(doc: &Document, width: u16, height: u16) -> HashMap<NodeId, LayoutRect> {
+    let grid = ClipRect::UNBOUNDED
+        .bound_x(0, i64::from(width))
+        .bound_y(0, i64::from(height));
+    paint_order(doc)
+        .into_iter()
+        .filter(|entry| entry.scrollbar.is_none())
+        .filter_map(|entry| {
+            let clip = ClipRect {
+                left: entry.clip.left.max(grid.left),
+                top: entry.clip.top.max(grid.top),
+                right: entry.clip.right.min(grid.right),
+                bottom: entry.clip.bottom.min(grid.bottom),
+            };
+            Some((entry.id, clip.visible_part(entry.layout)?))
+        })
+        .collect()
+}
+
+fn all_nodes(doc: &Document, node: NodeId, out: &mut Vec<NodeId>) {
+    out.push(node);
+    for child in doc.get_children(node) {
+        all_nodes(doc, child, out);
+    }
+}
+
+#[test]
+fn visible_rect_agrees_with_paint_for_every_node() {
+    let (doc, outer, inner, _) = scroller_in_a_scroller();
+
+    // A bordered clip box inside the outer scroller, holding a node that spills past it, and
+    // an absolute node hanging off the terminal's left edge.
+    let clip_box = doc.create_box().unwrap();
+    let mut clip_style = Style::new();
+    clip_style.width(Length::Cells(6));
+    clip_style.height(Length::Cells(3));
+    clip_style.flex_shrink(0.0);
+    clip_style.overflow_x(Overflow::Clip);
+    clip_style.overflow_y(Overflow::Clip);
+    clip_style.border(Border::new(BorderCharset::single()));
+    doc.set_style(clip_box, &clip_style).unwrap();
+    doc.insert_before(outer, clip_box, doc.get_children(outer)[1])
+        .unwrap();
+    let spill = doc.create_text("spilling over").unwrap();
+    let mut spill_style = Style::new();
+    spill_style.flex_shrink(0.0);
+    doc.set_style(spill, &spill_style).unwrap();
+    doc.append_child(clip_box, spill).unwrap();
+
+    let hanging = doc.create_text("hanging").unwrap();
+    let mut hanging_style = Style::new();
+    hanging_style.position(Position::Absolute { x: -4, y: 2 });
+    doc.set_style(hanging, &hanging_style).unwrap();
+    doc.append_child(doc.root(), hanging).unwrap();
+
+    let mut nodes = Vec::new();
+    all_nodes(&doc, doc.root(), &mut nodes);
+    for (outer_y, inner_y) in [(0, 0), (1, 2), (2, 1), (3, 4)] {
+        doc.compute_layout(10, 4).unwrap();
+        doc.scroll_to(outer, 0, outer_y).unwrap();
+        doc.scroll_to(inner, 0, inner_y).unwrap();
+
+        let painted = painted_visible_rects(&doc, 10, 4);
+        for &node in &nodes {
+            assert_eq!(
+                doc.visible_rect(node),
+                painted.get(&node).copied(),
+                "{node:?} at outer {outer_y}, inner {inner_y}"
+            );
+        }
+        assert!(painted.len() > 4);
+        assert!(painted.len() < nodes.len());
+    }
 }
 
 #[test]

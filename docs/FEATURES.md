@@ -24,6 +24,7 @@
 - [x] Public attributes API: set/get/remove
 - [x] `get_node(id)` for ID-based lookup — also exposes computed layout info (position, size)
 - [x] `screen_rect(id)` — a node's rect as drawn, shifted by its scrolling ancestors' offsets
+- [x] `visible_rect(id)` — the part of that rect paint actually draws, after clipping and the terminal edge; `None` when none of it is
 - [x] `node_at(x, y)` for hit testing — returns topmost node at coordinates
 - [x] Child ordering: `insert_before(parent, child, before_sibling)`, `move_child()`
 - [x] Input (text input with cursor, selection, internal state)

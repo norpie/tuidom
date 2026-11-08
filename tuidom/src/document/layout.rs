@@ -8,8 +8,9 @@ use crate::layout::compute_layout as compute_document_layout;
 use crate::lock;
 use crate::node::{LayoutRect, LayoutView, NodeLayout, NodeView};
 use crate::paint_order::entry_at;
-use crate::style::Overflow;
+use crate::render::grid::ClipRect;
 use crate::style::resolution::ResolvedStyle;
+use crate::style::{Display, Overflow};
 
 #[cfg(test)]
 use taffy::prelude::NodeId as TaffyNodeId;
@@ -79,6 +80,76 @@ impl Document {
             ancestor = self.inner.nodes.get(&node)?.parent;
         }
         Some(rect)
+    }
+
+    /// The part of a node that reaches the screen: its [`screen_rect`](Self::screen_rect)
+    /// clipped the way paint clips it.
+    ///
+    /// Each ancestor whose overflow on an axis is [`Overflow::Scroll`] or [`Overflow::Clip`]
+    /// bounds its descendants to its padding box on that axis, and the terminal bounds
+    /// everything. A node equals its screen rect when fully visible, and is smaller when
+    /// partly clipped.
+    ///
+    /// Returns `None` when no cell of the node is drawn: it is clipped or scrolled out
+    /// entirely, off the terminal, zero-sized, inside a `display: None` subtree, or has an
+    /// opacity of zero, itself or on an ancestor. Also `None` when the node does not exist or
+    /// has not been laid out. Nodes painted over it do not count, so a node under a modal is
+    /// still visible.
+    pub fn visible_rect(&self, id: NodeId) -> Option<LayoutRect> {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        let (width, height) = lock::mutex(&self.inner.layout).screen_size()?;
+
+        let mut chain = vec![id];
+        let mut ancestor = self.inner.nodes.get(&id)?.parent;
+        while let Some(node) = ancestor {
+            chain.push(node);
+            ancestor = self.inner.nodes.get(&node)?.parent;
+        }
+        let rects = {
+            let snapshot = lock::rw_read(&self.inner.layout_snapshot);
+            chain
+                .iter()
+                .map(|node| snapshot.get(node).map(|layout| layout.rect))
+                .collect::<Option<Vec<_>>>()?
+        };
+
+        let mut translation = (0, 0);
+        let mut clip = ClipRect::UNBOUNDED
+            .bound_x(0, i64::from(width))
+            .bound_y(0, i64::from(height));
+        for (&node, mut rect) in chain.iter().zip(rects).rev() {
+            let resolved = self.resolved_style_unlocked(node).ok()?;
+            if resolved.display == Display::None || resolved.opacity <= 0.0 {
+                return None;
+            }
+            rect.x -= translation.0;
+            rect.y -= translation.1;
+            if node == id {
+                return clip.visible_part(rect);
+            }
+
+            let viewport = rect.padding_box(&resolved);
+            if resolved.overflow_x != Overflow::Visible {
+                clip = clip.bound_x(
+                    i64::from(viewport.x),
+                    i64::from(viewport.x) + i64::from(viewport.width),
+                );
+            }
+            if resolved.overflow_y != Overflow::Visible {
+                clip = clip.bound_y(
+                    i64::from(viewport.y),
+                    i64::from(viewport.y) + i64::from(viewport.height),
+                );
+            }
+            let offset = self.scroll_offset(node);
+            if resolved.overflow_x == Overflow::Scroll {
+                translation.0 += i32::from(offset.x);
+            }
+            if resolved.overflow_y == Overflow::Scroll {
+                translation.1 += i32::from(offset.y);
+            }
+        }
+        None
     }
 
     /// Get the topmost node at the given screen coordinate.

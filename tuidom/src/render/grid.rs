@@ -3,6 +3,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::node::LayoutRect;
 use crate::style::color::Rgb;
 use crate::style::{Border, Sides};
 
@@ -206,6 +207,23 @@ impl ClipRect {
         let right = left + i64::from(width);
         let bottom = top + i64::from(height);
         right <= self.left || left >= self.right || bottom <= self.top || top >= self.bottom
+    }
+
+    /// The part of `rect` inside the clip, or `None` when no cell of it is.
+    pub fn visible_part(&self, rect: LayoutRect) -> Option<LayoutRect> {
+        let left = self.left.max(i64::from(rect.x));
+        let top = self.top.max(i64::from(rect.y));
+        let right = self.right.min(i64::from(rect.x) + i64::from(rect.width));
+        let bottom = self.bottom.min(i64::from(rect.y) + i64::from(rect.height));
+        if left >= right || top >= bottom {
+            return None;
+        }
+        Some(LayoutRect {
+            x: i32::try_from(left).ok()?,
+            y: i32::try_from(top).ok()?,
+            width: u16::try_from(right - left).ok()?,
+            height: u16::try_from(bottom - top).ok()?,
+        })
     }
 
     /// Whether the clip covers an entire `width` × `height` grid.

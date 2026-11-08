@@ -80,6 +80,11 @@ impl LayoutEngine {
         self.dirty || self.last_dimensions != Some((screen_width, screen_height))
     }
 
+    /// The screen size the published snapshot was computed for.
+    pub fn screen_size(&self) -> Option<(u16, u16)> {
+        self.last_dimensions
+    }
+
     /// Insert the persistent taffy node for a newly allocated DOM node.
     pub fn insert_node(
         &mut self,
