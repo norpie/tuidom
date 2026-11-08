@@ -18,3 +18,4 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 tuidom-ui = { path = "../tuidom-ui", features = ["testing"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }

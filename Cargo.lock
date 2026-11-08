@@ -1157,6 +1157,7 @@ dependencies = [
 name = "tuidom-components"
 version = "0.1.0"
 dependencies = [
+ "tokio",
  "tracing",
  "tuidom",
  "tuidom-ui",
