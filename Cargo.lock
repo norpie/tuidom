@@ -1161,6 +1161,7 @@ dependencies = [
  "tracing",
  "tuidom",
  "tuidom-ui",
+ "unicode-width",
 ]
 
 [[package]]

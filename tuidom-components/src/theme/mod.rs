@@ -110,6 +110,11 @@ pub fn use_shape() -> Derived<Shape> {
     }
 }
 
+/// The nearest theme, for content a portal mounts outside the tree that declares its palette.
+pub(crate) fn use_theme() -> Option<Signal<Theme>> {
+    use_context::<ThemeContext>().map(|ThemeContext(theme)| theme)
+}
+
 /// Re-theme a subtree.
 ///
 /// Declares `theme`'s palette on its own box, shadowing the outer one, and provides `theme` to

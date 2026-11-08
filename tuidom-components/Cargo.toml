@@ -15,6 +15,7 @@ doctest = false
 tuidom = { path = "../tuidom" }
 tuidom-ui = { path = "../tuidom-ui" }
 tracing = "0.1.44"
+unicode-width = "0.2.2"
 
 [dev-dependencies]
 tuidom-ui = { path = "../tuidom-ui", features = ["testing"] }
