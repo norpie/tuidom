@@ -5310,6 +5310,145 @@ fn inert_nodes_do_not_merge_the_disabled_style() {
     );
 }
 
+/// Records the position and target of every press outside `context`.
+fn record_presses_outside(doc: &Document, context: NodeId) -> Arc<Mutex<Vec<(i32, i32, NodeId)>>> {
+    let presses = Arc::new(Mutex::new(Vec::new()));
+    let seen = presses.clone();
+    doc.on_press_outside(context, move |event| {
+        seen.lock()
+            .unwrap()
+            .push((event.x, event.y, event.target()));
+    })
+    .unwrap();
+    presses
+}
+
+#[test]
+fn a_press_outside_the_focus_context_is_reported_on_the_context() {
+    let doc = Document::new().unwrap();
+    let (_, modal, _) = modal_scene(&doc);
+    let presses = record_presses_outside(&doc, modal);
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    // Nothing is trapped yet, so the press is an ordinary one.
+    runtime.simulate_click(0, 0);
+    assert!(presses.lock().unwrap().is_empty());
+
+    doc.push_focus_context(modal).unwrap();
+    runtime.simulate_click(2, 0);
+    assert!(presses.lock().unwrap().is_empty());
+
+    // On an inert node, and on empty space, which targets the inert root.
+    runtime.simulate_click(0, 0);
+    runtime.simulate_click(1, 1);
+    assert_eq!(*presses.lock().unwrap(), vec![(0, 0, modal), (1, 1, modal)]);
+}
+
+#[test]
+fn a_press_outside_is_consumed_even_once_the_context_closes() {
+    let doc = Document::new().unwrap();
+    let (background, modal, _) = modal_scene(&doc);
+
+    let background_events = Arc::new(AtomicUsize::new(0));
+    {
+        let background_events = background_events.clone();
+        doc.on_mouse_down(background, move |_| {
+            background_events.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    {
+        let background_events = background_events.clone();
+        doc.on_mouse_up(background, move |_| {
+            background_events.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    {
+        let background_events = background_events.clone();
+        doc.on_click(background, move |_| {
+            background_events.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    let d = doc.clone();
+    doc.on_press_outside(modal, move |_| {
+        d.pop_focus_context().unwrap();
+    })
+    .unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    // The background is live again once the handler returns, but the press and its release
+    // belong to the dismissal, so the background sees no mouse down, mouse up, or click.
+    runtime.simulate_click(0, 0);
+    assert_eq!(doc.focus_context_depth(), 1);
+    assert_eq!(background_events.load(Ordering::SeqCst), 0);
+
+    runtime.simulate_click(0, 0);
+    assert_eq!(background_events.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn a_press_outside_starts_no_selection_drag() {
+    let doc = Document::new().unwrap();
+    let (_, modal, _) = modal_scene(&doc);
+    let text = doc.create_text("abcd").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+    let mut below = Style::new();
+    below.position(Position::Absolute { x: 0, y: 1 });
+    doc.set_style(text, &below).unwrap();
+
+    let d = doc.clone();
+    doc.on_press_outside(modal, move |_| {
+        d.pop_focus_context().unwrap();
+    })
+    .unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    // The text is selectable again once the handler closes the context, but the drag began
+    // as the dismissing press.
+    runtime.simulate_mouse_drag((0, 1), (3, 1));
+    assert_eq!(doc.focus_context_depth(), 1);
+    assert_eq!(doc.selection(), None);
+}
+
+#[test]
+fn only_the_innermost_focus_context_hears_a_press_outside() {
+    let doc = Document::new().unwrap();
+    let (_, modal, _) = modal_scene(&doc);
+
+    let mut dropdown_style = Style::new();
+    dropdown_style.stacking_context(true);
+    dropdown_style.position(Position::Absolute { x: 0, y: 1 });
+    dropdown_style.width(Length::Cells(2));
+    dropdown_style.height(Length::Cells(1));
+    let dropdown = doc.create_box().unwrap();
+    doc.append_child(doc.root(), dropdown).unwrap();
+    doc.set_style(dropdown, &dropdown_style).unwrap();
+
+    let modal_presses = record_presses_outside(&doc, modal);
+    let dropdown_presses = record_presses_outside(&doc, dropdown);
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+    doc.push_focus_context(modal).unwrap();
+    doc.push_focus_context(dropdown).unwrap();
+
+    // A press inside the outer context is still outside the inner one.
+    runtime.simulate_click(2, 0);
+    runtime.simulate_click(0, 0);
+    assert_eq!(dropdown_presses.lock().unwrap().len(), 2);
+    assert!(modal_presses.lock().unwrap().is_empty());
+}
+
 #[test]
 fn key_dispatch_targets_the_active_focus_context_when_nothing_is_focused() {
     let doc = Document::new().unwrap();

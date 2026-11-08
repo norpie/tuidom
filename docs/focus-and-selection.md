@@ -147,6 +147,25 @@ doc.focus_context_depth();       // how many are open
 doc.is_inert(node)?;             // is this node outside the active context
 ```
 
+### A press outside the context
+
+A press on an inert node reaches nothing, the root included, so no listener could tell that the
+user clicked away from a dropdown. The engine reports it on the context instead:
+
+```rust
+doc.on_press_outside(dropdown, move |_| close_dropdown())?;
+```
+
+It fires on mouse down, for any button, when the press lands outside the active context's
+subtree, on an inert node or on empty space. Only the innermost context hears it, and it does not
+bubble, so a dropdown open over a modal closes without taking the modal with it.
+
+The press is consumed whatever the handler does. Closing the context makes the node under the
+pointer live again before the release arrives, and without this the release would complete a
+click there: a press on the dropdown's own trigger would close the list and then reopen it, and a
+press on a button behind it would close the list and press the button. So that press starts no
+selection drag or scrollbar grab, and its release delivers no mouse up or click.
+
 ## Inert versus disabled
 
 Both block interaction. They are not the same thing, and the difference is deliberate:

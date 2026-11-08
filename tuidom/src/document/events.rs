@@ -110,6 +110,31 @@ impl Document {
         )
     }
 
+    /// Register a listener for a mouse press outside a node's subtree while that node is the
+    /// active focus context.
+    ///
+    /// Everything outside an open [focus context](Self::push_focus_context) is inert, so the
+    /// press reaches nothing there. It is reported here instead, which is how a dropdown or
+    /// popover closes when the user clicks elsewhere. Only the innermost context hears it, and
+    /// it does not bubble, so a dropdown open over a modal closes without dismissing the modal.
+    ///
+    /// The event carries the press's position, button, and modifiers. The press is consumed
+    /// whatever the handler does: it starts no selection drag or scrollbar grab, and its
+    /// release delivers no mouse up or click, even once the handler has closed the context and
+    /// the node under the pointer is no longer inert.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_press_outside<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut MouseEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::PressOutside,
+            ListenerKind::PressOutside(Arc::new(handler)),
+        )
+    }
+
     /// Register a mouse wheel listener on a node.
     ///
     /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
@@ -502,6 +527,29 @@ impl Document {
                 handler(event);
             }
         });
+    }
+
+    /// Dispatch a press outside the active focus context to the context node, target phase
+    /// only.
+    pub(crate) fn dispatch_press_outside(&self, event: &mut MouseEvent) {
+        let context = self.active_focus_context();
+        let listeners = lock::mutex(&self.inner.targeted_listeners)
+            .get(&(context, TargetedEventKind::PressOutside))
+            .cloned()
+            .unwrap_or_default();
+
+        event.set_dispatch_state(context, context, EventPhase::Target);
+        for listener in listeners {
+            let panicked = catch_handler_panic(|| {
+                if let ListenerKind::PressOutside(handler) = &listener.kind {
+                    handler(event);
+                }
+            });
+
+            if panicked {
+                tracing::error!("event listener {} panicked", listener.id);
+            }
+        }
     }
 
     pub(crate) fn dispatch_wheel_to(&self, target: NodeId, event: &mut WheelEvent) {

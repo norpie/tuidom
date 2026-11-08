@@ -194,6 +194,9 @@ They report a change the engine has *already* made. A node losing focus is frequ
 losing it *because* it just became disabled, and a transition finishes regardless of either
 state. Swallowing those would hide the change from the handler that exists to observe it.
 
+A press swallowed by an inert node is not lost entirely: the active focus context hears it
+through `on_press_outside`. See [a press outside the context](focus-and-selection.md#a-press-outside-the-context).
+
 ## Listener handles
 
 Registration returns a **ListenerHandle**, which is how you remove one:

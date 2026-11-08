@@ -176,6 +176,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Inert** — State that blocks interaction outside the active focus context. Unlike disabled, it merges no style. See [inert versus disabled](focus-and-selection.md#inert-versus-disabled).
 
+**Press Outside** — A mouse down landing outside the active focus context, reported on the context node by `on_press_outside` since the inert node it hit swallows it. Consumed with its release. See [a press outside the context](focus-and-selection.md#a-press-outside-the-context).
+
 **Spatial Navigation** — Arrow key focus movement by visual edge-to-edge distance rather than DOM order. See [keyboard navigation](focus-and-selection.md#keyboard-navigation).
 
 **Selection Boundary** — A container marked `selection_boundary: true`, confining a drag to the boundary it started in. An Input is an implicit one. See [selection boundaries](focus-and-selection.md#selection-boundaries).

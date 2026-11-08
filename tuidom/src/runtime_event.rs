@@ -155,6 +155,8 @@ pub(crate) struct RuntimeEventState {
     pending_click: Option<ClickCandidate>,
     pending_selection: Option<PendingSelection>,
     scrollbar_drag: Option<ScrollbarDrag>,
+    /// The last press landed outside the focus context, so its release is swallowed too.
+    press_outside: bool,
 }
 
 /// Process one queued or simulated runtime event.
@@ -179,13 +181,23 @@ pub(crate) fn process_runtime_event(
             let target = hit_entry
                 .as_ref()
                 .map_or_else(|| doc.root(), |entry| entry.id);
+            state.pending_selection = None;
+            state.scrollbar_drag = None;
+            state.pending_click = None;
+
+            // Checked before dispatch: the handler usually closes the context, after which the
+            // node under the pointer is live and would take the rest of this press.
+            state.press_outside = doc.is_inert_unlocked(target);
+            if state.press_outside {
+                set_active_node(doc, None);
+                doc.dispatch_press_outside(&mut mouse);
+                return;
+            }
+
             // The pressed node is the node that would take focus from this hit, so
             // "being pressed" and "would be focused" never disagree.
             set_active_node(doc, doc.focus_target_from_hit(target));
             doc.dispatch_mouse_down_to(target, &mut mouse);
-
-            state.pending_selection = None;
-            state.scrollbar_drag = None;
 
             // A left press on a scrollbar strip has grabbing the bar as its default
             // action, in place of selection and click: a track press jumps the thumb
@@ -231,6 +243,10 @@ pub(crate) fn process_runtime_event(
             }
         }
         RuntimeEvent::MouseUp(mut mouse) => {
+            if state.press_outside {
+                state.press_outside = false;
+                return;
+            }
             let target = mouse_target(doc, mouse.x, mouse.y);
             // Release clears the pressed state wherever the cursor ended up, so dragging
             // off a node before releasing leaves nothing stuck active.

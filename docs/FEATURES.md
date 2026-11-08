@@ -95,6 +95,9 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Content outside the active context is inert: non-focusable, skipped by navigation, swallows input
   - [x] Inert is not disabled — inert nodes merge no style, so background content keeps its appearance
   - [x] Keys dispatch from the active context when nothing is focused, so its handlers see Escape
+  - [x] `on_press_outside` on the active context reports a press that landed outside it, for
+        closing dropdowns; the press and its release are consumed, so closing the context
+        does not let the release click what was underneath
   - [x] Nested modal-like contexts restore focus via a focus stack
 - [x] Focus stack for modal-like contexts:
   - [x] `push_focus_context()` — auto-focus first focusable in context, remember the interrupted focus

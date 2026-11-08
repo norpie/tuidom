@@ -897,6 +897,7 @@ pub(crate) enum TargetedEventKind {
     MouseDown,
     MouseUp,
     Click,
+    PressOutside,
     Wheel,
     Scroll,
     Input,
@@ -920,6 +921,8 @@ pub(crate) enum ListenerKind {
     MouseUp(MouseEventHandler),
     /// Mouse click listener.
     Click(MouseEventHandler),
+    /// Listener for a press outside an open focus context.
+    PressOutside(MouseEventHandler),
     /// Mouse wheel listener.
     Wheel(WheelEventHandler),
     /// Scroll offset change listener.
