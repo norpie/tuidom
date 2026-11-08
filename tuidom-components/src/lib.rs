@@ -12,6 +12,7 @@ mod field;
 mod label;
 mod modal;
 mod panel;
+mod progress_bar;
 mod radio_group;
 mod scrollable;
 mod select;
@@ -23,6 +24,7 @@ mod tabs;
 mod test_support;
 mod text_input;
 mod theme;
+mod tone;
 
 pub use button::{Button, ButtonProps, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxProps};
@@ -30,6 +32,7 @@ pub use divider::{Divider, DividerProps, Orientation};
 pub use label::{Label, LabelProps, LabelTone};
 pub use modal::{Modal, ModalProps};
 pub use panel::{Panel, PanelProps};
+pub use progress_bar::{ProgressBar, ProgressBarProps};
 pub use radio_group::{RadioGroup, RadioGroupProps};
 pub use scrollable::{ScrollAxis, Scrollable, ScrollableProps};
 pub use select::{Select, SelectProps};
@@ -42,3 +45,4 @@ pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
     ThemeScopeProps, install_theme, use_shape,
 };
+pub use tone::Tone;
