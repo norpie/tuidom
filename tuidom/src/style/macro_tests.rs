@@ -363,10 +363,9 @@ fn painted(root: &Style, panel: &Style, label: &Style) -> ScreenRegion {
     runtime.get_screen_region(0, 0, 12, 6)
 }
 
-/// The roadmap's "against raw `Document` styling" check: what `style!` builds has to paint
-/// the same cells as the builder calls it stands in for. Colour variables are in the scene
-/// because they mean nothing until resolution, so a wrong variable name survives a
-/// `PartialEq` on `Style` but not this.
+/// What `style!` builds has to paint the same cells as the builder calls it stands in for.
+/// Colour variables are in the scene because they mean nothing until resolution, so a wrong
+/// variable name survives a `PartialEq` on `Style` but not this.
 #[test]
 fn a_macro_built_style_paints_what_the_builder_paints() {
     let mut root = Style::new();

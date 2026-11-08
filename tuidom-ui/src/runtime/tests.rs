@@ -25,7 +25,7 @@ fn count(c: &Arc<AtomicUsize>) -> usize {
     c.load(Ordering::SeqCst)
 }
 
-// ---- Step 1: storage --------------------------------------------------------------------
+// ---- Storage ----------------------------------------------------------------------------
 
 #[test]
 fn read_and_write_round_trip() {
@@ -67,7 +67,7 @@ fn setting_an_equal_value_does_not_rerun() {
     assert_eq!(count(&runs), 2);
 }
 
-// ---- Step 2: effects and tracking -------------------------------------------------------
+// ---- Effects and tracking ---------------------------------------------------------------
 
 #[test]
 fn effect_reruns_on_dependency_change() {
@@ -120,7 +120,7 @@ fn dependencies_are_dropped_when_a_branch_stops_reading_them() {
     assert_eq!(count(&runs), 3);
 }
 
-// ---- Step 3: derived --------------------------------------------------------------------
+// ---- Derived ----------------------------------------------------------------------------
 
 #[test]
 fn derived_memoizes_between_reads() {
@@ -153,7 +153,7 @@ fn an_effect_reruns_through_a_derived() {
     assert_eq!(seen.get(), 20);
 }
 
-// ---- Step 4: flush, diamond, batching, operators ----------------------------------------
+// ---- Flush, diamond, batching, operators ------------------------------------------------
 
 #[test]
 fn diamond_reruns_the_effect_once_per_write() {
@@ -207,7 +207,7 @@ fn add_assign_updates_and_notifies() {
     assert_eq!(seen.get(), 3);
 }
 
-// ---- Step 5: scopes ---------------------------------------------------------------------
+// ---- Scopes -----------------------------------------------------------------------------
 
 #[test]
 fn dispose_frees_signals_and_read_is_inert() {
@@ -265,7 +265,7 @@ async fn a_spawned_task_is_aborted_on_dispose() {
     assert_eq!(ran_after.load(Ordering::SeqCst), 0);
 }
 
-// ---- Step 6: guards ---------------------------------------------------------------------
+// ---- Guards -----------------------------------------------------------------------------
 
 #[test]
 fn a_self_feeding_effect_terminates_instead_of_hanging() {

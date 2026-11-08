@@ -57,7 +57,7 @@ fn read_row(rt: &HeadlessRuntime, y: i32, n: u16) -> String {
         .collect()
 }
 
-// ---- Step 1: static mount ---------------------------------------------------------------
+// ---- Static mount -----------------------------------------------------------------------
 
 #[test]
 fn a_static_text_paints() {
@@ -112,7 +112,7 @@ fn unmount_removes_every_node() {
     assert_ne!(rt.get_cell(0, 0).unwrap().text, "H");
 }
 
-// ---- Step 2: reactive bindings ----------------------------------------------------------
+// ---- Reactive bindings ------------------------------------------------------------------
 
 #[test]
 fn a_text_binding_tracks_its_signal() {
@@ -168,7 +168,7 @@ fn each_binding_is_its_own_effect() {
     assert_eq!(style_runs.load(Ordering::SeqCst), 2); // style reran
 }
 
-// ---- Step 3: listeners through the owner scope ------------------------------------------
+// ---- Listeners through the owner scope --------------------------------------------------
 
 #[test]
 fn a_click_listener_fires() {
@@ -214,7 +214,7 @@ fn unmount_removes_the_listener() {
     assert_eq!(clicks.load(Ordering::SeqCst), 1);
 }
 
-// ---- Step 4: the anchor and dynamic blocks ----------------------------------------------
+// ---- The anchor and dynamic blocks ------------------------------------------------------
 
 #[test]
 fn a_dynamic_block_swaps_content_on_a_structural_change() {
@@ -317,7 +317,7 @@ fn sibling_dynamic_blocks_are_independent() {
     assert_eq!(b_runs.load(Ordering::SeqCst), 1);
 }
 
-// ---- Step 5: deferred children as a thunk -----------------------------------------------
+// ---- Deferred children as a thunk -------------------------------------------------------
 
 #[test]
 fn a_children_thunk_is_deferred_until_mount() {
@@ -362,12 +362,12 @@ fn the_container_survives_a_children_swap() {
     assert_eq!(doc.get_children(doc.root()), vec![container_node]);
 }
 
-// ---- Step 6: in-listener flush, teardown ------------------------------------------------
+// ---- In-listener flush, teardown --------------------------------------------------------
 
 #[test]
 fn a_write_inside_a_listener_updates_the_view_in_the_same_frame() {
-    // The listener runs on the event path; its signal write flushes inline there (F2
-    // unchanged), so the bound text is already updated by the time we render the next frame.
+    // The listener runs on the event path; its signal write flushes inline there, so the bound
+    // text is already updated by the time we render the next frame.
     let doc = Document::new().unwrap();
     let count = state(0i64);
 
@@ -413,7 +413,7 @@ fn unmount_leaves_no_orphaned_nodes() {
     assert_eq!(doc.node_count(), 1);
 }
 
-// ---- F4 step 1: the `view!` macro toolchain ---------------------------------------------
+// ---- The `view!` macro toolchain --------------------------------------------------------
 
 #[test]
 fn view_macro_mounts_a_text_node() {
@@ -436,7 +436,7 @@ fn view_macro_mounts_an_empty_box() {
     assert_eq!(doc.get_children(doc.root()).len(), 1);
 }
 
-// ---- F4 step 2: element skeleton and static children ------------------------------------
+// ---- Element skeleton and static children -----------------------------------------------
 
 #[test]
 fn view_macro_mounts_nested_children() {
@@ -483,7 +483,7 @@ fn view_macro_mounts_an_input_element() {
     assert!(doc.is_focusable(node).unwrap()); // inputs are focusable by default
 }
 
-// ---- F4 step 3: attributes, events, and reactive text holes -----------------------------
+// ---- Attributes, events, and reactive text holes ----------------------------------------
 
 #[test]
 fn view_macro_literal_attr_is_static() {
@@ -626,7 +626,7 @@ fn view_macro_key_handler_with_event_arg_drives_a_signal() {
     assert_eq!(rt.get_cell(0, 0).unwrap().text, "1");
 }
 
-// ---- F4 step 4: reactive control flow ---------------------------------------------------
+// ---- Reactive control flow --------------------------------------------------------------
 
 #[test]
 fn view_macro_if_else_swaps_on_signal() {
@@ -717,7 +717,7 @@ fn view_macro_match_selects_arm_reactively() {
 #[test]
 fn view_macro_view_hole_mounts_an_expression() {
     // `{ expr }` is a view hole: the expression is coerced through `View::from` — here a
-    // `String`, via the F3-step-2 `From<String>` impl — and re-mounts when a read signal changes.
+    // `String`, via `View`'s `From<String>` impl — and re-mounts when a read signal changes.
     let doc = Document::new().unwrap();
     let msg = state(String::from("hi"));
     let view = crate::view! {
@@ -778,7 +778,7 @@ fn tick_and(counter: &AtomicUsize, flag: crate::Signal<bool>) -> bool {
     flag.get()
 }
 
-// ---- F4 step 6: the worked counter example ----------------------------------------------
+// ---- The worked counter example ---------------------------------------------------------
 
 #[test]
 fn view_macro_counter_worked_example() {
@@ -819,7 +819,7 @@ fn view_macro_counter_worked_example() {
     assert_eq!(row0(&rt, 8), "count: 1");
 }
 
-// ---- F4 step 5: `each` ------------------------------------------------------------------
+// ---- `each` -----------------------------------------------------------------------------
 
 #[test]
 fn view_macro_unkeyed_each_reuses_nodes_by_index() {
@@ -956,7 +956,7 @@ fn view_macro_each_item_keeps_its_own_reactive_holes() {
     assert_eq!(doc.get_children(container).len(), 4);
 }
 
-// ---- F5 step 1: component skeleton and signal-backed props ------------------------------
+// ---- Component skeleton and signal-backed props -----------------------------------------
 
 /// A minimal component: one prop, read as a signal, painted through a text hole.
 #[crate::component]
@@ -1041,7 +1041,7 @@ fn component_body_owns_working_reactive_state() {
     assert_eq!(row0(&rt, 1), "1");
 }
 
-// ---- F5 step 2: reactive props ----------------------------------------------------------
+// ---- Reactive props ---------------------------------------------------------------------
 
 #[test]
 fn component_reactive_prop_tracks_the_parent_signal() {
@@ -1093,7 +1093,7 @@ fn component_reactive_prop_does_not_rerun_the_body() {
     assert_eq!(row0(&rt, 1), "9");
 }
 
-// ---- F5 step 3: optional props & defaults -----------------------------------------------
+// ---- Optional props & defaults ----------------------------------------------------------
 
 /// All props optional: `#[prop(default)]` (→ `Default::default()`), `#[prop(default = expr)]`,
 /// and a bare `Option<T>` (→ `None`). Zero required props exercises the builder's no-typestate
@@ -1169,7 +1169,7 @@ fn component_required_props_can_be_supplied_in_any_order() {
     assert_eq!(row0(&rt, 2), "12");
 }
 
-// ---- F5 step 4: the `children` prop -----------------------------------------------------
+// ---- The `children` prop ----------------------------------------------------------------
 
 /// A container component: builds its own shell once and mounts caller-supplied children into it.
 /// `children.clone()` is the idiom — `Children` is `Arc`-backed and the hole closure must be `Fn`.
@@ -1239,7 +1239,7 @@ fn component_with_a_children_prop_but_none_supplied_is_empty() {
     assert_eq!(row0(&rt, 1), "T");
 }
 
-// ---- F5 step 5: callback props ----------------------------------------------------------
+// ---- Callback props ---------------------------------------------------------------------
 
 /// A child that talks back to its parent through a `Callback` prop rather than reaching into
 /// parent state. `on_fire` is stored raw (not signal-wrapped) and invoked directly.
@@ -1318,7 +1318,7 @@ fn component_omitted_callback_prop_defaults_to_a_noop() {
     assert_eq!(row0(&rt, 1), "1");
 }
 
-// ---- F5 step 7: lifecycle (on_mount / on_cleanup) ---------------------------------------
+// ---- Lifecycle (on_mount / on_cleanup) --------------------------------------------------
 
 /// Marks its body and its mount through a `mark` callback, then instantiates `Inner`. It provides
 /// the callback as context — proving a context can carry behavior, not just data — so `Inner`
@@ -1429,7 +1429,7 @@ fn on_cleanup_free_fn_fires_on_unmount() {
     assert_eq!(cleaned.load(Ordering::SeqCst), 1);
 }
 
-// ---- F5 step 8: a worked composition ----------------------------------------------------
+// ---- A worked composition ---------------------------------------------------------------
 
 /// A titled section laid out as a column — a reactive header over body content handed in as
 /// `children`, one child per row. The section keeps its identity while its children swap.
@@ -1465,7 +1465,7 @@ fn ReportingCounter(start: i32, on_change: Callback<i32>) -> View {
 
 #[test]
 fn worked_composition_of_section_counters_and_callbacks() {
-    // The whole milestone in one tree: a `Section` with a reactive title wraps two
+    // Every component feature in one tree: a `Section` with a reactive title wraps two
     // `ReportingCounter`s passed as `children`; each reports its new value up through a callback
     // into a shared `latest` signal a sibling text reflects. Exercises reactive props, a children
     // prop, callback props, and per-component internal state together.
@@ -2149,7 +2149,7 @@ fn a_cross_axis_resize_re_measures_off_window_items() {
     assert_eq!(layout.max_scroll_y, 8 * 2 - 2); // every item two cells, minus the 2-row viewport
 }
 
-// ---- Worked examples: the whole milestone at once ---------------------------------------
+// ---- Worked examples: runtime state through keyed and windowed lists --------------------
 
 /// An item carrying all three kinds of `NodeId`-keyed runtime state at once: it is focusable, it
 /// holds a nested scroll container with its own offset, and its own background can run a

@@ -6161,7 +6161,7 @@ fn debug_reports_allocations_not_live_nodes() {
 }
 
 // ---------------------------------------------------------------------------
-// Instrumentation — roadmap §17, `.plans/21-devtools.md` phase 2
+// Instrumentation
 // ---------------------------------------------------------------------------
 
 /// Flattens a span's fields to `name=value` strings, whatever their type.
