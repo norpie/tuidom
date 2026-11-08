@@ -4,8 +4,10 @@
 //! the theme in context, so installing or switching a theme restyles everything below it.
 #![warn(missing_docs)]
 
+mod button;
 mod theme;
 
+pub use button::{Button, ButtonProps, ButtonVariant};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
     ThemeScopeProps, install_theme, use_shape,
