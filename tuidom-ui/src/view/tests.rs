@@ -3877,3 +3877,23 @@ fn a_portals_content_unmounts_with_its_owner() {
     assert!(!doc.get_children(doc.root()).contains(&tip));
     assert!(h.find_attr("test_id", "tip").is_none());
 }
+
+// ---- Frames -------------------------------------------------------------------------------
+
+#[test]
+fn frames_cycle_on_the_engine_clock_and_take_their_style() {
+    let mut h = Harness::new(4, 1, || {
+        let mut red = Style::new();
+        red.color(Color::red());
+        crate::view! { box { frames(["a", "b", "c"], Duration::from_millis(100)) { style: red.clone() } } }
+    });
+    assert_eq!(h.row(0).trim_end(), "a");
+    h.advance(Duration::from_millis(100));
+    assert_eq!(h.row(0).trim_end(), "b");
+    h.advance(Duration::from_millis(200));
+    assert_eq!(h.row(0).trim_end(), "a");
+    assert_eq!(
+        h.cell(0, 0).unwrap().fg,
+        Some(ScreenColor::from_rgb(255, 0, 0))
+    );
+}

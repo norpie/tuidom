@@ -76,6 +76,9 @@ use syn::{
 ///   `{ fragment(iter) }`).
 /// - **Control flow** — `if` / `else if` / `else`, `match scrutinee { pat => body, … }`, and
 ///   `each i, value in collection [key = …] { … }` (`_` for an unwanted binding).
+/// - **Frames** — `frames(list, interval)` cycles through `list` (an iterable of strings), one
+///   frame every `interval` (a `Duration`), for a spinner. Both are evaluated once when the node is
+///   built. `frames(..) { style: s }` styles it, always reactively.
 /// - **Portal** — `portal { … }` mounts its children as the last children of the document root,
 ///   so they draw over everything, while staying in the declaring component's scope. It takes
 ///   children only, no attributes.
@@ -684,6 +687,12 @@ enum Node {
     /// A text node: `text(expr)`, optionally followed by `{ style: expr }`, or a bare
     /// string-literal child.
     Text { content: Expr, style: Option<Expr> },
+    /// A frames node: `frames(list, interval)`, optionally followed by `{ style: expr }`.
+    Frames {
+        list: Expr,
+        interval: Expr,
+        style: Option<Expr>,
+    },
     /// A reactive view hole: `{ expr }`, where `expr` is `Into<View>`.
     Hole(Expr),
     /// An `if` / `else if` / `else` chain. Boxed — a control-flow node dwarfs the others.
@@ -782,14 +791,31 @@ impl Parse for Node {
                 let args;
                 parenthesized!(args in input);
                 let content = args.parse()?;
-                let style = if input.peek(syn::token::Brace) {
-                    let body;
-                    braced!(body in input);
-                    Some(parse_text_style(&body)?)
-                } else {
-                    None
-                };
+                let style = parse_node_style(input, "text")?;
                 Ok(Node::Text { content, style })
+            }
+            "frames" => {
+                let args;
+                parenthesized!(args in input);
+                let shape = "`frames` takes a frame list and an interval: `frames(list, interval)`";
+                let list = args.parse()?;
+                if !args.peek(Token![,]) {
+                    return Err(syn::Error::new(name.span(), shape));
+                }
+                args.parse::<Token![,]>()?;
+                let interval = args.parse()?;
+                if args.peek(Token![,]) {
+                    args.parse::<Token![,]>()?;
+                }
+                if !args.is_empty() {
+                    return Err(args.error(shape));
+                }
+                let style = parse_node_style(input, "frames")?;
+                Ok(Node::Frames {
+                    list,
+                    interval,
+                    style,
+                })
             }
             "else" => Err(syn::Error::new(
                 name.span(),
@@ -961,17 +987,21 @@ fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
     Ok(children)
 }
 
-/// The braces after `text(..)`, which hold a `style:` key and nothing else.
-fn parse_text_style(body: ParseStream) -> syn::Result<Expr> {
+/// The optional braces after `text(..)` or `frames(..)`, which hold a `style:` key and nothing
+/// else. `kind` names the node in errors.
+fn parse_node_style(input: ParseStream, kind: &str) -> syn::Result<Option<Expr>> {
+    if !input.peek(syn::token::Brace) {
+        return Ok(None);
+    }
+    let body;
+    braced!(body in input);
+    let message = format!("a {kind} node's braces take only `style:`");
     if !body.peek2(Token![:]) {
-        return Err(body.error("a text node's braces take only `style:`"));
+        return Err(body.error(&message));
     }
     let name = body.call(Ident::parse_any)?;
     if name != "style" {
-        return Err(syn::Error::new(
-            name.span(),
-            "a text node's braces take only `style:`",
-        ));
+        return Err(syn::Error::new(name.span(), &message));
     }
     body.parse::<Token![:]>()?;
     let style = body.parse()?;
@@ -979,9 +1009,9 @@ fn parse_text_style(body: ParseStream) -> syn::Result<Expr> {
         body.parse::<Token![,]>()?;
     }
     if !body.is_empty() {
-        return Err(body.error("a text node's braces take only `style:`"));
+        return Err(body.error(&message));
     }
-    Ok(style)
+    Ok(Some(style))
 }
 
 /// Parse the comma-separated entries inside an element's braces into its attributes and its
@@ -1062,6 +1092,17 @@ impl Node {
                 match style {
                     Some(style) => quote! { #text.dyn_style(move || #style) },
                     None => text,
+                }
+            }
+            Node::Frames {
+                list,
+                interval,
+                style,
+            } => {
+                let frames = quote! { ::tuidom_ui::frames(#list, #interval) };
+                match style {
+                    Some(style) => quote! { #frames.dyn_style(move || #style) },
+                    None => frames,
                 }
             }
             Node::Hole(expr) => {

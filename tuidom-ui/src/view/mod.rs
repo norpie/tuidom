@@ -55,6 +55,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use tuidom::animation::TransitionConfig;
 use tuidom::event::{
@@ -155,6 +156,7 @@ enum ViewKind {
     Virtualized(Box<VirtualizedView>),
     Component(ComponentBuild),
     Portal(Box<View>),
+    Frames(FramesView),
 }
 
 /// A component's deferred body. Unlike a [`DynamicView`]'s closure it runs exactly **once**,
@@ -167,6 +169,13 @@ type ComponentBuild = Box<dyn FnOnce() -> View + Send + Sync>;
 struct TextView {
     content: Source<String>,
     // Boxed because a `Style` is large and most text is unstyled.
+    style: Option<Box<Source<Style>>>,
+}
+
+/// A frames node description: its frames and interval, fixed when built, and its style.
+struct FramesView {
+    frames: Vec<String>,
+    interval: Duration,
     style: Option<Box<Source<Style>>>,
 }
 
@@ -365,6 +374,47 @@ impl From<Text> for View {
     fn from(text: Text) -> View {
         View {
             kind: ViewKind::Text(text.0),
+        }
+    }
+}
+
+/// A frames node: text that cycles through `frames`, one every `interval`, for a spinner.
+///
+/// The cycle runs on the engine clock, measured on the widest frame so it never reflows what is
+/// around it. The frames and interval are fixed when the node is built.
+pub fn frames(frames: impl IntoIterator<Item = impl Into<String>>, interval: Duration) -> Frames {
+    Frames(FramesView {
+        frames: frames.into_iter().map(Into::into).collect(),
+        interval,
+        style: None,
+    })
+}
+
+/// A frames node description, built by [`frames`]. Like a [`Text`], it inherits nothing from the
+/// box around it.
+pub struct Frames(FramesView);
+
+impl Frames {
+    /// Set a constant style.
+    pub fn style(mut self, style: Style) -> Self {
+        self.0.style = Some(Box::new(Source::Static(style)));
+        self
+    }
+
+    /// Bind the style reactively.
+    pub fn dyn_style<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Style + Send + Sync + 'static,
+    {
+        self.0.style = Some(Box::new(Source::Reactive(Box::new(f))));
+        self
+    }
+}
+
+impl From<Frames> for View {
+    fn from(frames: Frames) -> View {
+        View {
+            kind: ViewKind::Frames(frames.0),
         }
     }
 }
@@ -1064,6 +1114,19 @@ fn mount_view(
                     tracing::warn!(?node, "text binding failed: {err}");
                 }
             });
+            bind_node(
+                doc,
+                node,
+                "style",
+                view.style.map(|s| *s),
+                |d, n, s: Style| d.set_style(n, &s),
+            );
+            Ok(vec![node])
+        }
+        ViewKind::Frames(view) => {
+            let node = doc.create_frames(view.frames, view.interval)?;
+            place(doc, parent, node, before)?;
+            register_remove(doc, parent, node, scope);
             bind_node(
                 doc,
                 node,

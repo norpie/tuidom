@@ -1,0 +1,5 @@
+error: `frames` takes a frame list and an interval: `frames(list, interval)`
+ --> tests/ui/frames_missing_interval.rs:5:15
+  |
+5 |         box { frames(["a", "b"]) }
+  |               ^^^^^^

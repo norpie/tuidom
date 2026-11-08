@@ -57,7 +57,7 @@ pub mod __private {
 // coexist under one path — `#[component]` finds the macro, `component(..)` the function.
 pub use tuidom_ui_macros::{component, view};
 pub use view::{
-    Children, Element, Mounted, NodeRef, Text, View, boxed, component, dyn_text, dynamic, fragment,
-    input, keyed, mount, node_ref, on_mount, portal, text, use_document, virtual_list,
-    virtual_list_measured,
+    Children, Element, Frames, Mounted, NodeRef, Text, View, boxed, component, dyn_text, dynamic,
+    fragment, frames, input, keyed, mount, node_ref, on_mount, portal, text, use_document,
+    virtual_list, virtual_list_measured,
 };
