@@ -105,6 +105,10 @@ struct KeyframeState {
     paused_at: Option<Instant>,
     /// Iterations already reported through upkeep events.
     reported_iterations: u64,
+    /// The end was reported. The animation holds its last frame until the end event has been
+    /// dispatched and [`release_animation`](AnimationDriver::release_animation) removes it, so
+    /// no frame shows the base style between the end and its listeners' changes.
+    ended: bool,
 }
 
 impl KeyframeState {
@@ -131,15 +135,24 @@ impl KeyframeState {
         }
     }
 
-    /// Progress through the current iteration (0–1), with direction applied.
+    /// Progress through the current iteration (0–1), with direction applied. Past the end, the
+    /// progress the last iteration finished at.
     fn direction_progress(&self, now: Instant) -> f64 {
         let duration = self.keyframes.duration.as_secs_f64();
         if duration <= 0.0 {
             return 1.0;
         }
+        if self.is_done(now)
+            && let Some(count) = self.keyframes.iterations
+        {
+            return self.directed(u64::from(count.max(1)) - 1, 1.0);
+        }
         let raw = self.elapsed(now) / duration;
         let iteration = raw as u64;
-        let progress = (raw - iteration as f64).clamp(0.0, 1.0);
+        self.directed(iteration, (raw - iteration as f64).clamp(0.0, 1.0))
+    }
+
+    fn directed(&self, iteration: u64, progress: f64) -> f64 {
         match self.keyframes.direction {
             AnimationDirection::Normal => progress,
             AnimationDirection::Reverse => 1.0 - progress,
@@ -234,7 +247,11 @@ impl AnimationDriver {
     /// the animations that need tick-rate frames, unlike frames nodes, which
     /// pace themselves by their intervals.
     pub fn has_smooth_active(&self) -> bool {
-        !self.active.is_empty() || self.keyframes.iter().any(|state| state.paused_at.is_none())
+        !self.active.is_empty()
+            || self
+                .keyframes
+                .iter()
+                .any(|state| state.paused_at.is_none() && !state.ended)
     }
 
     /// Called after a style change to check for transitionable properties.
@@ -355,6 +372,7 @@ impl AnimationDriver {
             started: now,
             paused_at: None,
             reported_iterations: 0,
+            ended: false,
         });
     }
 
@@ -389,7 +407,20 @@ impl AnimationDriver {
     /// returns to its underlying style. Returns the animated node when the id
     /// named a running animation, so the caller can settle its layout style.
     pub fn cancel_animation(&mut self, id: u64) -> Option<NodeId> {
-        let index = self.keyframes.iter().position(|state| state.id == id)?;
+        let index = self
+            .keyframes
+            .iter()
+            .position(|state| state.id == id && !state.ended)?;
+        Some(self.keyframes.swap_remove(index).node_id)
+    }
+
+    /// Remove an ended animation once its end event has been dispatched. Returns its node so the
+    /// caller can settle its layout style.
+    pub fn release_animation(&mut self, id: u64) -> Option<NodeId> {
+        let index = self
+            .keyframes
+            .iter()
+            .position(|state| state.id == id && state.ended)?;
         Some(self.keyframes.swap_remove(index).node_id)
     }
 
@@ -406,7 +437,7 @@ impl AnimationDriver {
     ) -> Vec<(TransitionProperty, AnimatedValue)> {
         let mut overrides = Vec::new();
         for state in &self.keyframes {
-            if state.node_id != node_id || state.is_done(now) {
+            if state.node_id != node_id {
                 continue;
             }
             let progress = state.direction_progress(now);
@@ -422,11 +453,12 @@ impl AnimationDriver {
         overrides
     }
 
-    /// Report iteration boundaries crossed since the last call and remove
-    /// animations that ran all their iterations, reporting their end.
+    /// Report iteration boundaries crossed since the last call, and the end of animations that
+    /// ran all their iterations. An ended animation stays, holding its last frame, until
+    /// [`release_animation`](Self::release_animation).
     pub fn keyframe_upkeep(&mut self, now: Instant) -> Vec<KeyframeEvent> {
         let mut events = Vec::new();
-        self.keyframes.retain_mut(|state| {
+        for state in self.keyframes.iter_mut().filter(|state| !state.ended) {
             let iterations = state.iterations_elapsed(now);
             let done = state.is_done(now);
             // The final boundary is reported as the end, not as one more iteration.
@@ -446,14 +478,14 @@ impl AnimationDriver {
                 });
             }
             if done {
+                state.ended = true;
                 events.push(KeyframeEvent {
                     node_id: state.node_id,
                     animation_id: state.id,
                     kind: KeyframeEventKind::End,
                 });
             }
-            !done
-        });
+        }
         events
     }
 

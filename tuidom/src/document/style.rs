@@ -399,12 +399,13 @@ impl Document {
         Ok(())
     }
 
-    /// Remove finished transitions and animations, settling layout-affecting
-    /// ones, and return the runtime events to dispatch for them.
+    /// Remove finished transitions, settling layout-affecting ones, and return
+    /// the runtime events to dispatch for them and for ended animations.
     ///
     /// The layout engine holds the last interpolated value a tick pushed; a
-    /// finished layout transition or animation pushes the settled style once
-    /// more so layout rests exactly on the underlying value.
+    /// finished layout transition pushes the settled style once more so layout
+    /// rests exactly on the underlying value. An ended animation holds its last
+    /// frame until its end event is dispatched, which releases it.
     pub(crate) fn run_animation_upkeep(&self) -> Vec<RuntimeEvent> {
         // Counts what this tick *settled*, not what is live: the driver exposes no live
         // counts, and "finished two transitions this frame" is the more useful number
@@ -449,7 +450,6 @@ impl Document {
                     });
                 }
                 KeyframeEventKind::End => {
-                    settle.push(event.node_id);
                     events.push(RuntimeEvent::AnimationEnd {
                         node: event.node_id,
                         handle,

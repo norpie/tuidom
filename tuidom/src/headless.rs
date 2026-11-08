@@ -662,13 +662,16 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::animation::AnimationHandle;
     use crate::animation::{
         AnimatableProperty, AnimationDirection, Easing, KeyframeAnimation, TransitionConfig,
         TransitionProperty,
     };
     use crate::document::SelectionPoint;
     use crate::event::EventPhase;
+    use crate::id::NodeId;
     use crate::lock;
+    use crate::runtime_event::{RuntimeEventState, process_runtime_event};
     use crate::style::{Color, Length, Position, ResolvedColor, Style};
 
     #[test]
@@ -2720,5 +2723,77 @@ mod tests {
         runtime.advance_time(Duration::from_millis(500));
         runtime.render().unwrap();
         assert_eq!(runtime.get_cell(0, 0).unwrap().fg, faded_text(&[], 0.5));
+    }
+
+    // -- Animation end ----------------------------------------------------------
+
+    /// A node animating its opacity from 1 to 0.2 over 100ms, in `direction` for `iterations`.
+    fn ending_animation(
+        direction: AnimationDirection,
+        iterations: u32,
+    ) -> (Document, NodeId, AnimationHandle) {
+        let doc = Document::new().unwrap();
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 1);
+        runtime.render().unwrap();
+        let animation = KeyframeAnimation::from_to(
+            Duration::from_millis(100),
+            [AnimatableProperty::Opacity(1.0)],
+            [AnimatableProperty::Opacity(0.2)],
+        )
+        .direction(direction)
+        .iterations(iterations);
+        let handle = doc.animate(node, animation).unwrap();
+        doc.advance_manual_time(Duration::from_millis(100 * u64::from(iterations) + 50));
+        (doc, node, handle)
+    }
+
+    #[test]
+    fn an_ended_animation_holds_its_last_frame_until_its_end_event_is_dispatched() {
+        let (doc, node, handle) = ending_animation(AnimationDirection::Normal, 1);
+        let events = doc.run_animation_upkeep();
+        assert_eq!(events.len(), 1);
+        // What the render task would paint before the event task gets to the end event.
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.2);
+        assert!(!lock::mutex(&doc.inner.animation).has_active());
+        assert!(doc.run_animation_upkeep().is_empty());
+        assert!(!doc.cancel_animation(handle));
+
+        let mut state = RuntimeEventState::default();
+        for event in events {
+            process_runtime_event(&doc, event, &mut state);
+        }
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+    }
+
+    #[test]
+    fn an_end_listener_change_replaces_the_held_frame() {
+        let (doc, node, _) = ending_animation(AnimationDirection::Normal, 1);
+        let d = doc.clone();
+        doc.on_animation_end(node, move |_| {
+            let _ = d.update_style(node, |s| s.opacity(0.0));
+        })
+        .unwrap();
+        let mut state = RuntimeEventState::default();
+        for event in doc.run_animation_upkeep() {
+            process_runtime_event(&doc, event, &mut state);
+        }
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.0);
+    }
+
+    #[test]
+    fn the_held_frame_is_where_the_last_iteration_finished() {
+        let (doc, node, _) = ending_animation(AnimationDirection::Alternate, 2);
+        doc.run_animation_upkeep();
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+
+        let (doc, node, _) = ending_animation(AnimationDirection::Reverse, 1);
+        doc.run_animation_upkeep();
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 1.0);
+
+        let (doc, node, _) = ending_animation(AnimationDirection::Alternate, 1);
+        doc.run_animation_upkeep();
+        assert_eq!(doc.resolved_style(node).unwrap().opacity, 0.2);
     }
 }

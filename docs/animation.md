@@ -172,8 +172,15 @@ cannot flood you with events nobody can act on individually.
 
 ### When an animation ends
 
-The animation is **removed**, and the node returns to its underlying style. It does not hold
+The animation is **removed**, and the node returns to its underlying style. It does not keep
 its final frame.
+
+The removal waits for the end event, though. Until the end listeners have run, the node keeps
+showing the last frame, and the animation is removed right after them. The render task cannot
+run listeners, so without the wait it would paint the underlying style for a frame before a
+listener had the chance to change anything, and a fade-out that removes its node would flash
+back to full opacity first. Waiting puts the return to the underlying style and the listeners'
+changes in the same frame.
 
 To keep the end state, set it as the node's style from the end handler:
 

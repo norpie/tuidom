@@ -107,7 +107,8 @@ impl Document {
     /// Cancel a running animation, returning the node to its underlying style.
     ///
     /// No end event fires for a cancelled animation. Returns `false` when the
-    /// handle names no running animation of this document.
+    /// handle names no running animation of this document, which includes one
+    /// that has ended and is waiting for its end event.
     pub fn cancel_animation(&self, handle: AnimationHandle) -> bool {
         if handle.document_id != self.inner.document_id {
             return false;
@@ -122,6 +123,18 @@ impl Document {
         }
         self.inner.notify.notify_one();
         true
+    }
+
+    /// Remove an ended animation after its end listeners ran, returning the node to its
+    /// underlying style in the same frame as whatever the listeners changed.
+    pub(crate) fn release_animation(&self, handle: AnimationHandle) {
+        let Some(node) = lock::mutex(&self.inner.animation).release_animation(handle.id) else {
+            return;
+        };
+        if let Ok(resolved) = self.resolved_style(node) {
+            let _ = lock::mutex(&self.inner.layout).set_style(node, &resolved);
+        }
+        self.inner.notify.notify_one();
     }
 }
 

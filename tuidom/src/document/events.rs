@@ -230,10 +230,11 @@ impl Document {
     /// Register an animation end listener on a node.
     ///
     /// Fires once a keyframe animation runs all its iterations, and bubbles like
-    /// the DOM's `animationend`. When it fires the animation has been removed and
-    /// the node has returned to its underlying style; hold the final state by
-    /// setting it as the node's style from the handler. Cancelled animations and
-    /// removed nodes fire no end event.
+    /// the DOM's `animationend`. Until the listeners have run the node shows the
+    /// animation's last frame; afterwards the animation is removed and the node
+    /// returns to its underlying style, in the same frame as anything the
+    /// listeners changed. Hold the final state by setting it as the node's style
+    /// from the handler. Cancelled animations and removed nodes fire no end event.
     /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
     pub fn on_animation_end<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
     where

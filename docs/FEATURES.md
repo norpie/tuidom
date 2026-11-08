@@ -377,6 +377,8 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Control: pause (frozen values drive no frames), resume, cancel (no end event)
   - [x] Events: `on_animation_end`, `on_animation_iteration` (node-targeted, bubble;
         boundaries crossed within one frame coalesce)
+  - [x] An ended animation holds its last frame until its end listeners have run, so their
+        changes and the return to the underlying style land in the same frame
 - [x] Frames node handles content-based animation (see Core DOM Model)
 - [x] Paced animation frames: default ~60fps tick, `set_animation_fps(None)` unpaces
       entirely; frames nodes self-pace at their flip intervals; idle stays passive

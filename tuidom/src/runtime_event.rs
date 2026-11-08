@@ -338,6 +338,7 @@ pub(crate) fn process_runtime_event(
         }
         RuntimeEvent::AnimationEnd { node, handle } => {
             doc.dispatch_animation_end_to(node, handle);
+            doc.release_animation(handle);
         }
         RuntimeEvent::AnimationIteration {
             node,
