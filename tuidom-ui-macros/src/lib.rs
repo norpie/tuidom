@@ -874,10 +874,6 @@ fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
     Ok(children)
 }
 
-/// Parse the comma-separated entries inside an element's braces into its attributes and its
-/// children. An `ident: value` entry is an attribute — detected by the colon as its second
-/// token, so the split holds whether or not the key is a keyword — and everything else is a
-/// child node.
 /// The braces after `text(..)`, which hold a `style:` key and nothing else.
 fn parse_text_style(body: ParseStream) -> syn::Result<Expr> {
     if !body.peek2(Token![:]) {
@@ -901,6 +897,10 @@ fn parse_text_style(body: ParseStream) -> syn::Result<Expr> {
     Ok(style)
 }
 
+/// Parse the comma-separated entries inside an element's braces into its attributes and its
+/// children. An `ident: value` entry is an attribute — detected by the colon as its second
+/// token, so the split holds whether or not the key is a keyword — and everything else is a
+/// child node.
 fn parse_body(body: ParseStream, validate_events: bool) -> syn::Result<(Vec<Attr>, Vec<Node>)> {
     let mut attrs = Vec::new();
     let mut children = Vec::new();
