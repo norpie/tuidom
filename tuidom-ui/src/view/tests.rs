@@ -2382,7 +2382,7 @@ fn every_element_event_is_accepted_and_freed_on_unmount() {
     // still holds. This `view!` also pins the macro's event list to the builder's methods: a
     // name the macro accepts but `Element` lacks fails to compile here.
     let probe = Arc::new(());
-    let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12] =
+    let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13] =
         std::array::from_fn(|_| probe.clone());
     let view = crate::view! {
         box {
@@ -2399,14 +2399,32 @@ fn every_element_event_is_accepted_and_freed_on_unmount() {
             on_animation_end: move || { let _ = &p10; },
             on_animation_iteration: move || { let _ = &p11; },
             on_press_outside: move || { let _ = &p12; },
+            on_drag: move || { let _ = &p13; },
         }
     };
     let doc = Document::new().unwrap();
     let mounted = mount(&doc, doc.root(), view).unwrap();
-    assert_eq!(Arc::strong_count(&probe), 14);
+    assert_eq!(Arc::strong_count(&probe), 15);
 
     mounted.unmount();
     assert_eq!(Arc::strong_count(&probe), 1);
+}
+
+#[test]
+fn a_drag_reaches_the_element_with_on_drag() {
+    let moved = state(Vec::<i32>::new());
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! {
+            box {
+                style: sized_box_style(),
+                on_drag: move |ev| moved.update(|m| m.push(ev.x - ev.origin_x)),
+                text("drag"),
+            }
+        }
+    });
+    h.screen();
+    h.runtime().simulate_mouse_drag((0, 0), (6, 0));
+    assert_eq!(moved.get(), vec![6, 6]);
 }
 
 #[test]

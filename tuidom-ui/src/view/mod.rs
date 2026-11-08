@@ -58,8 +58,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tuidom::animation::TransitionConfig;
 use tuidom::event::{
-    AnimationEndEvent, AnimationIterationEvent, FocusEvent, InputEvent, KeyEvent, ListenerHandle,
-    MouseEvent, ScrollEvent, TransitionEndEvent, WheelEvent,
+    AnimationEndEvent, AnimationIterationEvent, DragEvent, FocusEvent, InputEvent, KeyEvent,
+    ListenerHandle, MouseEvent, ScrollEvent, TransitionEndEvent, WheelEvent,
 };
 use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
@@ -914,6 +914,10 @@ element_events! {
     /// trap. It does not bubble, and the press is consumed, so closing the trap here does not
     /// let the release click what was underneath.
     on_press_outside: MouseEvent;
+    /// Register a drag listener: the element takes presses on itself and its descendants and
+    /// receives every held pointer move and the release, wherever the pointer goes. It does not
+    /// bubble.
+    on_drag: DragEvent;
     /// Register a mouse-wheel listener.
     on_wheel: WheelEvent;
     /// Register a listener for this element's scroll offset changing.
