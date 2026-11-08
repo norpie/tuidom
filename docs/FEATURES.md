@@ -231,6 +231,8 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] In `background` and in a variable declaration, `CurrentBg`/`CurrentFg` mean the *parent's* values — self-reference is otherwise circular
   - [x] `CurrentBg` on a transparent node sees through to the nearest painted ancestor
 - [x] Declared terminal background (`doc.set_terminal_background`) — the real one is unknowable, so it is assumed
+- [x] Default foreground (`doc.set_default_color`) for nodes with an unset `color`, evaluated per node so a
+      variable default follows the nearest declaration
   - [x] The bottom of the `CurrentBg` chain, and the base a translucent color blends toward over an unpainted cell
   - [x] An assumption for color math, never painted — unpainted cells still emit the terminal default
 - [x] Alpha blending at render time:

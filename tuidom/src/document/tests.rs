@@ -5731,6 +5731,95 @@ fn a_color_variable_can_derive_from_the_terminal_background() {
 }
 
 #[test]
+fn an_unset_color_takes_the_document_default() {
+    let doc = Document::new().unwrap();
+    let plain = doc.create_text("plain").unwrap();
+    doc.append_child(doc.root(), plain).unwrap();
+    let styled = doc.create_text("styled").unwrap();
+    doc.append_child(doc.root(), styled).unwrap();
+    let mut style = Style::new();
+    style.color(Color::blue());
+    doc.set_style(styled, &style).unwrap();
+    assert_eq!(
+        doc.resolved_style(plain).unwrap().color,
+        ResolvedColor::white()
+    );
+
+    doc.set_default_color(Color::red());
+    assert_eq!(
+        doc.resolved_style(plain).unwrap().color,
+        ResolvedColor::red()
+    );
+    assert_eq!(
+        doc.resolved_style(styled).unwrap().color,
+        ResolvedColor::blue()
+    );
+}
+
+#[test]
+fn the_default_color_resolves_in_each_node_scope() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--foreground", Color::red());
+    doc.set_default_color(Color::var("--foreground"));
+
+    let outside = doc.create_text("outside").unwrap();
+    doc.append_child(doc.root(), outside).unwrap();
+    let scope = doc.create_box().unwrap();
+    doc.append_child(doc.root(), scope).unwrap();
+    let mut scope_style = Style::new();
+    scope_style.color_var("--foreground", Color::blue());
+    doc.set_style(scope, &scope_style).unwrap();
+    let inside = doc.create_text("inside").unwrap();
+    doc.append_child(scope, inside).unwrap();
+
+    assert_eq!(
+        doc.resolved_style(outside).unwrap().color,
+        ResolvedColor::red()
+    );
+    assert_eq!(
+        doc.resolved_style(inside).unwrap().color,
+        ResolvedColor::blue()
+    );
+}
+
+#[test]
+fn an_unresolvable_color_falls_back_through_the_default() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_text("x").unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let mut style = Style::new();
+    style.color(Color::var("--missing"));
+    doc.set_style(node, &style).unwrap();
+
+    doc.set_default_color(Color::red());
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::red()
+    );
+
+    doc.set_default_color(Color::var("--missing"));
+    assert_eq!(
+        doc.resolved_style(node).unwrap().color,
+        ResolvedColor::white()
+    );
+}
+
+#[test]
+fn the_default_color_reaches_the_screen() {
+    let doc = Document::new().unwrap();
+    doc.set_default_color(Color::red());
+    let text = doc.create_text("x").unwrap();
+    doc.append_child(doc.root(), text).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 1);
+    runtime.render().unwrap();
+    assert_eq!(
+        runtime.get_cell(0, 0).unwrap().fg,
+        Some(ScreenColor::from_rgb(255, 0, 0))
+    );
+}
+
+#[test]
 fn a_pseudo_style_background_is_what_its_other_colors_derive_from() {
     // A focus style that changes the background must have its own `CurrentBg` colors resolve
     // against that new background, not the one it replaced.

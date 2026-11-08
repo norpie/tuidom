@@ -195,6 +195,32 @@ styles nothing keeps showing the user's real background — including their tran
 their image, if they have one. Declaring the wrong value makes derived colors slightly off;
 it does not put a wrong-colored rectangle on screen.
 
+## The default foreground
+
+A node whose `color` is unset takes the document's default foreground, which is white
+until you change it:
+
+```rust
+doc.set_color_var("--foreground", Color::oklch(0.95, 0.0, 0.0));
+doc.set_default_color(Color::var("--foreground"));
+```
+
+The default is an expression, and it is evaluated at each node that uses it, in that node's
+own variable scope. That is what lets a theme reach text nobody styled. Nothing inherits
+`color`, so a text node under a plain box would otherwise never see a color set further up.
+With the default pointing at a variable, a subtree that declares its own `--foreground`
+recolors every plain text node inside it:
+
+```rust
+let mut button = Style::new();
+button.background(Color::var("--primary"));
+button.color_var("--foreground", Color::var("--primary-foreground"));
+// a text child with no style of its own now draws in --primary-foreground
+```
+
+Where the expression does not resolve, the node falls back to white. A `color` that is set
+but does not resolve falls back to the default foreground.
+
 ## Alpha and blending
 
 Alpha is a component of every color, and blending happens at render time:

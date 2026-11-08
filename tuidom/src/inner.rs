@@ -291,6 +291,9 @@ pub(crate) struct DocumentInner {
     /// never a color that gets painted.
     pub terminal_background: Mutex<Color>,
 
+    /// The foreground of every node whose `color` is unset, evaluated at each such node.
+    pub default_color: Mutex<Arc<Color>>,
+
     /// Opaque callback run on the event task when a [`RuntimeEvent::Flush`] is processed.
     ///
     /// The engine holds it without knowing what it does — the framework layer registers one

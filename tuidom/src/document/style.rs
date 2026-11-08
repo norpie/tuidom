@@ -89,6 +89,27 @@ impl Document {
         lock::mutex(&self.inner.terminal_background).clone()
     }
 
+    // ------------------------------------------------------------------
+    // Default foreground
+    // ------------------------------------------------------------------
+
+    /// Set the foreground of every node whose `color` is unset. It defaults to white.
+    ///
+    /// The color is an expression, evaluated at each node that uses it, against that node's
+    /// variables and background. So `Color::var("--foreground")` follows whichever scope declares
+    /// `--foreground`: a subtree that shadows the variable recolors its plain text without
+    /// styling any of it. Where the expression does not resolve, the node falls back to white.
+    pub fn set_default_color(&self, color: Color) {
+        *lock::mutex(&self.inner.default_color) = Arc::new(color);
+        self.invalidate_resolved_style(self.root());
+        self.inner.notify.notify_one();
+    }
+
+    /// The foreground of every node whose `color` is unset.
+    pub fn default_color(&self) -> Color {
+        (**lock::mutex(&self.inner.default_color)).clone()
+    }
+
     /// The declared terminal background, evaluated against the empty scope.
     pub(crate) fn resolved_terminal_background(&self) -> ResolvedColor {
         let declared = lock::mutex(&self.inner.terminal_background).clone();
@@ -300,20 +321,21 @@ impl Document {
             .map(|pid| self.resolved_base_style_unlocked(pid))
             .transpose()?;
 
+        let default_color = Arc::clone(&lock::mutex(&self.inner.default_color));
         let defaults = if id == self.root() {
-            StyleDefaults::root(self.color_scope(), self.resolved_terminal_background())
+            StyleDefaults::root(
+                self.color_scope(),
+                self.resolved_terminal_background(),
+                default_color,
+            )
         } else {
-            StyleDefaults::default()
+            StyleDefaults::node(default_color)
         };
         let mut resolved = {
             let Some(node) = self.inner.nodes.get(&id) else {
                 return Err(TuidomError::NodeNotFound { id });
             };
-            if id == self.root() {
-                ResolvedStyle::compute_with_defaults(&node, parent_resolved.as_deref(), &defaults)
-            } else {
-                ResolvedStyle::compute(&node, parent_resolved.as_deref())
-            }
+            ResolvedStyle::compute_with_defaults(&node, parent_resolved.as_deref(), &defaults)
         };
 
         // Merge order is base → focus → active → disabled, so disabled wins on conflict.

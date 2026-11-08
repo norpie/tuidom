@@ -190,6 +190,8 @@ pub(crate) struct StyleDefaults {
     /// The document's declared terminal background. Only the root reads it — every other node
     /// inherits an effective background from its parent.
     terminal_background: ResolvedColor,
+    /// The document's default foreground, evaluated per node. `None` uses `color` as it is.
+    color_expr: Option<Arc<Color>>,
 }
 
 impl Default for StyleDefaults {
@@ -238,6 +240,7 @@ impl Default for StyleDefaults {
             cursor_shape: CursorShape::Block,
             color_vars: ColorScope::default(),
             terminal_background: ResolvedColor::black(),
+            color_expr: None,
         }
     }
 }
@@ -247,14 +250,35 @@ impl StyleDefaults {
     ///
     /// The document's color variables are the root of the variable scope chain, and its declared
     /// terminal background is the root of the effective-background chain.
-    pub(crate) fn root(color_vars: ColorScope, terminal_background: ResolvedColor) -> Self {
+    pub(crate) fn root(
+        color_vars: ColorScope,
+        terminal_background: ResolvedColor,
+        color_expr: Arc<Color>,
+    ) -> Self {
         Self {
             width: Length::Percent(100.0),
             height: Length::Percent(100.0),
             color_vars,
             terminal_background,
+            color_expr: Some(color_expr),
             ..Self::default()
         }
+    }
+
+    /// Defaults for any node but the root, with the document's default foreground.
+    pub(crate) fn node(color_expr: Arc<Color>) -> Self {
+        Self {
+            color_expr: Some(color_expr),
+            ..Self::default()
+        }
+    }
+
+    /// The default foreground at a node, given the context its `color` resolves in.
+    fn color_at(&self, ctx: &ColorContext) -> ResolvedColor {
+        self.color_expr
+            .as_ref()
+            .and_then(|expr| expr.eval(ctx))
+            .unwrap_or(self.color)
     }
 
     fn to_resolved_style(&self) -> ResolvedStyle {
@@ -311,10 +335,6 @@ impl ResolvedStyle {
     ///
     /// For each property, uses the node's value if `Set`, uses the parent's
     /// resolved value if `Inherit`, and uses the document/default style if `Unset`.
-    pub(crate) fn compute(data: &NodeData, parent: Option<&ResolvedStyle>) -> Self {
-        Self::compute_with_defaults(data, parent, &StyleDefaults::default())
-    }
-
     pub(crate) fn compute_with_defaults(
         data: &NodeData,
         parent: Option<&ResolvedStyle>,
@@ -344,14 +364,15 @@ impl ResolvedStyle {
         // What the node visually sits on: its own background, or whatever shows through.
         let effective_background = background.unwrap_or(inherited_bg);
 
+        let color_ctx = ColorContext {
+            current_bg: effective_background,
+            ..parent_ctx
+        };
         let color = resolve_color(
             &data.style.color,
             parent.map(|p| p.color),
-            defaults.color,
-            &ColorContext {
-                current_bg: effective_background,
-                ..parent_ctx
-            },
+            defaults.color_at(&color_ctx),
+            &color_ctx,
         );
 
         // Every remaining color property sees this node's own resolved colors.
@@ -590,16 +611,17 @@ impl ResolvedStyle {
         );
         self.effective_background = self.background.unwrap_or(inherited_bg);
 
+        let color_ctx = ColorContext {
+            vars: &color_vars,
+            current_bg: self.effective_background,
+            current_fg: inherited_fg,
+        };
         apply_color_override(
             &mut self.color,
             &style.color,
             parent.map(|p| p.color),
-            defaults.color,
-            &ColorContext {
-                vars: &color_vars,
-                current_bg: self.effective_background,
-                current_fg: inherited_fg,
-            },
+            defaults.color_at(&color_ctx),
+            &color_ctx,
         );
 
         let ctx = ColorContext {

@@ -130,6 +130,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Terminal Background** — The terminal background the document *assumes*, since the real one is unknowable. Never painted. See [terminal background is an assumption](colors.md#terminal-background-is-an-assumption).
 
+**Default Foreground** — The color of every node whose `color` is unset, set with `doc.set_default_color`. An expression evaluated at each node, so a default of `Color::var(..)` follows the nearest declaration. See [the default foreground](colors.md#the-default-foreground).
+
 **Rgb** — Final color format sent to the terminal, converted from OKLCH at render time. See [Rgb, and when conversion happens](colors.md#rgb-and-when-conversion-happens).
 
 ## Events
