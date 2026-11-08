@@ -154,8 +154,9 @@ pub fn view(input: TokenStream) -> TokenStream {
 ///
 /// A `children: Children` parameter receives the instantiation's body nodes as a deferred thunk,
 /// which the body places with `{ children }`. The container node keeps its identity — scroll,
-/// focus, running transitions — while the children swap beneath it. A component with no
-/// `children` parameter rejects body nodes at compile time.
+/// focus, running transitions — while the children swap beneath it. `Children` is `Copy`, so it
+/// can be placed inside `if`, `match`, `each`, or another component's children as it is. A
+/// component with no `children` parameter rejects body nodes at compile time.
 ///
 /// ```ignore
 /// #[component]
@@ -175,7 +176,7 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[component]
 /// fn Columns(left: Children, right: Children) -> View {
-///     view! { box { { left.clone() }, { right.clone() } } }
+///     view! { box { { left }, { right } } }
 /// }
 /// // view! { Columns { left: view! { text("a") }, right: view! { text("b") } } }
 /// ```

@@ -68,7 +68,7 @@ pub fn Tabs(
                     }
                 },
             },
-            { children.clone() },
+            { children },
         }
     }
 }

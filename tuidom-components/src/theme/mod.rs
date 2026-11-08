@@ -135,7 +135,7 @@ pub fn ThemeScope(theme: Theme, #[prop(default)] style: Style, children: Childre
     view! {
         box {
             style: scoped.get(),
-            { children.clone() },
+            { children },
         }
     }
 }

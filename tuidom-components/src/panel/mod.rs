@@ -35,7 +35,7 @@ pub fn Panel(
             if !title.get().is_empty() {
                 text(title_text(&title.get(), &shape.get())) { style: heading.get() }
             },
-            { children.clone() },
+            { children },
         }
     }
 }

@@ -65,7 +65,7 @@ use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
 
-use crate::runtime::{Scope, ScopeId, Signal, effect, state, with_inline_flush};
+use crate::runtime::{Scope, ScopeId, Signal, effect, state, untracked, with_inline_flush};
 
 mod layout_watch;
 mod node_ref;
@@ -595,9 +595,22 @@ where
 /// running transitions) across the swap. This is the shape a `#[component]` receives a
 /// `children: Children` prop in.
 ///
-/// Cheap to clone (an `Arc` bump), so a component body places it with `{ children.clone() }`.
-#[derive(Clone)]
-pub struct Children(Arc<dyn Fn() -> View + Send + Sync>);
+/// A `Copy` handle, like a [`Signal`]: the thunk lives in the runtime arena and is freed with
+/// the scope that created it, which for a `#[component]` prop is the component's own. So a body
+/// places it as `{ children }` anywhere, inside `if`, `match`, `each`, or another component's
+/// children, without cloning it into each closure. Placed after that scope is gone, it shows
+/// nothing.
+pub struct Children(Signal<ChildThunk>);
+
+type ChildThunk = Arc<dyn Fn() -> View + Send + Sync>;
+
+impl Clone for Children {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl Copy for Children {}
 
 impl Children {
     /// Wrap a thunk producing child content. The thunk is stored, not called.
@@ -605,7 +618,20 @@ impl Children {
     where
         F: Fn() -> View + Send + Sync + 'static,
     {
-        Children(Arc::new(thunk))
+        // A signal only as arena storage: never written, and read untracked, so placing the
+        // children subscribes to nothing but what the thunk itself reads.
+        let thunk: ChildThunk = Arc::new(thunk);
+        Children(state(thunk))
+    }
+
+    fn build(&self) -> View {
+        match untracked(|| self.0.try_get()) {
+            Some(thunk) => thunk(),
+            None => {
+                tracing::warn!("children placed after the scope that created them was disposed");
+                fragment(Vec::<View>::new())
+            }
+        }
     }
 }
 
@@ -618,8 +644,7 @@ impl Default for Children {
 
 impl From<Children> for View {
     fn from(children: Children) -> View {
-        let thunk = children.0;
-        dynamic(move || thunk())
+        dynamic(move || children.build())
     }
 }
 

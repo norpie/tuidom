@@ -1228,13 +1228,12 @@ fn component_required_props_can_be_supplied_in_any_order() {
 // ---- The `children` prop ----------------------------------------------------------------
 
 /// A container component: builds its own shell once and mounts caller-supplied children into it.
-/// `children.clone()` is the idiom — `Children` is `Arc`-backed and the hole closure must be `Fn`.
 #[crate::component]
 fn Panel(title: String, children: Children) -> View {
     crate::view! {
         box {
             text(title.get()),
-            { children.clone() },
+            { children },
         }
     }
 }
@@ -1337,12 +1336,42 @@ fn a_signal_prop_can_default_to_its_own_signal() {
     assert_eq!(h.row(0).trim_end(), "5");
 }
 
+/// Places its children inside an `if` and, through `Panel`, inside another component's children,
+/// which needs `Children` to be `Copy`: each nested closure captures the handle rather than
+/// moving it out of the enclosing one.
+#[crate::component]
+fn Collapsible(open: bool, children: Children) -> View {
+    crate::view! {
+        box {
+            if open.get() {
+                Panel { title: "open".to_string(), { children } }
+            } else {
+                text("closed")
+            }
+        }
+    }
+}
+
+#[test]
+fn children_can_be_placed_inside_control_flow_and_nested_components() {
+    let open = state(false);
+    let mut h = Harness::new(8, 2, move || {
+        crate::view! { Collapsible { open: open.get(), text("body") } }
+    });
+    assert_eq!(h.row(0).trim_end(), "closed");
+    open.set(true);
+    assert_eq!(h.row(0).trim_end(), "openbody");
+    open.set(false);
+    open.set(true);
+    assert_eq!(h.row(0).trim_end(), "openbody");
+}
+
 // ---- Slots --------------------------------------------------------------------------------
 
 /// Two caller-filled slots side by side, with an optional third after them.
 #[crate::component]
 fn Columns(left: Children, right: Children, #[prop(default)] footer: Children) -> View {
-    crate::view! { box { { left.clone() }, text("|"), { right.clone() }, { footer.clone() } } }
+    crate::view! { box { { left }, text("|"), { right }, { footer } } }
 }
 
 #[test]
@@ -1572,7 +1601,7 @@ fn Section(title: String, children: Children) -> View {
         box {
             style: column(),
             text(title.get()),
-            { children.clone() },
+            { children },
         }
     }
 }
@@ -1660,7 +1689,7 @@ fn ThemeReader() -> View {
 #[crate::component]
 fn ThemeProvider(children: Children) -> View {
     crate::provide_context(Theme("dark"));
-    crate::view! { box { { children.clone() } } }
+    crate::view! { box { { children } } }
 }
 
 #[crate::component]
