@@ -162,3 +162,33 @@ fn column() -> Style {
     style.flex_direction(FlexDirection::Column);
     style
 }
+
+#[test]
+fn plain_text_takes_the_nearest_foreground() {
+    let mut h = Harness::new(8, 2, || {
+        install_theme(Theme::dark());
+        view! {
+            box {
+                style: column(),
+                box { test_id: "outside", text("a") },
+                ThemeScope {
+                    theme: Theme::light(),
+                    box { test_id: "inside", text("b") },
+                },
+            }
+        }
+    });
+    let text_in = |h: &mut Harness, id: &str| {
+        let parent = h.find_attr("test_id", id).unwrap();
+        let text = h.document().get_node(parent).unwrap().children[0];
+        h.document().resolved_style(text).unwrap().color
+    };
+    assert_eq!(
+        text_in(&mut h, "outside"),
+        literal(&Palette::dark().foreground)
+    );
+    assert_eq!(
+        text_in(&mut h, "inside"),
+        literal(&Palette::light().foreground)
+    );
+}

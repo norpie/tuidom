@@ -69,9 +69,10 @@ struct ThemeContext(Signal<Theme>);
 
 /// Theme the document the current component is mounted in, and every component below it.
 ///
-/// Call it in the `App` body. It declares the palette as document variables, sets the terminal
-/// background assumption and the root's background, and provides the theme to descendants. The
-/// returned signal is the switch: setting it rewrites all of that in place.
+/// Call it in the `App` body. It declares the palette as document variables, points the
+/// default foreground at `--foreground`, sets the terminal background assumption and the root's
+/// background, and provides the theme to descendants. The returned signal is the switch: setting
+/// it rewrites all of that in place.
 ///
 /// Only the root's `background` is touched, so the rest of a root style the app sets is kept.
 pub fn install_theme(theme: Theme) -> Signal<Theme> {
@@ -87,6 +88,7 @@ pub fn install_theme(theme: Theme) -> Signal<Theme> {
 fn apply_to_document(doc: &Document, theme: &Theme) {
     theme.palette.declare_on_document(doc);
     doc.set_terminal_background(theme.palette.background.clone());
+    doc.set_default_color(Color::var("--foreground"));
     let root = theme.root;
     let painted = doc.update_style(doc.root(), |style| match root {
         RootBackground::Paint => style.background(Color::var("--background")),
@@ -111,10 +113,11 @@ pub fn use_shape() -> Derived<Shape> {
 /// Re-theme a subtree.
 ///
 /// Declares `theme`'s palette on its own box, shadowing the outer one, and provides `theme` to
-/// the components inside. It paints nothing: text placed straight inside takes the new
-/// `--foreground` over whatever surface is behind the box, so a scope whose palette differs in
-/// lightness usually wants `style` to set `background: Color::var("--background")`. The theme's
-/// `root` setting does not apply here.
+/// the components inside. Unstyled text inside takes the new `--foreground` through the
+/// document's default foreground. The scope paints nothing, though, so that text sits on
+/// whatever surface is behind the box: a scope whose palette differs in lightness usually wants
+/// `style` to set `background: Color::var("--background")`. The theme's `root` setting does not
+/// apply here.
 #[component]
 pub fn ThemeScope(theme: Theme, #[prop(default)] style: Style, children: Children) -> View {
     provide_context(ThemeContext(theme));
