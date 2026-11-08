@@ -5,10 +5,10 @@ use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::event::{
-    AnimationEndEvent, AnimationIterationEvent, EventPhase, FocusEvent, InputEvent, KeyEvent,
-    Listener, ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent, ScrollEvent,
-    SelectionChangeEvent, TargetedEvent, TargetedEventKind, TransitionEndEvent, WheelEvent,
-    WindowBlurEvent, WindowFocusEvent,
+    AnimationEndEvent, AnimationIterationEvent, DragEvent, EventPhase, FocusEvent, InputEvent,
+    KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent,
+    ScrollEvent, SelectionChangeEvent, TargetedEvent, TargetedEventKind, TransitionEndEvent,
+    WheelEvent, WindowBlurEvent, WindowFocusEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -132,6 +132,31 @@ impl Document {
             node,
             TargetedEventKind::PressOutside,
             ListenerKind::PressOutside(Arc::new(handler)),
+        )
+    }
+
+    /// Register a drag listener on a node.
+    ///
+    /// A press on the node or anything inside it is taken for dragging by the nearest node on
+    /// that path with a drag listener. From the first pointer move with the button held, the
+    /// node receives a [`DragPhase::Move`](crate::event::DragPhase::Move) per move and one
+    /// [`DragPhase::End`](crate::event::DragPhase::End) on release, wherever the pointer is. A
+    /// press that never moves produces no drag events. Drag events go to that node only and do
+    /// not bubble.
+    ///
+    /// Taking the press changes it: it neither clears nor starts a text selection, and once it
+    /// has moved its release is not a click. Mouse down and mouse up are still dispatched as usual. A press
+    /// on a scrollbar grabs the scrollbar instead.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_drag<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut DragEvent) + Send + Sync + 'static,
+    {
+        self.register_targeted_listener(
+            node,
+            TargetedEventKind::Drag,
+            ListenerKind::Drag(Arc::new(handler)),
         )
     }
 
@@ -542,6 +567,38 @@ impl Document {
         for listener in listeners {
             let panicked = catch_handler_panic(|| {
                 if let ListenerKind::PressOutside(handler) = &listener.kind {
+                    handler(event);
+                }
+            });
+
+            if panicked {
+                tracing::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
+    /// The nearest node from `target` up whose listeners include a drag listener.
+    pub(crate) fn drag_listener_for(&self, target: NodeId) -> Option<NodeId> {
+        let path = self.event_path(target);
+        let listeners = lock::mutex(&self.inner.targeted_listeners);
+        path.into_iter().find(|node| {
+            listeners
+                .get(&(*node, TargetedEventKind::Drag))
+                .is_some_and(|registered| !registered.is_empty())
+        })
+    }
+
+    /// Dispatch a drag event to the node that took the drag, target phase only.
+    pub(crate) fn dispatch_drag_to(&self, node: NodeId, event: &mut DragEvent) {
+        let listeners = lock::mutex(&self.inner.targeted_listeners)
+            .get(&(node, TargetedEventKind::Drag))
+            .cloned()
+            .unwrap_or_default();
+
+        event.set_dispatch_state(node, node, EventPhase::Target);
+        for listener in listeners {
+            let panicked = catch_handler_panic(|| {
+                if let ListenerKind::Drag(handler) = &listener.kind {
                     handler(event);
                 }
             });

@@ -4,7 +4,8 @@ use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
 use crate::document::selection::PendingSelection;
 use crate::event::{
-    KeyEvent, KeyModifiers, MouseButton, MouseEvent, PostFrameEvent, ResizeEvent, WheelEvent,
+    DragEvent, DragPhase, KeyEvent, KeyModifiers, MouseButton, MouseEvent, PostFrameEvent,
+    ResizeEvent, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -157,6 +158,15 @@ pub(crate) struct RuntimeEventState {
     scrollbar_drag: Option<ScrollbarDrag>,
     /// The last press landed outside the focus context, so its release is swallowed too.
     press_outside: bool,
+    pointer_drag: Option<PointerDrag>,
+}
+
+/// A press a node took with a drag listener.
+#[derive(Debug, Clone)]
+struct PointerDrag {
+    node: NodeId,
+    press: MouseEvent,
+    moved: bool,
 }
 
 /// Process one queued or simulated runtime event.
@@ -184,6 +194,7 @@ pub(crate) fn process_runtime_event(
             state.pending_selection = None;
             state.scrollbar_drag = None;
             state.pending_click = None;
+            state.pointer_drag = None;
 
             // Checked before dispatch: the handler usually closes the context, after which the
             // node under the pointer is live and would take the rest of this press.
@@ -211,22 +222,34 @@ pub(crate) fn process_runtime_event(
             if let Some(drag) = state.scrollbar_drag {
                 doc.set_scrollbar_grab(Some(drag.container));
                 state.pending_click = None;
-            } else {
-                state.pending_click = Some(ClickCandidate {
-                    target,
-                    x: mouse.x,
-                    y: mouse.y,
-                    button: mouse.button,
-                    modifiers: mouse.modifiers,
+                return;
+            }
+            state.pending_click = Some(ClickCandidate {
+                target,
+                x: mouse.x,
+                y: mouse.y,
+                button: mouse.button,
+                modifiers: mouse.modifiers,
+            });
+            let drag_node = (!doc.blocks_interaction(target))
+                .then(|| doc.drag_listener_for(target))
+                .flatten();
+            // A drag listener claims the press, so it selects no text.
+            if let Some(node) = drag_node {
+                state.pointer_drag = Some(PointerDrag {
+                    node,
+                    press: mouse,
+                    moved: false,
                 });
+                return;
+            }
 
-                // The mouse default action: a left press clears the selection and arms a
-                // new drag from this point. Preventing it keeps the selection too — the
-                // press was claimed for something other than selecting.
-                if mouse.button == MouseButton::Left && !mouse.default_prevented() {
-                    doc.clear_selection();
-                    state.pending_selection = doc.begin_selection_drag(mouse.x, mouse.y, target);
-                }
+            // The mouse default action: a left press clears the selection and arms a
+            // new drag from this point. Preventing it keeps the selection too — the
+            // press was claimed for something other than selecting.
+            if mouse.button == MouseButton::Left && !mouse.default_prevented() {
+                doc.clear_selection();
+                state.pending_selection = doc.begin_selection_drag(mouse.x, mouse.y, target);
             }
         }
         RuntimeEvent::MouseMove { x, y, held } => {
@@ -234,6 +257,13 @@ pub(crate) fn process_runtime_event(
             // hover-to-focus applies only to unpressed movement.
             if held.is_none() {
                 focus_hover_target(doc, x, y);
+            } else if let Some(drag) = state.pointer_drag.as_mut() {
+                // A press that moved is a drag, not a click.
+                drag.moved = true;
+                state.pending_click = None;
+                let mut event = DragEvent::new(x, y, &drag.press, DragPhase::Move);
+                let node = drag.node;
+                doc.dispatch_drag_to(node, &mut event);
             } else if held == Some(MouseButton::Left) {
                 if let Some(drag) = state.scrollbar_drag {
                     update_scrollbar_drag(doc, drag, x, y);
@@ -246,6 +276,12 @@ pub(crate) fn process_runtime_event(
             if state.press_outside {
                 state.press_outside = false;
                 return;
+            }
+            if let Some(drag) = state.pointer_drag.take()
+                && drag.moved
+            {
+                let mut event = DragEvent::new(mouse.x, mouse.y, &drag.press, DragPhase::End);
+                doc.dispatch_drag_to(drag.node, &mut event);
             }
             let target = mouse_target(doc, mouse.x, mouse.y);
             // Release clears the pressed state wherever the cursor ended up, so dragging

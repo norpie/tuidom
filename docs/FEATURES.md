@@ -316,6 +316,9 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
         keyboard protocol, so the API would silently never fire on most terminals.
         `Repeat` is dropped alongside `Release` for the same reason.
   - [x] Mouse: click, mouse down, mouse up, wheel (raw input)
+  - [x] Drag: `on_drag` takes presses on a node's subtree (nearest listener wins) and reports
+        each held move and the release to that node only; the press selects no text and a
+        moved press is no click
     - [x] Modifiers on button, click, and wheel events
       - [x] A click reports the modifiers held at *press* time, not release
       - [x] A shift spent selecting the wheel's axis is not reported, so both terminal

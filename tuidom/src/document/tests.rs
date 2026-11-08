@@ -8,8 +8,8 @@ use super::*;
 use crate::TuidomError;
 use crate::animation::{Easing, TransitionConfig};
 use crate::event::{
-    EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, KeyModifiers, MouseButton,
-    MouseEvent, ResizeEvent, WheelEvent,
+    DragPhase, EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, KeyModifiers,
+    MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
 use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
@@ -7600,4 +7600,169 @@ async fn set_focusable_notifies_so_the_change_is_observable() {
         .expect("set_focusable schedules a frame so the change can be observed");
 
     assert!(doc.snapshot_node(button).unwrap().focusable);
+}
+
+// -- Pointer drag -------------------------------------------------------------
+
+/// A row of text on a 10×2 screen inside `outer`, with `inner` around the first four cells.
+fn drag_scene(doc: &Document) -> (NodeId, NodeId) {
+    let outer = doc.create_box().unwrap();
+    doc.append_child(doc.root(), outer).unwrap();
+    let inner = doc.create_box().unwrap();
+    doc.append_child(outer, inner).unwrap();
+    let text = doc.create_text("abcd").unwrap();
+    doc.append_child(inner, text).unwrap();
+    let rest = doc.create_text("efghij").unwrap();
+    doc.append_child(outer, rest).unwrap();
+    (outer, inner)
+}
+
+type DragLog = Arc<Mutex<Vec<(DragPhase, i32, i32, i32, NodeId)>>>;
+
+fn record_drags(doc: &Document, node: NodeId) -> DragLog {
+    let log = DragLog::default();
+    let seen = log.clone();
+    doc.on_drag(node, move |event| {
+        seen.lock().unwrap().push((
+            event.phase,
+            event.x,
+            event.y,
+            event.origin_x,
+            event.target(),
+        ));
+    })
+    .unwrap();
+    log
+}
+
+#[test]
+fn a_drag_reports_each_move_and_its_end_to_the_node_that_took_it() {
+    let doc = Document::new().unwrap();
+    let (_, inner) = drag_scene(&doc);
+    let drags = record_drags(&doc, inner);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 2);
+    runtime.render().unwrap();
+
+    runtime.simulate_mouse_down(1, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(3, 0, MouseButton::Left);
+    // Off the node and off its row: the node that took the press keeps the drag.
+    runtime.simulate_mouse_drag_move(8, 1, MouseButton::Left);
+    runtime.simulate_mouse_up(9, 1, MouseButton::Left);
+
+    assert_eq!(
+        *drags.lock().unwrap(),
+        vec![
+            (DragPhase::Move, 3, 0, 1, inner),
+            (DragPhase::Move, 8, 1, 1, inner),
+            (DragPhase::End, 9, 1, 1, inner),
+        ]
+    );
+}
+
+#[test]
+fn a_press_that_never_moves_is_a_click_and_no_drag() {
+    let doc = Document::new().unwrap();
+    let (_, inner) = drag_scene(&doc);
+    let drags = record_drags(&doc, inner);
+    let clicks = Arc::new(AtomicUsize::new(0));
+    {
+        let clicks = clicks.clone();
+        doc.on_click(inner, move |_| {
+            clicks.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 2);
+    runtime.render().unwrap();
+
+    runtime.simulate_click(1, 0);
+    assert!(drags.lock().unwrap().is_empty());
+    assert_eq!(clicks.load(Ordering::SeqCst), 1);
+
+    // Moving away and back still makes it a drag, so the release is no click.
+    runtime.simulate_mouse_down(1, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(2, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(1, 0, MouseButton::Left);
+    runtime.simulate_mouse_up(1, 0, MouseButton::Left);
+    assert_eq!(clicks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn the_nearest_drag_listener_takes_the_press_and_the_drag_does_not_bubble() {
+    let doc = Document::new().unwrap();
+    let (outer, inner) = drag_scene(&doc);
+    let outer_drags = record_drags(&doc, outer);
+    let inner_drags = record_drags(&doc, inner);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 2);
+    runtime.render().unwrap();
+
+    runtime.simulate_mouse_drag((1, 0), (2, 0));
+    assert_eq!(inner_drags.lock().unwrap().len(), 2);
+    assert!(outer_drags.lock().unwrap().is_empty());
+
+    // Outside `inner`, the press goes up to `outer`.
+    runtime.simulate_mouse_drag((6, 0), (7, 0));
+    assert_eq!(outer_drags.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn a_press_taken_for_dragging_leaves_the_selection_alone_but_still_sends_mouse_down_and_up() {
+    let doc = Document::new().unwrap();
+    let (_, inner) = drag_scene(&doc);
+    record_drags(&doc, inner);
+    let buttons = Arc::new(AtomicUsize::new(0));
+    {
+        let buttons = buttons.clone();
+        doc.on_mouse_down(inner, move |_| {
+            buttons.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    {
+        let buttons = buttons.clone();
+        doc.on_mouse_up(inner, move |_| {
+            buttons.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 2);
+    runtime.render().unwrap();
+
+    // Outside `inner` a drag still selects.
+    runtime.simulate_mouse_drag((5, 0), (8, 0));
+    let selected = doc.selection();
+    assert!(selected.is_some());
+
+    // Inside it, the press neither clears that selection nor starts another.
+    runtime.simulate_mouse_drag((0, 0), (3, 0));
+    assert_eq!(doc.selection(), selected);
+    assert_eq!(buttons.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_disabled_node_takes_no_drag() {
+    let doc = Document::new().unwrap();
+    let (_, inner) = drag_scene(&doc);
+    let drags = record_drags(&doc, inner);
+    doc.set_disabled(inner, true).unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 2);
+    runtime.render().unwrap();
+
+    runtime.simulate_mouse_drag((1, 0), (3, 0));
+    assert!(drags.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_scrollbar_press_grabs_the_bar_instead_of_starting_a_drag() {
+    let (doc, mut runtime, container) = scrollbar_drag_setup();
+    let drags = record_drags(&doc, container);
+
+    runtime.simulate_mouse_down(4, 0, MouseButton::Left);
+    runtime.simulate_mouse_drag_move(4, 1, MouseButton::Left);
+    runtime.simulate_mouse_up(4, 1, MouseButton::Left);
+    assert_eq!(doc.scroll_offset(container).y, 2);
+    assert!(drags.lock().unwrap().is_empty());
+
+    runtime.simulate_mouse_drag((0, 0), (1, 1));
+    assert_eq!(drags.lock().unwrap().len(), 2);
 }

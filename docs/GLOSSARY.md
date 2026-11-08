@@ -156,6 +156,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Input Event** — An `Input` node's value changed, reported by `on_input` after the key press default action that edited it. Targets the input and bubbles. See [events that report what the engine did](events.md#events-that-report-what-the-engine-did).
 
+**Drag** — A press taken by the nearest node with an `on_drag` listener, which then receives every held pointer move and the release, wherever the pointer goes. Starts at the first move; leaves the selection alone and ends in no click. See [dragging](events.md#dragging).
+
 **Post-Frame Event** — Document-level notification that a frame finished, carrying its metrics. See [post-frame](events.md#post-frame).
 
 **Window Focus** — Whether the *terminal window* holds OS focus, not DOM focus. Never moves the focused node. See [window focus](events.md#window-focus).

@@ -701,6 +701,58 @@ impl AnimationIterationEvent {
     }
 }
 
+/// Which part of a drag a [`DragEvent`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragPhase {
+    /// The pointer moved with the button still held.
+    Move,
+    /// The button was released. Fires once, after at least one move.
+    End,
+}
+
+/// Pointer movement during a press that a node took for dragging.
+///
+/// Dispatched only to that node, the nearest node on the pressed node's ancestor path with a
+/// drag listener, and it does not bubble. Positions are screen cells, like a mouse event's.
+#[derive(Debug, Clone)]
+pub struct DragEvent {
+    /// X coordinate of the pointer now.
+    pub x: i32,
+    /// Y coordinate of the pointer now.
+    pub y: i32,
+    /// X coordinate where the press started.
+    pub origin_x: i32,
+    /// Y coordinate where the press started.
+    pub origin_y: i32,
+    /// The button held down.
+    pub button: MouseButton,
+    /// Modifier keys held at press time.
+    pub modifiers: KeyModifiers,
+    /// Whether the pointer moved or the button was released.
+    pub phase: DragPhase,
+    metadata: TargetedMetadata,
+}
+
+impl DragEvent {
+    pub(crate) fn new(x: i32, y: i32, press: &MouseEvent, phase: DragPhase) -> Self {
+        Self {
+            x,
+            y,
+            origin_x: press.x,
+            origin_y: press.y,
+            button: press.button,
+            modifiers: press.modifiers,
+            phase,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node that took the drag.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+}
+
 /// A document selection change.
 ///
 /// Document-level like resize: selection is document state, so the event has no
@@ -825,6 +877,18 @@ impl TargetedEvent for ScrollEvent {
     }
 }
 
+impl TargetedEvent for DragEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    // Drag events do not bubble, so propagation can never be observed mid-flight.
+    fn propagation_stopped(&self) -> bool {
+        false
+    }
+}
+
 impl TargetedEvent for InputEvent {
     fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
         self.metadata
@@ -872,6 +936,7 @@ impl TargetedEvent for AnimationIterationEvent {
 pub(crate) type KeyEventHandler = Arc<dyn Fn(&mut KeyEvent) + Send + Sync + 'static>;
 pub(crate) type FocusEventHandler = Arc<dyn Fn(&mut FocusEvent) + Send + Sync + 'static>;
 pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 'static>;
+pub(crate) type DragEventHandler = Arc<dyn Fn(&mut DragEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
 pub(crate) type InputEventHandler = Arc<dyn Fn(&mut InputEvent) + Send + Sync + 'static>;
@@ -898,6 +963,7 @@ pub(crate) enum TargetedEventKind {
     MouseUp,
     Click,
     PressOutside,
+    Drag,
     Wheel,
     Scroll,
     Input,
@@ -923,6 +989,8 @@ pub(crate) enum ListenerKind {
     Click(MouseEventHandler),
     /// Listener for a press outside an open focus context.
     PressOutside(MouseEventHandler),
+    /// Drag listener.
+    Drag(DragEventHandler),
     /// Mouse wheel listener.
     Wheel(WheelEventHandler),
     /// Scroll offset change listener.

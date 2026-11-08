@@ -308,7 +308,7 @@ terminal — the same reasoning that keeps key release out.
 ## Mouse
 
 `on_mouse_down`, `on_mouse_up`, and `on_click` all carry `x`, `y`, `button`, and
-`modifiers`. Wheel events carry `delta`, an `axis`, and `modifiers`:
+`modifiers`. Pointer movement reaches listeners only as a [drag](#dragging). Wheel events carry `delta`, an `axis`, and `modifiers`:
 
 ```rust
 doc.on_wheel(node, |event| {
@@ -330,6 +330,31 @@ arrives horizontal with `CONTROL` set.
 
 Modifiers are reported, not acted on: a chorded wheel still scrolls and a ctrl+click still
 starts a selection. Use `prevent_default()` to claim the gesture for something else.
+
+### Dragging
+
+A node that registers `on_drag` takes the presses that land on it or anything inside it, the
+nearest such node winning. From the first pointer move with the button held it receives a
+`DragEvent` per move and one more on release, each carrying the pointer's position, where the
+press started, and a `phase` of `Move` or `End`:
+
+```rust
+doc.on_drag(divider, move |event| {
+    let delta = event.x - event.origin_x;
+    // resize by `delta`
+})?;
+```
+
+The node keeps the drag wherever the pointer goes, off the node or off the row it started on,
+until the release. A pointer dragged quickly leaves a one-cell divider at once, so events that
+followed whatever is under the pointer would drop the drag. Drag events therefore go only to that
+node and do not bubble.
+
+Taking the press changes what the rest of the press does. It neither clears nor starts a text
+selection, since dragging a divider is not selecting the text it crosses, and a press that moved
+is not a click, even if it ends on the cell it started on. A press that never moves produces no
+drag events and clicks as usual. Mouse down and mouse up still fire. A press on a scrollbar grabs
+the scrollbar instead, and a disabled or inert node takes no drag.
 
 **Hover is focus.** Mousing over a focusable node focuses it. There is no separate hover
 event or hover state — see [styling](styling.md#hover-is-focus) for why.
