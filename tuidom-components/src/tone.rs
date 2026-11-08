@@ -1,6 +1,7 @@
 use tuidom::style::Color;
 
-/// What an accent means, which decides its color: a [`ProgressBar`](crate::ProgressBar)'s fill.
+/// What an accent means, which decides its color: a [`ProgressBar`](crate::ProgressBar)'s fill
+/// or a [`Toast`](crate::Toast)'s edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tone {
     /// Filled with `--primary`.

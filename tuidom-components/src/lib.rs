@@ -24,6 +24,7 @@ mod tabs;
 mod test_support;
 mod text_input;
 mod theme;
+mod toast;
 mod tone;
 mod tooltip;
 
@@ -46,5 +47,6 @@ pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
     ThemeScopeProps, install_theme, use_shape,
 };
+pub use toast::{Toast, Toaster, ToasterHandle, ToasterProps, use_toaster};
 pub use tone::Tone;
 pub use tooltip::{Side, Tooltip, TooltipProps};
