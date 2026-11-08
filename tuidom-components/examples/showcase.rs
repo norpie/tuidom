@@ -1,8 +1,10 @@
-//! Every component in `tuidom-components`, one at a time, under a switchable theme.
+//! Every component in `tuidom-components`, a section per tab, under a switchable theme.
 //!
 //! Tab / Shift-Tab   — move focus (hovering focuses too)
+//! Left / Right      — switch sections while the tab strip is focused
 //! Enter / Space     — press a button, toggle a checkbox, open or pick in a select
-//! Arrows            — move a radio selection, a slider, or a select's highlight
+//! Arrows            — move a radio selection, a slider, a select's highlight, or a split
+//! Mouse drag        — move the split's divider
 //! t                 — switch between the dark and light themes (outside a text field)
 //! q                 — quit (outside a text field)
 
@@ -11,10 +13,11 @@ use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Style};
 use tuidom_components::{
     Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Divider, DividerProps, Label,
-    LabelProps, LabelTone, Orientation, RadioGroup, RadioGroupProps, Select, SelectProps, Slider,
-    SliderProps, TextInput, TextInputProps, Theme, install_theme,
+    LabelProps, LabelTone, Modal, ModalProps, Orientation, Panel, PanelProps, RadioGroup,
+    RadioGroupProps, Scrollable, ScrollableProps, Select, SelectProps, Slider, SliderProps, Split,
+    SplitProps, Tabs, TabsProps, TextInput, TextInputProps, Theme, install_theme,
 };
-use tuidom_ui::{App, state, use_document, view};
+use tuidom_ui::{App, Signal, View, state, use_document, view};
 
 fn page() -> Style {
     let mut style = Style::new();
@@ -23,6 +26,15 @@ fn page() -> Style {
     style.flex_direction(FlexDirection::Column);
     style.padding(EdgeInsets::symmetric(2, 1));
     style.gap(FlexGap::new(1, 0));
+    style
+}
+
+fn section() -> Style {
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.padding(EdgeInsets::new(1, 0, 0, 0));
+    style.gap(FlexGap::new(1, 0));
+    style.flex_grow(1.0);
     style
 }
 
@@ -51,6 +63,30 @@ fn sized(width: u16) -> Style {
     style
 }
 
+fn tall(height: u16) -> Style {
+    let mut style = Style::new();
+    style.height(Length::Cells(height));
+    style
+}
+
+fn grow() -> Style {
+    let mut style = Style::new();
+    style.flex_grow(1.0);
+    style
+}
+
+fn heading() -> Style {
+    let mut style = Style::new();
+    style.bold(true);
+    style
+}
+
+fn sections() -> Vec<String> {
+    ["Buttons", "Inputs", "Containers", "Labels"]
+        .map(String::from)
+        .to_vec()
+}
+
 fn plans() -> Vec<String> {
     ["Free", "Pro", "Team"].map(String::from).to_vec()
 }
@@ -61,10 +97,160 @@ fn sizes() -> Vec<String> {
         .to_vec()
 }
 
-fn heading() -> Style {
-    let mut style = Style::new();
-    style.bold(true);
-    style
+fn buttons(last: Signal<String>) -> View {
+    view! {
+        box {
+            style: section(),
+            box {
+                style: row(),
+                Button { label: "Save".to_string(), on_press: move |_| last.set("Save".to_string()) },
+                Button {
+                    label: "Cancel".to_string(),
+                    variant: ButtonVariant::Secondary,
+                    on_press: move |_| last.set("Cancel".to_string()),
+                },
+                Button {
+                    label: "Delete".to_string(),
+                    variant: ButtonVariant::Destructive,
+                    on_press: move |_| last.set("Delete".to_string()),
+                },
+                Button {
+                    label: "Outline".to_string(),
+                    variant: ButtonVariant::Outline,
+                    on_press: move |_| last.set("Outline".to_string()),
+                },
+                Button {
+                    label: "Ghost".to_string(),
+                    variant: ButtonVariant::Ghost,
+                    on_press: move |_| last.set("Ghost".to_string()),
+                },
+                Button { label: "Disabled".to_string(), disabled: true },
+            },
+            Label { text: format!("Last pressed: {}", last.get()), tone: LabelTone::Muted },
+        }
+    }
+}
+
+/// The values the inputs are bound to, kept outside the tab so switching away keeps them.
+#[derive(Clone, Copy)]
+struct Fields {
+    name: Signal<String>,
+    password: Signal<String>,
+    subscribe: Signal<bool>,
+    plan: Signal<usize>,
+    size: Signal<usize>,
+    volume: Signal<f64>,
+}
+
+fn inputs(fields: Fields) -> View {
+    let Fields {
+        name,
+        password,
+        subscribe,
+        plan,
+        size,
+        volume,
+    } = fields;
+    view! {
+        box {
+            style: section(),
+            box {
+                style: inputs_row(),
+                box {
+                    style: column(28),
+                    TextInput { value: name, placeholder: "Your name".to_string() },
+                    TextInput {
+                        value: password,
+                        placeholder: "Password".to_string(),
+                        mask: Some('•'),
+                    },
+                    TextInput {
+                        value: state(String::new()),
+                        placeholder: "Disabled".to_string(),
+                        disabled: true,
+                    },
+                },
+                box {
+                    style: column(16),
+                    Checkbox { checked: subscribe, label: "Subscribe".to_string() },
+                    RadioGroup { options: plans(), selected: plan },
+                },
+                Select { options: sizes(), selected: size },
+            },
+            Slider { value: volume, step: 5.0, style: sized(28) },
+            Label {
+                text: format!(
+                    "name {:?} · password {} chars · subscribe {} · plan {} · size {} · volume {}",
+                    name.get(),
+                    password.get().chars().count(),
+                    subscribe.get(),
+                    plans()[plan.get()],
+                    sizes()[size.get()],
+                    volume.get(),
+                ),
+                tone: LabelTone::Muted,
+            },
+        }
+    }
+}
+
+fn containers(ratio: Signal<f64>, modal: Signal<bool>) -> View {
+    view! {
+        box {
+            style: section(),
+            Split {
+                ratio: ratio,
+                style: tall(14),
+                first: view! {
+                    Panel {
+                        title: "Files".to_string(),
+                        style: grow(),
+                        Scrollable {
+                            style: grow(),
+                            each _, n in 0..40 {
+                                text(format!("src/file_{n:02}.rs"))
+                            },
+                        },
+                    }
+                },
+                second: view! {
+                    Panel {
+                        title: "Details".to_string(),
+                        style: grow(),
+                        Label {
+                            text: format!("Split at {:.0}%", ratio.get() * 100.0),
+                            tone: LabelTone::Muted,
+                        },
+                        Button {
+                            label: "Open modal".to_string(),
+                            variant: ButtonVariant::Outline,
+                            on_press: move |_| modal.set(true),
+                        },
+                    }
+                },
+            },
+            Modal {
+                open: modal,
+                title: "A modal".to_string(),
+                Label { text: "Escape or a click outside closes it.".to_string() },
+                Button { label: "Close".to_string(), on_press: move |_| modal.set(false) },
+            },
+        }
+    }
+}
+
+fn labels() -> View {
+    view! {
+        box {
+            style: section(),
+            box {
+                style: row(),
+                Label { text: "Default tone".to_string() },
+                Divider { orientation: Orientation::Vertical },
+                Label { text: "Muted tone".to_string(), tone: LabelTone::Muted },
+            },
+        }
+    }
 }
 
 #[tokio::main]
@@ -72,13 +258,18 @@ async fn main() -> std::io::Result<()> {
     App::new(|| {
         let theme = install_theme(Theme::dark());
         let dark = state(true);
+        let tab = state(0_usize);
         let last = state(String::from("nothing yet"));
-        let name = state(String::new());
-        let password = state(String::new());
-        let subscribe = state(true);
-        let plan = state(0_usize);
-        let size = state(1_usize);
-        let volume = state(40.0);
+        let fields = Fields {
+            name: state(String::new()),
+            password: state(String::new()),
+            subscribe: state(true),
+            plan: state(0),
+            size: state(1),
+            volume: state(40.0),
+        };
+        let ratio = state(0.4);
+        let modal = state(false);
 
         let doc = use_document().expect("an App body has a document");
         let quit = doc.clone();
@@ -91,11 +282,11 @@ async fn main() -> std::io::Result<()> {
                 return;
             }
             match key.code {
-            KeyCode::Char('t') => {
-                let next = !dark.get();
-                dark.set(next);
-                theme.set(if next { Theme::dark() } else { Theme::light() });
-            }
+                KeyCode::Char('t') => {
+                    let next = !dark.get();
+                    dark.set(next);
+                    theme.set(if next { Theme::dark() } else { Theme::light() });
+                }
                 KeyCode::Char('q') => quit.quit(),
                 _ => {}
             }
@@ -107,84 +298,21 @@ async fn main() -> std::io::Result<()> {
                 style: page(),
                 Label { text: "tuidom-components".to_string(), style: heading() },
                 Label {
-                    text: "Tab moves focus · Enter presses · t switches theme · q quits".to_string(),
+                    text: "Tab moves focus · ←/→ on the strip switch sections · t switches theme · q quits"
+                        .to_string(),
                     tone: LabelTone::Muted,
                 },
                 Divider {},
-
-                Label { text: "Buttons".to_string(), style: heading() },
-                box {
-                    style: row(),
-                    Button {
-                        label: "Save".to_string(),
-                        on_press: move |_| last.set("Save".to_string()),
-                    },
-                    Button {
-                        label: "Cancel".to_string(),
-                        variant: ButtonVariant::Secondary,
-                        on_press: move |_| last.set("Cancel".to_string()),
-                    },
-                    Button {
-                        label: "Delete".to_string(),
-                        variant: ButtonVariant::Destructive,
-                        on_press: move |_| last.set("Delete".to_string()),
-                    },
-                    Button {
-                        label: "Outline".to_string(),
-                        variant: ButtonVariant::Outline,
-                        on_press: move |_| last.set("Outline".to_string()),
-                    },
-                    Button {
-                        label: "Ghost".to_string(),
-                        variant: ButtonVariant::Ghost,
-                        on_press: move |_| last.set("Ghost".to_string()),
-                    },
-                    Button { label: "Disabled".to_string(), disabled: true },
-                },
-                Label { text: format!("Last pressed: {}", last.get()), tone: LabelTone::Muted },
-                Divider {},
-
-                Label { text: "Inputs".to_string(), style: heading() },
-                box {
-                    style: inputs_row(),
-                    box {
-                        style: column(28),
-                        TextInput { value: name, placeholder: "Your name".to_string() },
-                        TextInput {
-                            value: password,
-                            placeholder: "Password".to_string(),
-                            mask: Some('•'),
-                        },
-                        TextInput { value: state(String::new()), placeholder: "Disabled".to_string(), disabled: true },
-                    },
-                    box {
-                        style: column(16),
-                        Checkbox { checked: subscribe, label: "Subscribe".to_string() },
-                        RadioGroup { options: plans(), selected: plan },
-                    },
-                    Select { options: sizes(), selected: size },
-                },
-                Slider { value: volume, step: 5.0, style: sized(28) },
-                Label {
-                    text: format!(
-                        "name {:?} · password {} chars · subscribe {} · plan {} · size {} · volume {}",
-                        name.get(),
-                        password.get().chars().count(),
-                        subscribe.get(),
-                        plans()[plan.get()],
-                        sizes()[size.get()],
-                        volume.get(),
-                    ),
-                    tone: LabelTone::Muted,
-                },
-                Divider {},
-
-                Label { text: "Labels and dividers".to_string(), style: heading() },
-                box {
-                    style: row(),
-                    Label { text: "Default tone".to_string() },
-                    Divider { orientation: Orientation::Vertical },
-                    Label { text: "Muted tone".to_string(), tone: LabelTone::Muted },
+                Tabs {
+                    tabs: sections(),
+                    selected: tab,
+                    style: grow(),
+                    match tab.get() {
+                        0 => { buttons(last) },
+                        1 => { inputs(fields) },
+                        2 => { containers(ratio, modal) },
+                        _ => { labels() },
+                    }
                 },
             }
         }
