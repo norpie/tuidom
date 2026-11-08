@@ -9,6 +9,7 @@ mod checkbox;
 mod choice;
 mod divider;
 mod label;
+mod radio_group;
 #[cfg(test)]
 mod test_support;
 mod text_input;
@@ -18,6 +19,7 @@ pub use button::{Button, ButtonProps, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxProps};
 pub use divider::{Divider, DividerProps, Orientation};
 pub use label::{Label, LabelProps, LabelTone};
+pub use radio_group::{RadioGroup, RadioGroupProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
