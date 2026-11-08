@@ -1,0 +1,5 @@
+error: a text node's braces take only `style:`
+ --> tests/ui/text_unknown_key.rs:5:28
+  |
+5 |         box { text("hi") { color: red } }
+  |                            ^^^^^

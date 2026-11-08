@@ -75,7 +75,12 @@ fn a_static_text_paints() {
 fn a_fragment_mounts_siblings_in_order_with_no_wrapper() {
     let doc = Document::new().unwrap();
     // A fragment adds no flex level, so the two texts sit adjacently under the root.
-    let _mounted = mount(&doc, doc.root(), fragment([text("ab"), text("cd")])).unwrap();
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        fragment([text("ab").into(), text("cd").into()]),
+    )
+    .unwrap();
     // Two direct children of the root, not one wrapper holding them.
     assert_eq!(doc.get_children(doc.root()).len(), 2);
 
@@ -127,6 +132,47 @@ fn a_text_binding_tracks_its_signal() {
     label.set(String::from("B")); // flush reruns the text effect, which repaints
     rt.render().unwrap();
     assert_eq!(rt.get_cell(0, 0).unwrap().text, "B");
+}
+
+#[test]
+fn a_text_style_reaches_its_cells() {
+    let doc = Document::new().unwrap();
+    let mut red = Style::new();
+    red.color(Color::red());
+    red.bold(true);
+    let _mounted = mount(&doc, doc.root(), text("x").style(red)).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    let cell = rt.get_cell(0, 0).unwrap();
+    assert_eq!(cell.fg, Some(ScreenColor::from_rgb(255, 0, 0)));
+    assert!(cell.bold);
+}
+
+#[test]
+fn a_text_style_in_view_tracks_its_signal() {
+    let doc = Document::new().unwrap();
+    let bold = state(false);
+    let ui = crate::view! {
+        box {
+            text("x") {
+                style: {
+                    let mut style = Style::new();
+                    style.bold(bold.get());
+                    style
+                },
+            },
+        }
+    };
+    let _mounted = mount(&doc, doc.root(), ui).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 4, 1);
+    rt.render().unwrap();
+    assert!(!rt.get_cell(0, 0).unwrap().bold);
+
+    bold.set(true);
+    rt.render().unwrap();
+    assert!(rt.get_cell(0, 0).unwrap().bold);
 }
 
 #[test]
@@ -223,7 +269,13 @@ fn a_dynamic_block_swaps_content_on_a_structural_change() {
     let _mounted = mount(
         &doc,
         doc.root(),
-        dynamic(move || if show.get() { text("Y") } else { text("N") }),
+        dynamic(move || {
+            if show.get() {
+                text("Y").into()
+            } else {
+                text("N").into()
+            }
+        }),
     )
     .unwrap();
 
@@ -270,7 +322,7 @@ fn content_bindings_update_without_remounting_the_block() {
         doc.root(),
         dynamic(move || {
             pr.fetch_add(1, Ordering::SeqCst);
-            dyn_text(move || inner.get())
+            dyn_text(move || inner.get()).into()
         }),
     )
     .unwrap();
@@ -300,12 +352,12 @@ fn sibling_dynamic_blocks_are_independent() {
         .child(dynamic(move || {
             ar.fetch_add(1, Ordering::SeqCst);
             let _ = a.get();
-            text("a")
+            text("a").into()
         }))
         .child(dynamic(move || {
             br.fetch_add(1, Ordering::SeqCst);
             let _ = b.get();
-            text("b")
+            text("b").into()
         }));
     let _mounted = mount(&doc, doc.root(), view).unwrap();
 
@@ -327,7 +379,7 @@ fn a_children_thunk_is_deferred_until_mount() {
     let c = calls.clone();
     let children = Children::new(move || {
         c.fetch_add(1, Ordering::SeqCst);
-        text("x")
+        text("x").into()
     });
     assert_eq!(calls.load(Ordering::SeqCst), 0); // constructing the thunk did not call it
 
@@ -345,7 +397,11 @@ fn the_container_survives_a_children_swap() {
     let doc = Document::new().unwrap();
     let which = state(true);
     let container = boxed().child(Children::new(move || {
-        if which.get() { text("A") } else { text("B") }
+        if which.get() {
+            text("A").into()
+        } else {
+            text("B").into()
+        }
     }));
     let mounted = mount(&doc, doc.root(), container).unwrap();
     let container_node = mounted.roots()[0];
@@ -399,7 +455,7 @@ fn unmount_leaves_no_orphaned_nodes() {
         doc.root(),
         boxed().child(text("hi")).child(dynamic(move || {
             if show.get() {
-                text("Y")
+                text("Y").into()
             } else {
                 fragment(Vec::<View>::new())
             }
@@ -968,7 +1024,7 @@ fn Labelled(n: i32) -> View {
 /// A component whose body is a fragment, to prove instantiation adds no wrapper node.
 #[crate::component]
 fn TwoBits() -> View {
-    fragment([text("x"), text("y")])
+    fragment([text("x").into(), text("y").into()])
 }
 
 /// A component owning internal state driven by a key handler, to prove the body runs under a
@@ -1673,7 +1729,7 @@ fn text_list(order: Signal<Vec<&'static str>>) -> View {
         order
             .get()
             .into_iter()
-            .map(|k| (k, move || text(k)))
+            .map(|k| (k, move || text(k).into()))
             .collect::<Vec<_>>()
     })
 }
@@ -1749,7 +1805,7 @@ fn an_empty_keyed_list_holds_its_place_between_siblings() {
     let order = state(vec!["a", "b"]);
     // A sibling on each side: the block empties and refills without disturbing them, because
     // the out-of-flow marker keeps holding the slot.
-    let view = fragment([text("<"), text_list(order), text(">")]);
+    let view = fragment([text("<").into(), text_list(order), text(">").into()]);
     let _m = mount(&doc, doc.root(), view).unwrap();
 
     let mut rt = HeadlessRuntime::new(doc, 4, 1);
@@ -1935,7 +1991,7 @@ fn number_list(count: usize) -> View {
     let mut style = Style::new();
     style.width(Length::Cells(4));
     style.height(Length::Cells(5));
-    virtual_list(style, 1, 0, move || count, |i| text(i.to_string()))
+    virtual_list(style, 1, 0, move || count, |i| text(i.to_string()).into())
 }
 
 #[test]
@@ -2248,7 +2304,7 @@ fn a_windowed_list_scrolls_through_a_large_collection() {
     let mut style = Style::new();
     style.width(Length::Cells(6));
     style.height(Length::Cells(5));
-    let view = virtual_list(style, 1, 1, || 1000, |i| text(i.to_string()));
+    let view = virtual_list(style, 1, 1, || 1000, |i| text(i.to_string()).into());
     let container = mount(&doc, doc.root(), view).unwrap().roots()[0];
 
     let mut rt = HeadlessRuntime::new(doc.clone(), 6, 5);

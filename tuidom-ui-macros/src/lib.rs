@@ -52,6 +52,9 @@ use syn::{
 ///   attributes and children; a nested element or `text(..)` is a child.
 /// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
 ///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
+///   `text(..) { style: s }` styles the node, always reactively. A text node inherits nothing
+///   from its box, so this is how it gets a color other than the document's default
+///   foreground, or bold, italic, and underline.
 /// - **Attributes** — `key: value`, dispatched by key:
 ///   - `style:`, `focus_style:`, `active_style:`, `disabled_style:` — a whole `Style`, always
 ///     bound reactively.
@@ -605,8 +608,9 @@ enum Node {
         attrs: Vec<Attr>,
         children: Vec<Node>,
     },
-    /// A text node: `text(expr)`, or a bare string-literal child.
-    Text(Expr),
+    /// A text node: `text(expr)`, optionally followed by `{ style: expr }`, or a bare
+    /// string-literal child.
+    Text { content: Expr, style: Option<Expr> },
     /// A reactive view hole: `{ expr }`, where `expr` is `Into<View>`.
     Hole(Expr),
     /// An `if` / `else if` / `else` chain. Boxed — a control-flow node dwarfs the others.
@@ -675,7 +679,10 @@ impl Parse for Node {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // A bare string literal is a static text child: `box { "hi" }`.
         if input.peek(LitStr) {
-            return Ok(Node::Text(input.parse()?));
+            return Ok(Node::Text {
+                content: input.parse()?,
+                style: None,
+            });
         }
 
         // A leading brace is a reactive view hole — `{ expr }` — lowered to a dynamic block.
@@ -699,7 +706,15 @@ impl Parse for Node {
             "text" => {
                 let args;
                 parenthesized!(args in input);
-                Ok(Node::Text(args.parse()?))
+                let content = args.parse()?;
+                let style = if input.peek(syn::token::Brace) {
+                    let body;
+                    braced!(body in input);
+                    Some(parse_text_style(&body)?)
+                } else {
+                    None
+                };
+                Ok(Node::Text { content, style })
             }
             "else" => Err(syn::Error::new(
                 name.span(),
@@ -863,6 +878,29 @@ fn parse_child_block(input: ParseStream) -> syn::Result<Vec<Node>> {
 /// children. An `ident: value` entry is an attribute — detected by the colon as its second
 /// token, so the split holds whether or not the key is a keyword — and everything else is a
 /// child node.
+/// The braces after `text(..)`, which hold a `style:` key and nothing else.
+fn parse_text_style(body: ParseStream) -> syn::Result<Expr> {
+    if !body.peek2(Token![:]) {
+        return Err(body.error("a text node's braces take only `style:`"));
+    }
+    let name = body.call(Ident::parse_any)?;
+    if name != "style" {
+        return Err(syn::Error::new(
+            name.span(),
+            "a text node's braces take only `style:`",
+        ));
+    }
+    body.parse::<Token![:]>()?;
+    let style = body.parse()?;
+    if body.peek(Token![,]) {
+        body.parse::<Token![,]>()?;
+    }
+    if !body.is_empty() {
+        return Err(body.error("a text node's braces take only `style:`"));
+    }
+    Ok(style)
+}
+
 fn parse_body(body: ParseStream, validate_events: bool) -> syn::Result<(Vec<Attr>, Vec<Node>)> {
     let mut attrs = Vec::new();
     let mut children = Vec::new();
@@ -930,7 +968,13 @@ fn is_input_only(name: &str) -> bool {
 impl Node {
     fn expand(&self) -> TokenStream2 {
         match self {
-            Node::Text(expr) => text_node(expr),
+            Node::Text { content, style } => {
+                let text = text_node(content);
+                match style {
+                    Some(style) => quote! { #text.dyn_style(move || #style) },
+                    None => text,
+                }
+            }
             Node::Hole(expr) => {
                 quote! { ::tuidom_ui::dynamic(move || ::tuidom_ui::View::from(#expr)) }
             }

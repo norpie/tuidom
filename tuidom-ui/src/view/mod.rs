@@ -162,9 +162,11 @@ enum ViewKind {
 /// effects, and nodes down together. `FnOnce`, since the body is built a single time.
 type ComponentBuild = Box<dyn FnOnce() -> View + Send + Sync>;
 
-/// A text node description, static or reactive.
+/// A text node description: its content and style, each static or reactive.
 struct TextView {
     content: Source<String>,
+    // Boxed because a `Style` is large and most text is unstyled.
+    style: Option<Box<Source<Style>>>,
 }
 
 /// A dynamic block: a closure re-run on its own dependencies, whose produced view replaces
@@ -316,24 +318,53 @@ impl Mounted {
     }
 }
 
-/// A static text node.
-pub fn text(content: impl Into<String>) -> View {
-    View {
-        kind: ViewKind::Text(TextView {
-            content: Source::Static(content.into()),
-        }),
-    }
+/// A text node with static content.
+pub fn text(content: impl Into<String>) -> Text {
+    Text(TextView {
+        content: Source::Static(content.into()),
+        style: None,
+    })
 }
 
 /// A text node whose content tracks the signals its closure reads.
-pub fn dyn_text<F>(f: F) -> View
+pub fn dyn_text<F>(f: F) -> Text
 where
     F: Fn() -> String + Send + Sync + 'static,
 {
-    View {
-        kind: ViewKind::Text(TextView {
-            content: Source::Reactive(Box::new(f)),
-        }),
+    Text(TextView {
+        content: Source::Reactive(Box::new(f)),
+        style: None,
+    })
+}
+
+/// A text node description, built by [`text`] or [`dyn_text`].
+///
+/// A text node resolves its own style and inherits nothing from the box around it, so its
+/// color, unless styled here, is the document's default foreground.
+pub struct Text(TextView);
+
+impl Text {
+    /// Set a constant style.
+    pub fn style(mut self, style: Style) -> Self {
+        self.0.style = Some(Box::new(Source::Static(style)));
+        self
+    }
+
+    /// Bind the style reactively.
+    pub fn dyn_style<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Style + Send + Sync + 'static,
+    {
+        self.0.style = Some(Box::new(Source::Reactive(Box::new(f))));
+        self
+    }
+}
+
+impl From<Text> for View {
+    fn from(text: Text) -> View {
+        View {
+            kind: ViewKind::Text(text.0),
+        }
     }
 }
 
@@ -890,14 +921,14 @@ impl From<Element> for View {
 /// [`dyn_text`].
 impl From<String> for View {
     fn from(content: String) -> View {
-        text(content)
+        text(content).into()
     }
 }
 
 /// A string slice becomes a static text node. See [`From<String>`](#impl-From<String>-for-View).
 impl From<&str> for View {
     fn from(content: &str) -> View {
-        text(content)
+        text(content).into()
     }
 }
 
@@ -982,6 +1013,13 @@ fn mount_view(
                     tracing::warn!(?node, "text binding failed: {err}");
                 }
             });
+            bind_node(
+                doc,
+                node,
+                "style",
+                view.style.map(|s| *s),
+                |d, n, s: Style| d.set_style(n, &s),
+            );
             Ok(vec![node])
         }
         ViewKind::Element(element) => {

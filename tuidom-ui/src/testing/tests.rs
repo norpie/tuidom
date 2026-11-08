@@ -107,7 +107,7 @@ fn settling_renders_the_extra_frame_a_virtual_list_needs() {
         let mut style = Style::new();
         style.width(Length::Cells(4));
         style.height(Length::Cells(5));
-        virtual_list(style, 1, 0, || 100, |i| text(i.to_string()))
+        virtual_list(style, 1, 0, || 100, |i| text(i.to_string()).into())
     });
     let rt = h.runtime();
     assert_eq!(rt.get_cell(0, 0).unwrap().text, "0");
@@ -123,7 +123,7 @@ fn dropping_the_harness_disposes_the_tree() {
             on_cleanup(move || {
                 c.fetch_add(1, Ordering::SeqCst);
             });
-            text("x")
+            text("x").into()
         })
     });
     let doc = h.document().clone();
