@@ -1,4 +1,4 @@
-error: unknown event handler `on_hover`; elements take `on_click`, `on_key_press`, `on_mouse_down`, `on_mouse_up`, `on_focus`, `on_blur`, `on_wheel`, `on_scroll`, `on_input`, `on_transition_end`, `on_animation_end`, `on_animation_iteration`
+error: unknown event handler `on_hover`; elements take `on_click`, `on_key_press`, `on_mouse_down`, `on_mouse_up`, `on_focus`, `on_blur`, `on_press_outside`, `on_wheel`, `on_scroll`, `on_input`, `on_transition_end`, `on_animation_end`, `on_animation_iteration`
  --> tests/ui/unknown_event.rs:5:15
   |
 5 |         box { on_hover: move |_| {} }

@@ -948,6 +948,7 @@ const KNOWN_EVENTS: &[&str] = &[
     "on_mouse_up",
     "on_focus",
     "on_blur",
+    "on_press_outside",
     "on_wheel",
     "on_scroll",
     "on_input",

@@ -2340,7 +2340,8 @@ fn every_element_event_is_accepted_and_freed_on_unmount() {
     // still holds. This `view!` also pins the macro's event list to the builder's methods: a
     // name the macro accepts but `Element` lacks fails to compile here.
     let probe = Arc::new(());
-    let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11] = std::array::from_fn(|_| probe.clone());
+    let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12] =
+        std::array::from_fn(|_| probe.clone());
     let view = crate::view! {
         box {
             on_click: move || { let _ = &p0; },
@@ -2355,11 +2356,12 @@ fn every_element_event_is_accepted_and_freed_on_unmount() {
             on_transition_end: move || { let _ = &p9; },
             on_animation_end: move || { let _ = &p10; },
             on_animation_iteration: move || { let _ = &p11; },
+            on_press_outside: move || { let _ = &p12; },
         }
     };
     let doc = Document::new().unwrap();
     let mounted = mount(&doc, doc.root(), view).unwrap();
-    assert_eq!(Arc::strong_count(&probe), 13);
+    assert_eq!(Arc::strong_count(&probe), 14);
 
     mounted.unmount();
     assert_eq!(Arc::strong_count(&probe), 1);
@@ -3532,6 +3534,35 @@ fn nodes_outside_a_trap_are_inert() {
     assert!(h.document().is_inert(open).unwrap());
     h.click_text("open");
     assert_eq!(opened.get(), 0);
+}
+
+#[test]
+fn a_press_outside_a_trap_can_close_it() {
+    let (shown, opened) = (state(true), state(0));
+    let mut h = Harness::new(8, 3, move || {
+        crate::view! {
+            box {
+                style: column(),
+                box { test_id: "open", focusable: true, on_click: move || opened.update(|n| *n += 1), text("open") },
+                if shown.get() {
+                    box {
+                        style: modal_style(),
+                        trap_focus: true,
+                        on_press_outside: move || shown.set(false),
+                        { focusable("ok") },
+                    }
+                },
+            }
+        }
+    });
+    h.click_text("ok");
+    assert!(shown.get());
+
+    // The press closes the trap, and its release does not go on to click the opener.
+    h.click_text("open");
+    assert!(!shown.get());
+    assert_eq!(opened.get(), 0);
+    assert_eq!(h.document().focus_context_depth(), 1);
 }
 
 #[test]

@@ -892,6 +892,10 @@ element_events! {
     on_focus: FocusEvent;
     /// Register a blur listener. It bubbles, so it also fires when a descendant loses focus.
     on_blur: FocusEvent;
+    /// Register a listener for a press outside this element while it is the innermost focus
+    /// trap. It does not bubble, and the press is consumed, so closing the trap here does not
+    /// let the release click what was underneath.
+    on_press_outside: MouseEvent;
     /// Register a mouse-wheel listener.
     on_wheel: WheelEvent;
     /// Register a listener for this element's scroll offset changing.
