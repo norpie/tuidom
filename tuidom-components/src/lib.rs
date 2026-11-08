@@ -16,6 +16,7 @@ mod radio_group;
 mod scrollable;
 mod select;
 mod slider;
+mod split;
 mod tabs;
 #[cfg(test)]
 mod test_support;
@@ -32,6 +33,7 @@ pub use radio_group::{RadioGroup, RadioGroupProps};
 pub use scrollable::{ScrollAxis, Scrollable, ScrollableProps};
 pub use select::{Select, SelectProps};
 pub use slider::{Slider, SliderProps};
+pub use split::{Split, SplitProps};
 pub use tabs::{Tabs, TabsProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
