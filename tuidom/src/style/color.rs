@@ -14,8 +14,8 @@ pub(crate) struct Rgb {
 /// A concrete color in the OKLCH color space, backed by [`palette::Oklch`].
 ///
 /// This is what a [`Color`] evaluates to once variables and node-relative references have been
-/// resolved, and it is what `ResolvedStyle` holds. Conversion to
-/// RGB happens only at render time.
+/// resolved, and it is what [`ResolvedStyle`](super::ResolvedStyle) holds. Conversion to RGB
+/// happens only at render time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResolvedColor {
     /// Lightness (0–1)

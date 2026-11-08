@@ -14,6 +14,7 @@ use std::time::Duration;
 
 pub use border::{Border, BorderCharset, Sides};
 pub use color::{Color, ColorOp, ResolvedColor};
+pub use resolution::ResolvedStyle;
 pub use scrollbar::{ScrollbarCharset, ScrollbarShow};
 
 // ---------------------------------------------------------------------------

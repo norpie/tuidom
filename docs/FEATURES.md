@@ -180,6 +180,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Inline styles only — no CSS selectors, no stylesheets, no cascade
 - [x] Explicit inheritance via `StyleValue::Inherit` — nothing inherits unless specified
 - [x] Style resolution walks parent chain for inherited values, caches results
+  - [x] `doc.resolved_style(id)` returns it as `tuidom::style::ResolvedStyle`
 - [x] Pseudo-state style overrides (merged on top of base style):
   - [x] `set_focus_style()` — when node is focused (hover = focus)
   - [x] `set_active_style()` — when node is being pressed
