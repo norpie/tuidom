@@ -4,24 +4,28 @@
 //! Left / Right      — switch sections while the tab strip is focused
 //! Enter / Space     — press a button, toggle a checkbox, open or pick in a select or menu
 //! Arrows            — move a radio selection, a slider, a list's highlight, or a split
+//! PageUp / PageDown, Home / End — move through a list, tree, or table
+//! Left / Right      — collapse or expand a tree node while the tree is focused
 //! Mouse drag        — move the split's divider
 //! Click a toast     — dismiss it
 //! t                 — switch between the dark and light themes (outside a text field)
 //! q                 — quit (outside a text field)
 
+use std::collections::HashSet;
 use tuidom::NodeKindView;
 use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Style};
 use tuidom_components::{
-    Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Divider, DividerProps, KeyHint,
-    KeyHintProps, Label, LabelProps, LabelTone, Menu, MenuItem, MenuProps, Modal, ModalProps,
-    Orientation, Panel, PanelProps, ProgressBar, ProgressBarProps, RadioGroup, RadioGroupProps,
-    Scrollable, ScrollableProps, Select, SelectProps, Side, Slider, SliderProps, Spinner,
-    SpinnerProps, Split, SplitProps, StatusBar, StatusBarProps, Tabs, TabsProps, TextInput,
-    TextInputProps, Theme, Toast, Toaster, ToasterProps, Tone, Tooltip, TooltipProps,
-    install_theme, use_toaster,
+    Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Column, Divider, DividerProps,
+    KeyHint, KeyHintProps, Label, LabelProps, LabelTone, List, ListProps, Menu, MenuItem,
+    MenuProps, Modal, ModalProps, Orientation, Panel, PanelProps, ProgressBar, ProgressBarProps,
+    RadioGroup, RadioGroupProps, Scrollable, ScrollableProps, Select, SelectProps, Side, Slider,
+    SliderProps, Spinner, SpinnerProps, Split, SplitProps, StatusBar, StatusBarProps, Table,
+    TableProps, Tabs, TabsProps, TextInput, TextInputProps, Theme, Toast, Toaster, ToasterProps,
+    Tone, Tooltip, TooltipProps, Tree, TreeNode, TreeProps, install_theme, use_toaster,
 };
-use tuidom_ui::{App, Signal, View, component, fragment, state, use_document, view};
+
+use tuidom_ui::{App, Signal, View, component, fragment, state, text, use_document, view};
 
 fn screen() -> Style {
     let mut style = Style::new();
@@ -99,6 +103,7 @@ fn sections() -> Vec<String> {
         "Containers",
         "Feedback",
         "Navigation",
+        "Data",
         "Labels",
     ]
     .map(String::from)
@@ -357,6 +362,114 @@ fn navigation(chosen: Signal<String>) -> View {
     }
 }
 
+fn project() -> Vec<TreeNode> {
+    let file = |dir: &str, name: &str| TreeNode::new(format!("{dir}/{name}"), name);
+    vec![
+        TreeNode::new("src", "src").with_children(vec![
+            file("src", "lib.rs"),
+            TreeNode::new("src/view", "view").with_children(vec![
+                file("src/view", "mod.rs"),
+                file("src/view", "tests.rs"),
+            ]),
+            TreeNode::new("src/runtime", "runtime").with_children(
+                (0..30)
+                    .map(|n| file("src/runtime", &format!("part_{n:02}.rs")))
+                    .collect(),
+            ),
+        ]),
+        TreeNode::new("docs", "docs")
+            .with_children(vec![file("docs", "README.md"), file("docs", "GLOSSARY.md")]),
+        TreeNode::new("Cargo.toml", "Cargo.toml"),
+    ]
+}
+
+fn processes() -> Vec<Column> {
+    vec![
+        Column::new("PID", 6),
+        Column::new("Name", 14),
+        Column::new("CPU", 5),
+        Column::new("Memory", 8),
+    ]
+}
+
+/// The selections the data views write, kept outside the tab so switching away keeps them.
+#[derive(Clone, Copy)]
+struct Data {
+    item: Signal<usize>,
+    expanded: Signal<HashSet<String>>,
+    node: Signal<Option<String>>,
+    process: Signal<usize>,
+    activated: Signal<String>,
+}
+
+fn data(data: Data) -> View {
+    let Data {
+        item,
+        expanded,
+        node,
+        process,
+        activated,
+    } = data;
+    view! {
+        box {
+            style: section(),
+            box {
+                style: row(),
+                Panel {
+                    title: "List · 100 000 rows".to_string(),
+                    style: data_panel(24),
+                    List {
+                        count: 100_000,
+                        selected: item,
+                        render: move |i| text(format!("Item {i}")).into(),
+                        on_activate: move |i: usize| activated.set(format!("item {i}")),
+                        style: grow(),
+                    },
+                },
+                Panel {
+                    title: "Tree".to_string(),
+                    style: data_panel(24),
+                    Tree {
+                        nodes: project(),
+                        expanded: expanded,
+                        selected: node,
+                        on_activate: move |id: String| activated.set(id),
+                        style: grow(),
+                    },
+                },
+                Panel {
+                    title: "Table · 10 000 rows".to_string(),
+                    style: data_panel(44),
+                    Table {
+                        columns: processes(),
+                        count: 10_000,
+                        cell: move |(row, column): (usize, usize)| match column {
+                            0 => format!("{}", 1000 + row),
+                            1 => format!("worker-{row}"),
+                            2 => format!("{}.{}%", row % 100, row % 10),
+                            _ => format!("{} MB", 16 + row % 512),
+                        },
+                        selected: process,
+                        on_activate: move |i: usize| activated.set(format!("process {}", 1000 + i)),
+                        style: grow(),
+                    },
+                },
+            },
+            Label {
+                text: format!("Enter on a row activates it · last activated: {}", activated.get()),
+                tone: LabelTone::Muted,
+            },
+        }
+    }
+}
+
+fn data_panel(width: u16) -> Style {
+    let mut style = Style::new();
+    style.width(Length::Cells(width));
+    style.height(Length::Cells(16));
+    style
+}
+
 fn labels() -> View {
     view! {
         box {
@@ -390,6 +503,13 @@ async fn main() -> std::io::Result<()> {
         let progress = state(60.0);
         let modal = state(false);
         let chosen = state(String::from("nothing yet"));
+        let data_state = Data {
+            item: state(0),
+            expanded: state(HashSet::from(["src".to_string()])),
+            node: state(Some("src".to_string())),
+            process: state(0),
+            activated: state(String::from("nothing yet")),
+        };
 
         let doc = use_document().expect("an App body has a document");
         let quit = doc.clone();
@@ -431,6 +551,7 @@ async fn main() -> std::io::Result<()> {
                                 2 => { containers(ratio, modal) },
                                 3 => Feedback { progress: progress },
                                 4 => { navigation(chosen) },
+                                5 => { data(data_state) },
                                 _ => { labels() },
                             }
                         },
