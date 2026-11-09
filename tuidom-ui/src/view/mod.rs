@@ -956,9 +956,7 @@ impl Element {
     /// Bind an input's value reactively. A write is skipped when the input already holds the
     /// same string, which is the usual case right after a key press the signal just recorded.
     ///
-    /// When a new value replaces the old one, the engine clamps the cursor and selection into it,
-    /// so clearing the input moves the cursor to the start and a longer value leaves it where it
-    /// was.
+    /// A new value moves the cursor to its end and drops any selection.
     pub fn dyn_value<F>(mut self, f: F) -> Self
     where
         F: Fn() -> String + Send + Sync + 'static,

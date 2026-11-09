@@ -648,7 +648,21 @@ fn input_state_apis_read_write_and_normalize_offsets() {
 
     doc.set_input_value(input, "xy").unwrap();
     assert_eq!(doc.input_value(input).unwrap(), "xy");
-    assert_eq!(doc.input_cursor(input).unwrap(), 0);
+    assert_eq!(doc.input_cursor(input).unwrap(), 2);
+}
+
+#[test]
+fn set_input_value_moves_the_cursor_to_the_end_and_drops_the_selection() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("hello").unwrap();
+    doc.set_input_cursor(input, 1).unwrap();
+    doc.set_input_value(input, "hello world").unwrap();
+    assert_eq!(doc.input_cursor(input).unwrap(), "hello world".len());
+
+    doc.set_input_selection(input, 0..5).unwrap();
+    doc.set_input_value(input, "hi").unwrap();
+    assert_eq!(doc.input_cursor(input).unwrap(), 2);
+    assert_eq!(doc.input_selection(input).unwrap(), None);
 }
 
 #[test]

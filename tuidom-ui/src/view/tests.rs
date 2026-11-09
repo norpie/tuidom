@@ -3018,20 +3018,20 @@ fn typing_updates_a_bound_signal() {
 }
 
 #[test]
-fn an_outside_write_replaces_the_value_and_clamps_the_cursor() {
+fn an_outside_write_replaces_the_value_and_moves_the_cursor_to_its_end() {
     let name = state("hi".to_string());
     let mut h = Harness::new(8, 1, move || {
         crate::view! { input { test_id: "field", style: field_style(1), bind_value: name } }
     });
     assert_eq!(h.row(0), "hi");
 
-    h.press(KeyCode::Tab);
-    h.press(KeyCode::End);
-    assert_eq!(field_cursor(&mut h), 2);
-
-    // A longer value keeps the cursor's offset; clearing moves it to the start.
     name.set("hello".to_string());
-    assert_eq!((h.row(0), field_cursor(&mut h)), ("hello".to_string(), 2));
+    h.press(KeyCode::Tab);
+    assert_eq!((h.row(0), field_cursor(&mut h)), ("hello".to_string(), 5));
+
+    h.press(KeyCode::Home);
+    name.set("hey".to_string());
+    assert_eq!((h.row(0), field_cursor(&mut h)), ("hey".to_string(), 3));
     name.set(String::new());
     assert_eq!((h.row(0), field_cursor(&mut h)), (String::new(), 0));
 }

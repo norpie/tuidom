@@ -28,8 +28,8 @@ impl Document {
 
     /// Replace an input node's stored value.
     ///
-    /// Cursor and selection offsets are clamped to grapheme boundaries in the
-    /// new value.
+    /// The cursor moves to the end of the new value and any selection is dropped, as a browser
+    /// does when a script sets an input's value.
     ///
     /// # Errors
     ///
@@ -43,6 +43,8 @@ impl Document {
                 .ok_or(TuidomError::NodeNotFound { id: node })?;
             let state = input_state_mut(&mut data.kind, node)?;
             state.content = value.into();
+            state.cursor = state.content.len();
+            state.selection = None;
             normalize_input_state(state);
         }
         self.refresh_input_node(node)
