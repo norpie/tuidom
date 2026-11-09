@@ -53,6 +53,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::mem;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -312,19 +313,57 @@ impl InputProps {
 /// [`unmount`]: Mounted::unmount
 pub struct Mounted {
     scope: Scope,
-    roots: Vec<NodeId>,
+    roots: Vec<Root>,
 }
 
 impl Mounted {
-    /// The top-level nodes this mount created directly under the parent, in order.
-    pub fn roots(&self) -> &[NodeId] {
-        &self.roots
+    /// The nodes this mount has directly under the parent right now, in order: what its dynamic
+    /// blocks and keyed lists currently hold is included, each block followed by its marker.
+    pub fn roots(&self) -> Vec<NodeId> {
+        let mut nodes = Vec::new();
+        collect_nodes(&self.roots, &mut nodes);
+        nodes
     }
 
     /// Remove the subtree and free everything it owns: its nodes, every binding effect, and
     /// (through the owner scope) any child scopes a dynamic block opened.
     pub fn unmount(self) {
         self.scope.dispose();
+    }
+}
+
+/// One entry in a mount's top-level run under its parent.
+enum Root {
+    Node(NodeId),
+    /// A dynamic block: its current content, mounted before `marker`.
+    Dynamic {
+        content: Arc<Mutex<Option<Mounted>>>,
+        marker: NodeId,
+    },
+    /// A keyed list: its items in DOM order, mounted before `marker`.
+    Keyed {
+        items: Arc<Mutex<Vec<(ErasedKey, Mounted)>>>,
+        marker: NodeId,
+    },
+}
+
+fn collect_nodes(roots: &[Root], nodes: &mut Vec<NodeId>) {
+    for root in roots {
+        match root {
+            Root::Node(node) => nodes.push(*node),
+            Root::Dynamic { content, marker } => {
+                if let Some(content) = &*lock(content) {
+                    collect_nodes(&content.roots, nodes);
+                }
+                nodes.push(*marker);
+            }
+            Root::Keyed { items, marker } => {
+                for (_, item) in lock(items).iter() {
+                    collect_nodes(&item.roots, nodes);
+                }
+                nodes.push(*marker);
+            }
+        }
     }
 }
 
@@ -1086,7 +1125,7 @@ fn mount_at(
     }
 }
 
-/// Recursively mount a view, returning the top-level nodes it created directly under
+/// Recursively mount a view, returning the top-level entries it created directly under
 /// `parent`. `before` places those nodes ahead of a sibling (a dynamic block's marker);
 /// `None` appends. Runs with `scope` entered, so binding effects attach to it.
 fn mount_view(
@@ -1095,7 +1134,7 @@ fn mount_view(
     before: Option<NodeId>,
     view: View,
     scope: &Scope,
-) -> Result<Vec<NodeId>> {
+) -> Result<Vec<Root>> {
     match view.kind {
         ViewKind::Fragment(children) => {
             let mut ids = Vec::new();
@@ -1121,7 +1160,7 @@ fn mount_view(
                 view.style.map(|s| *s),
                 |d, n, s: Style| d.set_style(n, &s),
             );
-            Ok(vec![node])
+            Ok(vec![Root::Node(node)])
         }
         ViewKind::Frames(view) => {
             let node = doc.create_frames(view.frames, view.interval)?;
@@ -1134,7 +1173,7 @@ fn mount_view(
                 view.style.map(|s| *s),
                 |d, n, s: Style| d.set_style(n, &s),
             );
-            Ok(vec![node])
+            Ok(vec![Root::Node(node)])
         }
         ViewKind::Element(element) => {
             let element = *element;
@@ -1227,7 +1266,7 @@ fn mount_view(
                 node_ref.fill(doc, node);
                 scope.on_cleanup(move || node_ref.release(node));
             }
-            Ok(vec![node])
+            Ok(vec![Root::Node(node)])
         }
         ViewKind::Dynamic(dynamic) => {
             // The marker anchors the block: out of flow (no cells, no gap), it holds a stable
@@ -1243,21 +1282,24 @@ fn mount_view(
             let owner = scope.id();
             let produce = dynamic.produce;
             let doc = doc.clone();
+            let content = current.clone();
             effect(move || {
                 // Reading `produce()` subscribes this effect to exactly the signals the
                 // author read while choosing the content — not the content's own bindings.
                 let view = produce();
-                let mut slot = lock(&current);
-                if let Some(old) = slot.take() {
+                // Not held across the mount: mounting runs user code, which may read this
+                // block's nodes through an enclosing mount.
+                let old = lock(&current).take();
+                if let Some(old) = old {
                     old.unmount();
                 }
                 match mount_at(&doc, parent, Some(marker), view, Some(owner)) {
-                    Ok(mounted) => *slot = Some(mounted),
+                    Ok(mounted) => *lock(&current) = Some(mounted),
                     Err(err) => tracing::warn!(?marker, "dynamic block failed to mount: {err}"),
                 }
             });
 
-            Ok(vec![marker])
+            Ok(vec![Root::Dynamic { content, marker }])
         }
         ViewKind::Keyed(keyed) => {
             // Same anchor discipline as a dynamic block: an out-of-flow end marker the items sit
@@ -1274,15 +1316,22 @@ fn mount_view(
             let owner = scope.id();
             let produce = keyed.produce;
             let doc = doc.clone();
+            let live = items.clone();
             effect(move || {
                 // Reading `produce()` subscribes this effect to the signals the author read while
                 // building the key sequence — the collection, not the items' own bindings.
                 let produced = produce();
-                let mut state = lock(&items);
+                // Taken out rather than locked across the reconcile, for the same reason a
+                // dynamic block does not hold its content's lock while mounting.
+                let mut state = mem::take(&mut *lock(&items));
                 reconcile(&doc, parent, marker, owner, &mut state, produced);
+                *lock(&items) = state;
             });
 
-            Ok(vec![marker])
+            Ok(vec![Root::Keyed {
+                items: live,
+                marker,
+            }])
         }
         ViewKind::Virtualized(view) => mount_virtualized(doc, parent, before, *view, scope),
         // Nothing lands under `parent`, so a keyed list moving this item's nodes leaves the
@@ -1389,7 +1438,7 @@ fn reconcile(
                 if !preserved {
                     // Moving each root before the anchor in order rebuilds the run left-to-right:
                     // `[… r0, r1, anchor]`.
-                    for &root in mounted.roots() {
+                    for root in mounted.roots() {
                         if let Err(err) = doc.move_child(parent, root, anchor) {
                             tracing::warn!(?root, "keyed reorder failed: {err}");
                         }
@@ -1430,7 +1479,7 @@ fn mount_virtualized(
     before: Option<NodeId>,
     view: VirtualizedView,
     scope: &Scope,
-) -> Result<Vec<NodeId>> {
+) -> Result<Vec<Root>> {
     // The scroll container. We own the structural bits; the caller's style supplies the rest.
     let container = doc.create_box()?;
     let mut style = view.style;
@@ -1602,7 +1651,7 @@ fn mount_virtualized(
         });
     }
 
-    Ok(vec![container])
+    Ok(vec![Root::Node(container)])
 }
 
 /// The scroll container's inner content box: a column that sizes to its children and never shrinks,

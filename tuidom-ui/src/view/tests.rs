@@ -1942,6 +1942,64 @@ fn a_duplicate_key_is_dropped_not_duplicated() {
     assert_eq!(row0(&rt, 2), "ab");
 }
 
+/// A keyed list whose items each start with a dynamic block, then a fixed text.
+fn leading_block_list(order: Signal<Vec<u32>>) -> Harness {
+    Harness::new(12, 1, move || {
+        crate::view! {
+            box {
+                each _i, n in order.get() key = n {
+                    if n > 0 { text(format!("a{n}")) },
+                    text(format!("b{n}")),
+                },
+            }
+        }
+    })
+}
+
+#[test]
+fn a_dynamic_block_leading_an_item_stays_with_its_item() {
+    let mut h = leading_block_list(state(vec![1, 2, 3]));
+    assert_eq!(h.row(0).trim_end(), "a1b1a2b2a3b3");
+}
+
+#[test]
+fn a_keyed_reorder_moves_what_an_items_dynamic_blocks_hold() {
+    let order = state(vec![1, 2, 3]);
+    let mut h = leading_block_list(order);
+    order.set(vec![3, 1, 2]);
+    assert_eq!(h.row(0).trim_end(), "a3b3a1b1a2b2");
+}
+
+#[test]
+fn a_nested_keyed_list_leading_an_item_stays_with_its_item() {
+    let mut h = Harness::new(12, 1, || {
+        crate::view! {
+            box {
+                each _i, n in vec![1, 2] key = n {
+                    each _j, m in vec![n * 10] key = m { text(format!("{m}")) },
+                    text(format!("b{n}")),
+                },
+            }
+        }
+    });
+    assert_eq!(h.row(0).trim_end(), "10b120b2");
+}
+
+#[test]
+fn roots_include_what_a_dynamic_block_holds_now() {
+    let doc = Document::new().unwrap();
+    let shown = state(true);
+    let view = fragment([
+        crate::view! { if shown.get() { text("x") } },
+        text("y").into(),
+    ]);
+    let mounted = mount(&doc, doc.root(), view).unwrap();
+    assert_eq!(mounted.roots().len(), 3);
+    shown.set(false);
+    assert_eq!(mounted.roots().len(), 2);
+    assert_eq!(mounted.roots(), doc.get_children(doc.root()));
+}
+
 /// A focusable box wrapping the key's glyph — an item that carries focus state.
 fn focusable_list(order: Signal<Vec<&'static str>>) -> View {
     View::from(boxed().style(column()).child(keyed(move || {
