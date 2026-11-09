@@ -246,7 +246,7 @@ fn containers(ratio: Signal<f64>, modal: Signal<bool>) -> View {
                         },
                         Button {
                             label: "Open modal".to_string(),
-                            variant: ButtonVariant::Outline,
+                            variant: ButtonVariant::Secondary,
                             on_press: move |_| modal.set(true),
                         },
                     }
@@ -269,7 +269,7 @@ fn toast_button(label: &'static str, tone: Tone) -> View {
     view! {
         Button {
             label: label.to_string(),
-            variant: ButtonVariant::Outline,
+            variant: ButtonVariant::Secondary,
             on_press: move |_| {
                 if let Some(toaster) = toaster {
                     toaster.show(Toast {
@@ -347,10 +347,10 @@ fn navigation(chosen: Signal<String>) -> View {
                     on_select: move |i: usize| chosen.set(format!("Edit › {}", edit_items()[i].label)),
                 },
                 Menu {
-                    label: "Outline".to_string(),
+                    label: "Secondary".to_string(),
                     items: file_items(),
-                    variant: ButtonVariant::Outline,
-                    on_select: move |i: usize| chosen.set(format!("Outline › {}", file_items()[i].label)),
+                    variant: ButtonVariant::Secondary,
+                    on_select: move |i: usize| chosen.set(format!("Secondary › {}", file_items()[i].label)),
                 },
             },
             Label { text: format!("Last chosen: {}", chosen.get()), tone: LabelTone::Muted },
