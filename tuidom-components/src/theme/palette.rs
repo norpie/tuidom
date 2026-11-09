@@ -76,10 +76,11 @@ impl Palette {
         }
     }
 
-    /// shadcn's light neutral palette.
+    /// shadcn's light neutral palette, on an off-white background so white cards and popovers
+    /// stand apart from it without a border.
     pub fn light() -> Self {
         Self {
-            background: Color::oklch(1.0, 0.0, 0.0),
+            background: Color::oklch(0.96, 0.0, 0.0),
             foreground: Color::oklch(0.145, 0.0, 0.0),
             card: Color::oklch(1.0, 0.0, 0.0),
             card_foreground: Color::oklch(0.145, 0.0, 0.0),

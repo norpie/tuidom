@@ -186,3 +186,12 @@ fn plain_text_takes_the_nearest_foreground() {
         literal(&Palette::light().foreground)
     );
 }
+
+#[test]
+fn both_palettes_set_cards_and_popovers_apart_from_the_background() {
+    for palette in [Palette::dark(), Palette::light()] {
+        let background = literal(&palette.background);
+        assert_ne!(literal(&palette.card), background);
+        assert_ne!(literal(&palette.popover), background);
+    }
+}

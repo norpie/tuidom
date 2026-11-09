@@ -42,7 +42,8 @@ The **Palette** holds twenty colors, one per variable components reference: `--b
 and `--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`, `--accent`,
 `--destructive`, `--success`, `--warning`, `--border`, `--input` and `--ring`, with a
 `*-foreground` partner for those that text sits on. The names follow shadcn's theme variables,
-and the dark and light palettes are shadcn's neutral ones.
+and the dark and light palettes are shadcn's neutral ones. The light one has an off-white
+background, so white cards and popovers stand apart from it without a border.
 
 The **Shape** is the rest of the look:
 
