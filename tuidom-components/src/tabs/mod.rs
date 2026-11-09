@@ -3,17 +3,19 @@ mod tests;
 
 use tuidom::event::KeyCode;
 use tuidom::style::{Color, EdgeInsets, FlexDirection, Style};
-use tuidom_ui::{Children, Signal, View, component, derived, state, view};
+use tuidom_ui::{Children, Signal, View, component, derived, node_ref, state, view};
 
+use crate::roving::focus_item;
 use crate::theme::{Density, FocusMark, Shape, use_shape};
 
 /// A strip of `tabs` above `children`, with `selected` the index of the active tab, read and
 /// written.
 ///
-/// The strip is drawn in `--muted` with the active tab in `--background`. It is a single focus
-/// stop: while it is focused, Left and Right switch tabs, falling through to spatial navigation
-/// at the first and last tab. Clicking a tab activates it. The theme's focus mark is drawn on the
-/// active tab. The children are placed below the strip whatever the tab; pick the pane in them
+/// The strip is drawn in `--muted` with the active tab in `--background`. It is a single tab stop,
+/// on the active tab, but each tab takes focus on its own, so hovering one focuses it and the
+/// theme's focus mark is drawn on it. Left and Right move focus and switch tabs together, falling
+/// through to spatial navigation at the first and last tab. Enter, Space, or a click activates a
+/// tab. The children are placed below the strip whatever the tab; pick the pane in them
 /// with a `match` on `selected`.
 ///
 /// `style` is merged over the outer column's own style.
@@ -25,7 +27,8 @@ pub fn Tabs(
     children: Children,
 ) -> View {
     let shape = use_shape();
-    let focused = state(false);
+    let focused = state(None::<usize>);
+    let strip_ref = node_ref();
     let column = derived(move || {
         let mut column = Style::new();
         column.flex_direction(FlexDirection::Column);
@@ -34,35 +37,44 @@ pub fn Tabs(
     });
     let tab = move |index: usize| TabLook {
         active: selected.get() == index,
-        focused: focused.get(),
+        focused: focused.get() == Some(index),
         shape: shape.get(),
+    };
+    let tab_stop = move |index: usize| {
+        let last = tabs.get().len().saturating_sub(1);
+        selected.get().min(last) == index
     };
 
     view! {
         box {
             style: column.get(),
             box {
-                focusable: true,
+                ref: strip_ref,
                 style: strip(),
-                on_focus: move |_| focused.set(true),
-                on_blur: move |_| focused.set(false),
                 on_key_press: move |ev| {
-                    let last = tabs.get().len().saturating_sub(1);
-                    let current = selected.get().min(last);
-                    let next = match ev.code {
-                        KeyCode::Left if current > 0 => Some(current - 1),
-                        KeyCode::Right if current < last => Some(current + 1),
-                        _ => None,
+                    let Some(current) = focused.get() else {
+                        return;
                     };
-                    if let Some(next) = next {
-                        ev.prevent_default();
-                        ev.stop_propagation();
-                        selected.set(next);
-                    }
+                    let last = tabs.get().len().saturating_sub(1);
+                    let chosen = match ev.code {
+                        KeyCode::Left if current > 0 => current - 1,
+                        KeyCode::Right if current < last => current + 1,
+                        KeyCode::Enter | KeyCode::Char(' ') => current,
+                        _ => return,
+                    };
+                    ev.prevent_default();
+                    ev.stop_propagation();
+                    selected.set(chosen);
+                    focus_item(strip_ref, chosen);
                 },
                 each i, name in tabs.get() key = (i, name.clone()) {
                     box {
+                        item: i,
+                        focusable: true,
+                        tab_stop: tab_stop(i),
                         style: tab(i).frame(),
+                        on_focus: move |_| focused.set(Some(i)),
+                        on_blur: move |_| focused.set(None),
                         on_click: move || selected.set(i),
                         text(name.clone()) { style: tab(i).label() },
                     }
@@ -83,14 +95,13 @@ fn strip() -> Style {
 #[derive(Clone, Default)]
 struct TabLook {
     active: bool,
-    /// Whether the strip holds focus.
     focused: bool,
     shape: Shape,
 }
 
 impl TabLook {
     fn mark(&self) -> Option<FocusMark> {
-        (self.active && self.focused).then_some(self.shape.focus)
+        self.focused.then_some(self.shape.focus)
     }
 
     fn frame(&self) -> Style {

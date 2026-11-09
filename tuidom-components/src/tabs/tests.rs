@@ -90,27 +90,28 @@ fn the_active_tab_takes_the_background_and_the_rest_are_muted() {
 }
 
 #[test]
-fn left_and_right_switch_tabs_then_leave_the_strip_at_its_ends() {
+fn tab_reaches_the_active_tab_and_left_and_right_move_focus_and_selection_together() {
     let selected = state(0);
     let mut h = harness(selected);
-    let (strip, _) = strip(&mut h);
-    h.focus(strip);
+    let (_, tabs) = strip(&mut h);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), Some(tabs[0]));
     h.press(KeyCode::Right);
     h.press(KeyCode::Right);
     assert_eq!(selected.get(), 2);
-    assert_eq!(h.document().focused(), Some(strip));
+    assert_eq!(h.document().focused(), Some(tabs[2]));
 
     h.press(KeyCode::Right);
     assert_eq!(selected.get(), 2);
     assert_eq!(h.document().focused(), h.find_attr("test_id", "beside"));
 
-    h.focus(strip);
+    h.press(KeyCode::BackTab);
+    assert_eq!(h.document().focused(), Some(tabs[2]));
     h.press(KeyCode::Left);
     assert_eq!(selected.get(), 1);
     h.press(KeyCode::Down);
     assert_eq!(h.document().focused(), h.find_attr("test_id", "below"));
 }
-
 #[test]
 fn a_renamed_tab_redraws() {
     let tabs = state(names());
@@ -129,17 +130,23 @@ fn clicking_a_tab_activates_it() {
 }
 
 #[test]
-fn a_ring_marks_the_active_tab_while_the_strip_is_focused() {
-    let mut h = harness(state(0));
-    let (strip, tabs) = strip(&mut h);
-    h.focus(strip);
-    assert_eq!(label(&h, tabs[0]).color, literal(&Palette::dark().ring));
+fn hovering_a_tab_focuses_and_rings_it_and_enter_activates_it() {
+    let selected = state(0);
+    let mut h = harness(selected);
+    let (_, tabs) = strip(&mut h);
+    let (x, y) = h.find_text("Two").unwrap();
+    h.runtime().simulate_mouse_move(x, y);
+    assert_eq!(h.document().focused(), Some(tabs[1]));
+    assert_eq!(label(&h, tabs[1]).color, literal(&Palette::dark().ring));
     assert_eq!(
-        label(&h, tabs[1]).color,
-        literal(&Palette::dark().muted_foreground)
+        label(&h, tabs[0]).color,
+        literal(&Palette::dark().foreground)
     );
-}
+    assert_eq!(selected.get(), 0);
 
+    h.press(KeyCode::Enter);
+    assert_eq!(selected.get(), 1);
+}
 #[test]
 fn a_click_that_wobbles_still_activates_the_tab_and_selects_nothing() {
     let selected = state(0);

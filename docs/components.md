@@ -151,13 +151,15 @@ node that opened them. They do not flip to the other side at the screen edge.
 
 The components share a few rules, so they combine without fighting over keys:
 
-- A composite control is one focus stop. Radio groups, tabs, lists, trees, tables and a split's
-  divider take focus as a whole and move inside themselves with the arrows.
+- A composite control is one [tab stop](focus-and-selection.md#keyboard-navigation) and moves
+  inside itself with the arrows. Lists, trees, tables and a split's divider take focus as a
+  whole. Radio groups and tabs focus each option on its own, so hovering one shows the focus
+  mark on it; only the selected one is a tab stop, and Enter or Space selects the focused one.
 - At its end, a control gives the arrow back. Up on a list's first row, or Right on the last
   tab, moves focus on as spatial navigation would, instead of doing nothing.
 - An open popup holds the keyboard. Up and Down move its highlight, as hovering a row does,
-  Enter or Space picks,
-  and Escape or a press outside closes it. Focus goes back to the control that opened it.
+  Enter or Space picks, and Escape or a press outside closes it. Focus goes back to the control
+  that opened it.
 - A modal traps focus until it closes, then gives it back.
 - Hovering focuses, so tooltips show on hover as well as focus.
 - A control's own text is [not selectable](focus-and-selection.md#text-that-cannot-be-selected),
