@@ -16,8 +16,8 @@ use tuidom::style::{
 use tuidom::{Document, NodeId};
 
 use super::{
-    Children, View, boxed, dyn_text, dynamic, fragment, keyed, mount, node_ref, text, use_document,
-    virtual_list, virtual_list_measured,
+    Children, View, VirtualListRef, boxed, dyn_text, dynamic, fragment, keyed, mount, node_ref,
+    text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
 };
 use crate::testing::Harness;
 use crate::{Callback, Signal, state};
@@ -2186,7 +2186,7 @@ fn number_list(count: usize) -> View {
     let mut style = Style::new();
     style.width(Length::Cells(4));
     style.height(Length::Cells(5));
-    virtual_list(style, 1, 0, move || count, |i| text(i.to_string()).into())
+    virtual_list(style, 1, 0, move || count, |i| text(i.to_string()).into()).into()
 }
 
 #[test]
@@ -2256,6 +2256,58 @@ fn scrolling_a_virtual_list_shifts_the_materialized_window() {
     assert_eq!(doc.get_children(list_content(&doc, container)).len(), 8);
 }
 
+/// [`number_list`], bound to `list`.
+fn referenced_list(count: usize, list: VirtualListRef) -> View {
+    let mut style = Style::new();
+    style.width(Length::Cells(4));
+    style.height(Length::Cells(5));
+    virtual_list(style, 1, 0, move || count, |i| text(i.to_string()).into())
+        .list_ref(list)
+        .into()
+}
+
+#[test]
+fn scroll_into_view_moves_the_least_distance_that_shows_the_item() {
+    let doc = Document::new().unwrap();
+    let list = virtual_list_ref();
+    let _m = mount(&doc, doc.root(), referenced_list(100, list)).unwrap();
+    let container = doc.get_children(doc.root())[0];
+    assert_eq!(list.node(), Some(container));
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 5);
+    rt.render().unwrap();
+    rt.render().unwrap();
+
+    assert!(list.scroll_into_view(3));
+    assert_eq!(doc.scroll_offset(container).y, 0);
+
+    assert!(list.scroll_into_view(20));
+    assert_eq!(doc.scroll_offset(container).y, 16);
+    rt.render().unwrap();
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 4, 2), "20");
+
+    assert!(list.scroll_into_view(2));
+    assert_eq!(doc.scroll_offset(container).y, 2);
+}
+
+#[test]
+fn scroll_into_view_needs_a_laid_out_list_and_an_item_in_range() {
+    let doc = Document::new().unwrap();
+    let list = virtual_list_ref();
+    assert!(!list.scroll_into_view(0));
+
+    let mounted = mount(&doc, doc.root(), referenced_list(100, list)).unwrap();
+    assert!(!list.scroll_into_view(0));
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 5);
+    rt.render().unwrap();
+    assert!(!list.scroll_into_view(100));
+    assert!(list.scroll_into_view(99));
+
+    mounted.unmount();
+    assert_eq!(list.node(), None);
+    assert!(!list.scroll_into_view(0));
+}
+
 // ---- The measured windowed list ---------------------------------------------------------
 
 /// An item that is really two cells tall (a fixed-height box), labelled by index.
@@ -2286,6 +2338,30 @@ fn a_measured_list_windows_by_real_extent_not_estimate() {
     assert_eq!(read_row(&rt, 0, 1), "0");
     assert_eq!(read_row(&rt, 2, 1), "1");
     assert_eq!(read_row(&rt, 4, 1), "2");
+}
+
+#[test]
+fn scroll_into_view_in_a_measured_list_lands_once_the_item_is_measured() {
+    let doc = Document::new().unwrap();
+    let list = virtual_list_ref();
+    let mut style = Style::new();
+    style.width(Length::Cells(4));
+    style.height(Length::Cells(6));
+    let view = virtual_list_measured(style, 1, 0, || 20, tall_item).list_ref(list);
+    let _m = mount(&doc, doc.root(), view).unwrap();
+    let mut rt = HeadlessRuntime::new(doc.clone(), 4, 6);
+    for _ in 0..6 {
+        rt.render().unwrap();
+    }
+
+    // Item 10 sits at its estimate until it is laid out; a second call corrects for its height.
+    for _ in 0..2 {
+        assert!(list.scroll_into_view(10));
+        for _ in 0..6 {
+            rt.render().unwrap();
+        }
+    }
+    assert_eq!(read_row(&rt, 4, 2), "10");
 }
 
 #[test]

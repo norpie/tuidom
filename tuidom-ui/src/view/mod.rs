@@ -71,9 +71,11 @@ use crate::runtime::{Scope, ScopeId, Signal, effect, state, untracked, with_inli
 
 mod layout_watch;
 mod node_ref;
+mod virtual_ref;
 
 pub(crate) use node_ref::provide_document;
 pub use node_ref::{NodeRef, node_ref, use_document};
+pub use virtual_ref::{VirtualListRef, virtual_list_ref};
 
 thread_local! {
     /// Callbacks registered by [`on_mount`] during a subtree's mount, awaiting the moment that
@@ -567,6 +569,28 @@ struct VirtualizedView {
     /// Builds the item at an index. Called when the index enters the window, and its subtree is
     /// disposed when the index leaves — so it is built once per materialization, not per frame.
     render: Arc<dyn Fn(usize) -> View + Send + Sync>,
+    /// Filled with the list while it is mounted.
+    list_ref: Option<VirtualListRef>,
+}
+
+/// A virtual list ready to place, from [`virtual_list`] or [`virtual_list_measured`].
+pub struct VirtualList(VirtualizedView);
+
+impl VirtualList {
+    /// Bind `list` to this list while it is mounted, for
+    /// [`scroll_into_view`](VirtualListRef::scroll_into_view).
+    pub fn list_ref(mut self, list: VirtualListRef) -> Self {
+        self.0.list_ref = Some(list);
+        self
+    }
+}
+
+impl From<VirtualList> for View {
+    fn from(list: VirtualList) -> Self {
+        View {
+            kind: ViewKind::Virtualized(Box::new(list.0)),
+        }
+    }
 }
 
 /// A virtualized vertical list over a large **uniform** collection — every item the same height.
@@ -592,8 +616,17 @@ struct VirtualizedView {
 /// extents — is the engine's `tuidom::virtualize::Virtualizer`; this drives it against live scroll
 /// and layout. See the engine's virtualization guide (`docs/virtualization.md`) for the math.
 ///
+/// To scroll an item into view, as a selection moving off screen needs, bind a
+/// [`VirtualListRef`] with [`VirtualList::list_ref`].
+///
 /// For items whose height is not known ahead of time, see [`virtual_list_measured`].
-pub fn virtual_list<C, R>(style: Style, stride: u16, overscan: usize, count: C, render: R) -> View
+pub fn virtual_list<C, R>(
+    style: Style,
+    stride: u16,
+    overscan: usize,
+    count: C,
+    render: R,
+) -> VirtualList
 where
     C: Fn() -> usize + Send + Sync + 'static,
     R: Fn(usize) -> View + Send + Sync + 'static,
@@ -625,7 +658,7 @@ pub fn virtual_list_measured<C, R>(
     overscan: usize,
     count: C,
     render: R,
-) -> View
+) -> VirtualList
 where
     C: Fn() -> usize + Send + Sync + 'static,
     R: Fn(usize) -> View + Send + Sync + 'static,
@@ -640,20 +673,25 @@ where
 }
 
 /// Shared constructor behind [`virtual_list`] and [`virtual_list_measured`].
-fn virtualized<C, R>(style: Style, mode: VirtualMode, overscan: usize, count: C, render: R) -> View
+fn virtualized<C, R>(
+    style: Style,
+    mode: VirtualMode,
+    overscan: usize,
+    count: C,
+    render: R,
+) -> VirtualList
 where
     C: Fn() -> usize + Send + Sync + 'static,
     R: Fn(usize) -> View + Send + Sync + 'static,
 {
-    View {
-        kind: ViewKind::Virtualized(Box::new(VirtualizedView {
-            style,
-            mode,
-            overscan,
-            count: Box::new(count),
-            render: Arc::new(render),
-        })),
-    }
+    VirtualList(VirtualizedView {
+        style,
+        mode,
+        overscan,
+        count: Box::new(count),
+        render: Arc::new(render),
+        list_ref: None,
+    })
 }
 
 /// A component instance: a body that runs once at mount, under its own child scope.
@@ -1531,6 +1569,10 @@ fn mount_virtualized(
         materialized: 0..0,
         last_cross: None,
     }));
+    if let Some(list) = view.list_ref {
+        list.fill(doc, container, state.clone());
+        scope.on_cleanup(move || list.release(container));
+    }
 
     // Recompute the window from the current offset and viewport, applying spacer sizes and the new
     // item range only when something changed. In measured mode it first records the real extents of
