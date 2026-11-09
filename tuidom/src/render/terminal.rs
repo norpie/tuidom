@@ -158,21 +158,17 @@ pub(crate) fn flush_changes_into<W: Write>(
 
 /// Encode an entire grid as terminal output into `out`.
 ///
-/// Batches all commands with `queue!` then flushes once.
+/// Batches all commands with `queue!` then flushes once. Every cell is written, so the screen
+/// is never cleared first: a clear would show the terminal's own background until the cells
+/// arrive.
 pub(crate) fn flush_full_into<W: Write>(
     out: &mut W,
     grid: &Grid,
     cursor: Option<RenderCursor>,
     bell: bool,
 ) -> io::Result<()> {
-    use crossterm::terminal::{Clear, ClearType};
     queue_bell(out, bell)?;
-    queue!(
-        out,
-        Hide,
-        Clear(ClearType::All),
-        SetAttribute(Attribute::Reset)
-    )?;
+    queue!(out, Hide, SetAttribute(Attribute::Reset))?;
     let mut current_attrs = CellAttrs::default();
 
     for (y, row) in grid.cells.iter().enumerate() {
@@ -524,5 +520,19 @@ mod tests {
     #[test]
     fn raw_mode_alone_emits_only_the_reset_tail() {
         assert_eq!(restore_bytes(RAW_MODE), restore_bytes(0));
+    }
+
+    fn full_bytes() -> String {
+        let mut out = Vec::new();
+        flush_full_into(&mut out, &Grid::new(4, 2), None, false)
+            .expect("writing to a Vec cannot fail");
+        String::from_utf8(out).expect("flush output is valid utf-8")
+    }
+
+    #[test]
+    fn a_full_redraw_writes_over_the_screen_without_clearing_it() {
+        let full = full_bytes();
+        assert!(!full.contains("\x1b[2J"), "{full:?}");
+        assert_eq!(full.matches(' ').count(), 8, "{full:?}");
     }
 }

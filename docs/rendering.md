@@ -119,7 +119,9 @@ diffs to zero cells and writes nothing to the terminal.
 
 **Above about a third of cells changed, the renderer switches to a full redraw.** Past that
 threshold, the escape sequences to address and update scattered cells individually cost more
-than clearing and rewriting the screen. Resizes always take this path.
+than rewriting every cell in order. Resizes always take this path. The screen is not cleared
+first: every cell is written anyway, and a clear would show the terminal's own background until
+they arrive.
 
 Text attributes emit as **sticky SGR state** — a transition is written only when attributes
 change between adjacent cells, so a long bold run costs one sequence rather than one per
