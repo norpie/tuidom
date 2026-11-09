@@ -272,6 +272,28 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Harness** — A headless test driver that mounts a view through the same wiring as `App` and keeps the screen settled between steps. Behind the `testing` feature. See [testing with Harness](reactive-ui.md#testing-with-harness).
 
+## Components
+
+*Explained in [components](components.md). These belong to `tuidom-components`.*
+
+**Theme** — A palette, a shape, and whether the root is painted. Installed once with `install_theme`, whose returned signal switches it in place. See [installing a theme](components.md#installing-a-theme).
+
+**Palette** — The twenty colors a theme declares as color variables, named after shadcn's (`--primary`, `--muted`, `--ring`, …). Components reference only these. See [what a theme holds](components.md#what-a-theme-holds).
+
+**Shape** — The non-color half of a theme: border charset, surface, density, and focus mark. See [what a theme holds](components.md#what-a-theme-holds).
+
+**Surface** — How panels and fields are framed: `Bordered`, `HalfBlock`, or `Flat`. See [what a theme holds](components.md#what-a-theme-holds).
+
+**Density** — How much padding sits inside controls: `Compact` or `Comfortable`. See [what a theme holds](components.md#what-a-theme-holds).
+
+**FocusMark** — How a focused component shows it: `Ring` recolors its edge to `--ring`, `Underline` underlines its label, `Reverse` swaps its colors. See [what a theme holds](components.md#what-a-theme-holds).
+
+**RootBackground** — Whether the document root is filled with `--background` (`Paint`) or left to the terminal (`Transparent`). See [what a theme holds](components.md#what-a-theme-holds).
+
+**ThemeScope** — A box re-theming its subtree: it declares its own palette, shadowing the outer one, and provides its theme to the components inside. See [switching and scoping](components.md#switching-and-scoping).
+
+**Toaster** — The wrapper that shows the toasts components send through `use_toaster`, stacked over the screen's bottom-right corner. See [feedback](components.md#feedback).
+
 ---
 
 *Additional terms will be added as new concepts are introduced during development.*
