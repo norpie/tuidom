@@ -185,6 +185,23 @@ fn a_focusable_binding_marks_the_node() {
 }
 
 #[test]
+fn a_tab_stop_binding_follows_its_signal() {
+    let doc = Document::new().unwrap();
+    let stop = state(false);
+    let mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! { box { focusable: true, tab_stop: stop.get() } },
+    )
+    .unwrap();
+    let node = mounted.roots()[0];
+    assert!(!doc.is_tab_stop(node).unwrap());
+
+    stop.set(true);
+    assert!(doc.is_tab_stop(node).unwrap());
+}
+
+#[test]
 fn each_binding_is_its_own_effect() {
     // A box with a reactive style and a reactive-text child. Changing the text signal must
     // rerun only the text binding, never re-evaluate the style — the granularity guarantee.

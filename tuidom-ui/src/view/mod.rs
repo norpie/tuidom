@@ -283,6 +283,7 @@ pub struct Element {
     style: Option<Source<Style>>,
     attrs: Vec<(String, Source<String>)>,
     focusable: Option<Source<bool>>,
+    tab_stop: Option<Source<bool>>,
     disabled: Option<Source<bool>>,
     focus_style: Option<Source<Style>>,
     active_style: Option<Source<Style>>,
@@ -799,6 +800,7 @@ fn element(kind: ElementKind) -> Element {
         style: None,
         attrs: Vec::new(),
         focusable: None,
+        tab_stop: None,
         disabled: None,
         focus_style: None,
         active_style: None,
@@ -841,6 +843,22 @@ impl Element {
         F: Fn() -> String + Send + Sync + 'static,
     {
         self.attrs.push((key.into(), Source::Reactive(Box::new(f))));
+        self
+    }
+
+    /// Set whether Tab and Shift-Tab stop on the element. A focusable element that is not a stop
+    /// still takes focus from the pointer, the arrows, and code.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = Some(Source::Static(tab_stop));
+        self
+    }
+
+    /// Bind whether the element is a tab stop reactively.
+    pub fn dyn_tab_stop<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.tab_stop = Some(Source::Reactive(Box::new(f)));
         self
     }
 
@@ -1240,6 +1258,13 @@ fn mount_view(
                 "focusable",
                 element.focusable,
                 Document::set_focusable,
+            );
+            bind_node(
+                doc,
+                node,
+                "tab_stop",
+                element.tab_stop,
+                Document::set_tab_stop,
             );
             bind_node(
                 doc,

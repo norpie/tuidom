@@ -44,6 +44,37 @@ impl Document {
         Ok(lock::mutex(&self.inner.focusable_nodes).contains(&node))
     }
 
+    /// Set whether Tab and Shift-Tab stop on a focusable node. Every node is a tab stop until
+    /// this says otherwise.
+    ///
+    /// A node that is not one still takes focus from the pointer, from arrow navigation, and
+    /// from [`focus`](Self::focus). That is how a composite control stays one stop in tab order
+    /// while each of its items can be hovered: only the item that should receive Tab is a stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn set_tab_stop(&self, node: NodeId, tab_stop: bool) -> Result<()> {
+        self.ensure_focus_node_exists(node)?;
+        let mut skipped = lock::mutex(&self.inner.skipped_by_tab);
+        if tab_stop {
+            skipped.remove(&node);
+        } else {
+            skipped.insert(node);
+        }
+        Ok(())
+    }
+
+    /// Return whether Tab and Shift-Tab stop on a node, focusable or not.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist in this document.
+    pub fn is_tab_stop(&self, node: NodeId) -> Result<bool> {
+        self.ensure_focus_node_exists(node)?;
+        Ok(!lock::mutex(&self.inner.skipped_by_tab).contains(&node))
+    }
+
     /// Move focus to a focusable node.
     ///
     /// Dispatches blur listeners for the previously focused node, followed by
@@ -87,7 +118,8 @@ impl Document {
 
     /// Focus the first focusable node in the active focus context, in DOM order, and return it.
     ///
-    /// Disabled and hidden subtrees are skipped, as tab order skips them. This is where
+    /// Disabled and hidden subtrees and nodes that are not tab stops are skipped, as tab order
+    /// skips them. This is where
     /// [`push_focus_context`](Self::push_focus_context) puts focus, for a context whose content
     /// was added after it opened. Returns `None`, leaving focus alone, if nothing in the context
     /// can take focus.
@@ -279,6 +311,7 @@ impl Document {
 
     pub(super) fn remove_focus_side_state(&self, node: NodeId) {
         lock::mutex(&self.inner.focusable_nodes).remove(&node);
+        lock::mutex(&self.inner.skipped_by_tab).remove(&node);
         lock::mutex(&self.inner.pseudo_styles).remove(&node);
 
         let removed_active = {
@@ -355,8 +388,9 @@ impl Document {
     }
 
     fn focus_next(&self) {
-        let focusable = self.focusable_in_dom_order();
-        let Some(next) = next_focus_target(self.focused(), &focusable) else {
+        let current = self.focused();
+        let focusable = self.tab_order(current);
+        let Some(next) = next_focus_target(current, &focusable) else {
             return;
         };
         if let Err(err) = self.focus(next) {
@@ -365,8 +399,9 @@ impl Document {
     }
 
     fn focus_previous(&self) {
-        let focusable = self.focusable_in_dom_order();
-        let Some(previous) = previous_focus_target(self.focused(), &focusable) else {
+        let current = self.focused();
+        let focusable = self.tab_order(current);
+        let Some(previous) = previous_focus_target(current, &focusable) else {
             return;
         };
         if let Err(err) = self.focus(previous) {
@@ -374,12 +409,23 @@ impl Document {
         }
     }
 
-    /// Focusable nodes in DOM order, scoped to the active focus context.
+    /// Tab stops in DOM order, scoped to the active focus context.
     ///
     /// Walking from the context node rather than the document root is what keeps tab order
     /// inside an open modal-like context — no filtering pass is needed.
     pub(super) fn focusable_in_dom_order(&self) -> Vec<NodeId> {
-        let focusable = lock::mutex(&self.inner.focusable_nodes).clone();
+        self.tab_order(None)
+    }
+
+    /// Tab stops in DOM order, plus `from` when it is focusable, so Tab leaving a node that is
+    /// not a stop moves on from where that node sits.
+    fn tab_order(&self, from: Option<NodeId>) -> Vec<NodeId> {
+        let mut focusable = lock::mutex(&self.inner.focusable_nodes).clone();
+        for skipped in lock::mutex(&self.inner.skipped_by_tab).iter() {
+            if Some(*skipped) != from {
+                focusable.remove(skipped);
+            }
+        }
         let mut nodes = Vec::new();
         self.collect_focusable_in_dom_order(self.active_focus_context(), &focusable, &mut nodes);
         nodes

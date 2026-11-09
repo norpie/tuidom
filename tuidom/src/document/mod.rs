@@ -112,6 +112,7 @@ impl Document {
                 root,
                 focus_contexts: Mutex::new(FocusStack::new(root)),
                 focusable_nodes: Mutex::new(NodeSet::default()),
+                skipped_by_tab: Mutex::new(NodeSet::default()),
                 focus_keys: Mutex::new(FocusKeys::default()),
                 scroll_keys: Mutex::new(ScrollKeys::default()),
                 last_pointer: Mutex::new(None),

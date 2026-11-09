@@ -158,6 +158,9 @@ pub(crate) struct DocumentInner {
     /// Nodes that are allowed to receive focus.
     pub focusable_nodes: Mutex<NodeSet>,
 
+    /// Focusable nodes that Tab and Shift-Tab pass over.
+    pub skipped_by_tab: Mutex<NodeSet>,
+
     /// Keyboard bindings for document-level focus default actions.
     pub focus_keys: Mutex<FocusKeys>,
 

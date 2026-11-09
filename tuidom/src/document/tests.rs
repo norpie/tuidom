@@ -3484,6 +3484,35 @@ fn tab_navigation_uses_dom_order_without_wrapping() {
 }
 
 #[test]
+fn tab_passes_over_a_node_that_is_not_a_tab_stop_but_it_still_takes_focus() {
+    let doc = Document::new().unwrap();
+    let [first, skipped, last] = [(); 3].map(|_| {
+        let node = doc.create_box().unwrap();
+        doc.append_child(doc.root(), node).unwrap();
+        doc.set_focusable(node, true).unwrap();
+        node
+    });
+    doc.set_tab_stop(skipped, false).unwrap();
+    assert!(!doc.is_tab_stop(skipped).unwrap());
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(first));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(last));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
+    assert_eq!(doc.focused(), Some(first));
+
+    doc.focus(skipped).unwrap();
+    assert_eq!(doc.focused(), Some(skipped));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(last));
+
+    doc.set_tab_stop(skipped, true).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::BackTab));
+    assert_eq!(doc.focused(), Some(skipped));
+}
+
+#[test]
 fn backtab_from_none_focuses_last_focusable_node() {
     let doc = Document::new().unwrap();
     let first = doc.create_box().unwrap();

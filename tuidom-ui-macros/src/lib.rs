@@ -58,7 +58,7 @@ use syn::{
 /// - **Attributes** — `key: value`, dispatched by key:
 ///   - `style:`, `focus_style:`, `active_style:`, `disabled_style:` — a whole `Style`, always
 ///     bound reactively.
-///   - `focusable:`, `disabled:`, and on `input` `multiline:` — a bool.
+///   - `focusable:`, `tab_stop:`, `disabled:`, and on `input` `multiline:` — a bool.
 ///   - An event key (`on_click:`, `on_focus:`, `on_input:`, … — one per `Element` listener
 ///     method) — a `|ev| …` or `|| …` closure.
 ///   - On `input` only: `value:` (stringified through `ToString`), `bind_value:` (a
@@ -1349,7 +1349,7 @@ impl Attr {
             // Evaluated once, like `transitions`: the trap opens at mount and closes on unmount.
             "trap_focus" => quote! { .trap_focus(#value) },
             "mask" => quote! { .dyn_mask(move || #value) },
-            "focusable" | "disabled" | "multiline" => {
+            "focusable" | "tab_stop" | "disabled" | "multiline" => {
                 if is_bool_literal(value) {
                     quote! { .#name(#value) }
                 } else {

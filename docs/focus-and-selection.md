@@ -51,6 +51,11 @@ Tab and Shift-Tab move through focusable nodes in **DOM order**. Arrow keys move
 **spatially** — to the nearest focusable node in that direction on screen, measured
 edge-to-edge rather than by DOM position.
 
+A focusable node can be left out of tab order with `doc.set_tab_stop(node, false)`. It still
+takes focus from the pointer, the arrows and code, and Tab from it moves on from where it sits.
+Composite controls use this so the whole control is one stop while each item inside is
+hoverable: only the item that should receive Tab is a stop.
+
 Spatial navigation does not wrap. If there is nothing in that direction, nothing happens;
 downstream can implement wrapping in a key handler if it wants it.
 

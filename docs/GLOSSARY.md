@@ -182,6 +182,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Press Outside** — A mouse down landing outside the active focus context, reported on the context node by `on_press_outside` since the inert node it hit swallows it. Consumed with its release. See [a press outside the context](focus-and-selection.md#a-press-outside-the-context).
 
+**Tab Stop** — A focusable node Tab and Shift-Tab stop on, which every focusable node is unless `set_tab_stop(node, false)` says otherwise. A node that is not one still takes focus from the pointer, the arrows and code. See [keyboard navigation](focus-and-selection.md#keyboard-navigation).
+
 **Spatial Navigation** — Arrow key focus movement by visual edge-to-edge distance rather than DOM order. See [keyboard navigation](focus-and-selection.md#keyboard-navigation).
 
 **Selection Boundary** — A container marked `selection_boundary: true`, confining a drag to the boundary it started in. An Input is an implicit one. See [selection boundaries](focus-and-selection.md#selection-boundaries).

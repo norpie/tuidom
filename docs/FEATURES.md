@@ -61,6 +61,8 @@
 - [x] Focus is `Option<NodeId>` per focus context — can be `None`
 - [x] Tab order follows DOM definition order — walked from the active focus context, so
       an open modal-like context scopes tab order without a filtering pass
+- [x] Focusable nodes can be left out of tab order (`set_tab_stop`) and still take focus from
+      the pointer, the arrows and code
 - [x] Arrow key navigation based on visual/spatial distance:
   - [x] Press arrow → focus nearest focusable node in that direction
   - [x] Distance measured edge-to-edge
