@@ -205,10 +205,13 @@ pub enum KeyCode {
 }
 
 pub(crate) fn convert_key_event(key: CrosstermKeyEvent) -> KeyEvent {
-    KeyEvent::with_modifiers(
-        convert_key_code(key.code),
-        KeyModifiers::from_crossterm(key.modifiers),
-    )
+    let mut modifiers = KeyModifiers::from_crossterm(key.modifiers);
+    // Back-tab is what shift+tab produces, so the shift crossterm reports with it is not an
+    // extra modifier.
+    if key.code == CrosstermKeyCode::BackTab {
+        modifiers = modifiers.without(KeyModifiers::SHIFT);
+    }
+    KeyEvent::with_modifiers(convert_key_code(key.code), modifiers)
 }
 
 fn convert_key_code(code: CrosstermKeyCode) -> KeyCode {
@@ -363,6 +366,23 @@ mod tests {
 
         assert!(modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT));
         assert!(!modifiers.contains(KeyModifiers::ALT));
+    }
+
+    /// Terminals report shift+tab as back-tab with shift held. The shift is already the key,
+    /// so the default focus binding, which takes no modifiers, has to match it.
+    #[test]
+    fn back_tab_drops_the_shift_it_implies() {
+        let shifted =
+            CrosstermKeyEvent::new(CrosstermKeyCode::BackTab, CrosstermKeyModifiers::SHIFT);
+        let converted = convert_key_event(shifted);
+        assert_eq!(converted.code, KeyCode::BackTab);
+        assert!(converted.modifiers.is_empty());
+
+        let chord = CrosstermKeyEvent::new(
+            CrosstermKeyCode::BackTab,
+            CrosstermKeyModifiers::SHIFT | CrosstermKeyModifiers::CONTROL,
+        );
+        assert_eq!(convert_key_event(chord).modifiers, KeyModifiers::CONTROL);
     }
 
     /// Super, hyper, and meta only reach us under the kitty keyboard protocol. Dropping
