@@ -228,6 +228,50 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Render Cursor** — Cursor metadata produced alongside a frame — position, shape, color, clipped visibility — without mutating cell content. See [the cursor](rendering.md#the-cursor).
 
+## Reactive UI
+
+*Explained in [reactive UI](reactive-ui.md). These belong to `tuidom-ui`, not the engine.*
+
+**Signal** — A `Copy`, `Send + Sync` handle to a value in the reactive runtime. Reading it inside a derived or effect subscribes that computation to it. See [signals](reactive-ui.md#signals).
+
+**Derived** — A memoized computation over signals, recomputed lazily on the next read after something it read changes. See [derived values and effects](reactive-ui.md#derived-values-and-effects).
+
+**Effect** — A side effect that runs once and again whenever a signal or derived it read changes. Every reactive binding in a view is one. See [derived values and effects](reactive-ui.md#derived-values-and-effects).
+
+**Batch** — A group of writes whose effects flush once, when the outermost `batch` closes. See [batching](reactive-ui.md#batching).
+
+**Scope** — The owner of the signals, effects, cleanups and tasks created while it is entered, all freed when it is disposed. Every mount, component and branch has one. See [scopes own everything](reactive-ui.md#scopes-own-everything).
+
+**Context** — A value provided to a scope's descendants and found by type with `use_context`, the nearest provider winning. See [context](reactive-ui.md#context).
+
+**View** — A description of a subtree, holding no engine state until it is mounted under a node. See [two layers](reactive-ui.md#two-layers).
+
+**`view!`** — The template macro that lowers elements, text, attributes and control flow to view builder calls. A literal value is applied once; any other expression binds reactively. See [templates](reactive-ui.md#templates).
+
+**Component** — A `#[component]` function building a subtree. Its body runs once per mount and updates only through the signals it reads. See [components](reactive-ui.md#components).
+
+**Prop** — A component parameter. It arrives in the body as a signal, seeded once from a literal or kept synced from any other expression. See [components](reactive-ui.md#components).
+
+**Children** — A `Copy` thunk of caller content, built where the component body places it. A component taking several is said to have slots. See [children and slots](reactive-ui.md#children-and-slots).
+
+**Callback** — A prop the parent fills with a closure for the child to call, optionally returning a value. `Clone`, not `Copy`. See [callbacks](reactive-ui.md#callbacks).
+
+**Dynamic Block** — What an `if`, `match` or view hole lowers to: content rebuilt in place when a signal read while producing it changes. See [structure that changes](reactive-ui.md#structure-that-changes).
+
+**Keyed List** — What `each` lowers to: items diffed by key, so a surviving key keeps its nodes, and their runtime state, across a reorder. See [structure that changes](reactive-ui.md#structure-that-changes).
+
+**Portal** — Content mounted as the last children of the document root so it draws over everything, while staying in the scope that declared it. See [portals](reactive-ui.md#portals).
+
+**NodeRef** — A handle a template binds to an element with `ref:`, for focusing, scrolling, animating or reading layout from code that never sees the `NodeId`. See [reaching the document](reactive-ui.md#reaching-the-document).
+
+**Virtual List** — A list that mounts only the items in view, through the keyed differ, with spacers holding the rest of the range. See [large collections](reactive-ui.md#large-collections).
+
+**VirtualListRef** — A handle to a mounted virtual list's window math, for scrolling an item into view. See [large collections](reactive-ui.md#large-collections).
+
+**App** — The entry point that owns the document, mounts the root view, wires off-task writes to the event task, and runs the engine loop. See [running an app](reactive-ui.md#running-an-app).
+
+**Harness** — A headless test driver that mounts a view through the same wiring as `App` and keeps the screen settled between steps. Behind the `testing` feature. See [testing with Harness](reactive-ui.md#testing-with-harness).
+
 ---
 
 *Additional terms will be added as new concepts are introduced during development.*
