@@ -68,6 +68,8 @@ pub fn Table(
     let frame = derived(move || {
         let mut frame = Style::new();
         frame.flex_direction(FlexDirection::Column);
+        // Without it the frame floors at the full scroll height and outgrows a bounded parent.
+        frame.overflow_y(Overflow::Clip);
         frame.merge(&style.get());
         frame
     });

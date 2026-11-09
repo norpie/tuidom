@@ -189,3 +189,29 @@ fn taller_rows_page_by_how_many_fit() {
     h.press(KeyCode::PageDown);
     assert_eq!(selected.get(), 3);
 }
+
+#[test]
+fn growing_in_a_bounded_column_stays_inside_it() {
+    let selected = state(0);
+    let mut h = Harness::new(12, 8, move || {
+        install_theme(Theme::dark());
+        let mut host = column();
+        host.width(Length::Percent(100.0));
+        host.height(Length::Cells(4));
+        let mut grow = Style::new();
+        grow.flex_grow(1.0);
+        view! {
+            box {
+                style: host.clone(),
+                List {
+                    count: 10_000,
+                    selected: selected,
+                    render: move |i| text(format!("item {i}")).into(),
+                    style: grow.clone(),
+                },
+            }
+        }
+    });
+    assert_eq!(text_at(&mut h, 3), "item 3");
+    assert_eq!(h.row(4), "");
+}

@@ -131,3 +131,30 @@ fn the_header_follows_the_rows_sideways_and_back() {
     assert_eq!(h.document().scroll_offset(body).x, 2);
     assert_eq!(h.row(0), "me     │ S");
 }
+
+#[test]
+fn growing_in_a_bounded_column_stays_inside_it() {
+    let mut h = Harness::new(24, 10, move || {
+        install_theme(Theme::dark());
+        let mut host = Style::new();
+        host.flex_direction(tuidom::style::FlexDirection::Column);
+        host.width(Length::Percent(100.0));
+        host.height(Length::Cells(6));
+        let mut grow = Style::new();
+        grow.flex_grow(1.0);
+        view! {
+            box {
+                style: host.clone(),
+                Table {
+                    columns: columns(),
+                    count: 10_000,
+                    cell: move |(row, _): (usize, usize)| format!("file_{row}"),
+                    selected: state(0),
+                    style: grow.clone(),
+                },
+            }
+        }
+    });
+    assert!(h.row(5).contains("file_3"), "{:?}", h.row(5));
+    assert_eq!(h.row(6), "");
+}

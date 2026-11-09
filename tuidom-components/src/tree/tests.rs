@@ -154,3 +154,32 @@ fn a_click_on_a_label_selects_without_toggling() {
     f.h.click_text("▸");
     assert!(f.expanded.get().contains("view"));
 }
+
+#[test]
+fn growing_in_a_bounded_column_stays_inside_it() {
+    let mut h = Harness::new(16, 8, move || {
+        install_theme(Theme::dark());
+        let mut host = Style::new();
+        host.flex_direction(tuidom::style::FlexDirection::Column);
+        host.width(Length::Percent(100.0));
+        host.height(Length::Cells(4));
+        let mut grow = Style::new();
+        grow.flex_grow(1.0);
+        let many = (0..50)
+            .map(|i| TreeNode::new(format!("{i}"), format!("node {i}")))
+            .collect::<Vec<_>>();
+        view! {
+            box {
+                style: host.clone(),
+                Tree {
+                    nodes: many.clone(),
+                    expanded: state(HashSet::new()),
+                    selected: state(None),
+                    style: grow.clone(),
+                },
+            }
+        }
+    });
+    assert!(h.row(3).contains("node 3"), "{:?}", h.row(3));
+    assert_eq!(h.row(4), "");
+}
