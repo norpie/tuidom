@@ -16,14 +16,14 @@ use tuidom::NodeKindView;
 use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Style};
 use tuidom_components::{
-    Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Column, Density, Divider,
-    DividerProps, KeyHint, KeyHintProps, Label, LabelProps, LabelTone, List, ListProps, Menu,
-    MenuItem, MenuProps, Modal, ModalProps, Orientation, Panel, PanelProps, ProgressBar,
-    ProgressBarProps, RadioGroup, RadioGroupProps, Scrollable, ScrollableProps, Select,
-    SelectProps, Shape, Side, Slider, SliderProps, Spinner, SpinnerProps, Split, SplitProps,
-    StatusBar, StatusBarProps, Surface, Table, TableProps, Tabs, TabsProps, TextInput,
-    TextInputProps, Theme, ThemeScope, ThemeScopeProps, Toast, Toaster, ToasterProps, Tone,
-    Tooltip, TooltipProps, Tree, TreeNode, TreeProps, install_theme, use_toaster,
+    Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Column, Divider, DividerProps,
+    KeyHint, KeyHintProps, Label, LabelProps, LabelTone, List, ListProps, Menu, MenuItem,
+    MenuProps, Modal, ModalProps, Orientation, Panel, PanelProps, ProgressBar, ProgressBarProps,
+    RadioGroup, RadioGroupProps, Scrollable, ScrollableProps, Select, SelectProps, Shape, Side,
+    Slider, SliderProps, Spinner, SpinnerProps, Split, SplitProps, StatusBar, StatusBarProps,
+    Surface, Table, TableProps, Tabs, TabsProps, TextInput, TextInputProps, Theme, ThemeScope,
+    ThemeScopeProps, Toast, Toaster, ToasterProps, Tone, Tooltip, TooltipProps, Tree, TreeNode,
+    TreeProps, install_theme, use_toaster,
 };
 
 use tuidom_ui::{App, Signal, View, component, fragment, state, text, use_document, view};
@@ -331,12 +331,13 @@ fn edit_items() -> Vec<MenuItem> {
     ]
 }
 
-/// The outer theme with flat, compact buttons, so menu triggers sit in one row like a menu bar.
+/// The outer theme with flat buttons, so menu triggers sit in one row like a menu bar. With no
+/// gap between them, their padding is the only space between labels, and a highlight reaches the
+/// next trigger.
 fn menu_bar(theme: &Theme) -> Theme {
     Theme {
         shape: Shape {
             button: Surface::Flat,
-            density: Density::Compact,
             ..theme.shape.clone()
         },
         ..theme.clone()
@@ -349,7 +350,6 @@ fn navigation(theme: Signal<Theme>, chosen: Signal<String>) -> View {
             style: section(),
             ThemeScope {
                 theme: menu_bar(&theme.get()),
-                style: row(),
                 Menu {
                     label: "File".to_string(),
                     items: file_items(),
