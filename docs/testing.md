@@ -6,6 +6,9 @@ assertable directly rather than inferred from escape sequences.
 
 This is the supported feedback loop. Running the app and looking at it is not.
 
+Code built on `tuidom-ui` usually tests through `Harness`, which drives this runtime and keeps
+the screen settled between steps; see [testing with Harness](reactive-ui.md#testing-with-harness).
+
 ## Why headless exists at all
 
 Two hard constraints make it necessary rather than convenient.
@@ -181,3 +184,4 @@ it building, but it is not how you find out whether something works.
 
 - [Rendering](rendering.md) — what the grid holds and how diffing works
 - [Architecture](architecture.md#how-a-frame-happens) — what `render()` is a slice of
+- [Reactive UI](reactive-ui.md#testing-with-harness) — `Harness`, for code built on `tuidom-ui`
