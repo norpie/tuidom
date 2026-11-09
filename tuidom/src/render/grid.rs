@@ -582,6 +582,9 @@ impl Grid {
             // skipped, never a different result.
             let mut bg_memo: Option<(Rgb, Option<Rgb>)> = None;
             let mut fg_memo: Option<(Rgb, Rgb)> = None;
+            // A fill with no text color of its own still covers the glyphs under it, so their
+            // color blends toward the fill as the background does.
+            let glyph_tint = if cell.fg.is_none() { bg_src } else { None };
 
             for row in y_start..y_end {
                 let row_cells = &mut self.cells[row];
@@ -612,6 +615,15 @@ impl Grid {
                             },
                             // Transparent text fades toward what the cell now sits on.
                             None => lerp_rgb(bg.or(under).unwrap_or(default_bg), src, src_alpha),
+                        });
+                    } else if let (Some((src, src_alpha)), Some(d)) = (glyph_tint, dst.fg) {
+                        dst.fg = Some(match fg_memo {
+                            Some((seen, blended)) if seen == d => blended,
+                            _ => {
+                                let blended = lerp_rgb(d, src, src_alpha);
+                                fg_memo = Some((d, blended));
+                                blended
+                            }
                         });
                     }
                     dst.bg = bg;
@@ -1295,7 +1307,12 @@ mod tests {
                 } else {
                     dst.content.clone()
                 },
-                fg: blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg), default_bg),
+                fg: match (replaces, dst.fg, src.fg, src.bg) {
+                    (false, Some(d), None, Some(s)) if effective_alpha(s, opacity) > 0.0 => {
+                        Some(lerp_rgb(d, s, effective_alpha(s, opacity)))
+                    }
+                    _ => blend_fg(dst.fg, src.fg, opacity, bg.or(dst.bg), default_bg),
+                },
                 bg,
                 attrs: if replaces { src.attrs } else { dst.attrs },
             }
@@ -1456,7 +1473,7 @@ mod tests {
     }
 
     #[test]
-    fn translucent_empty_fill_blends_background_without_erasing_text() {
+    fn translucent_empty_fill_dims_text_without_erasing_it() {
         let white = rgb(255, 255, 255);
         let blue = rgb(0, 0, 255);
         let red = rgb(255, 0, 0);
@@ -1467,9 +1484,9 @@ mod tests {
         grid.fill_rect(0, 0, 2, 1, Cell::empty_with_bg(red), 0.5);
 
         assert_eq!(row_text(&grid, 0), "hi");
-        assert_eq!(grid.cells[0][0].fg, Some(white));
+        assert_eq!(grid.cells[0][0].fg, Some(rgb(255, 128, 128)));
         assert_eq!(grid.cells[0][0].bg, Some(rgb(128, 0, 128)));
-        assert_eq!(grid.cells[0][1].fg, Some(white));
+        assert_eq!(grid.cells[0][1].fg, Some(rgb(255, 128, 128)));
         assert_eq!(grid.cells[0][1].bg, Some(rgb(128, 0, 128)));
     }
 

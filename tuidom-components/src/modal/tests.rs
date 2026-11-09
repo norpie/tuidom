@@ -67,6 +67,21 @@ fn an_open_modal_centers_its_panel_over_a_dimmed_screen() {
 }
 
 #[test]
+fn the_backdrop_dims_the_text_behind_it() {
+    let open = state(false);
+    let mut h = harness(open, true, state(0));
+    let lit = h.cell(0, 0).unwrap().fg.unwrap();
+    open.set(true);
+    let dimmed = h.cell(0, 0).unwrap();
+    assert_eq!(dimmed.text, "o");
+    assert!(
+        dimmed.fg.unwrap().r < lit.r,
+        "{:?} under the modal, {lit:?} without",
+        dimmed.fg
+    );
+}
+
+#[test]
 fn the_backdrop_is_the_background_at_partial_alpha() {
     let mut h = Harness::new(24, 8, || {
         install_theme(Theme::dark());

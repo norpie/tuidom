@@ -958,10 +958,10 @@ fn a_translucent_overlay_blends_over_a_border() {
     runtime.render().unwrap();
 
     // A border glyph behaves exactly like a text glyph under a translucent fill: the glyph
-    // and its foreground survive, and the overlay blends into the cell's background.
+    // survives, dimmed toward the overlay, and the overlay blends into the cell's background.
     let corner = runtime.get_cell(0, 0).unwrap();
     assert_eq!(corner.text, "┌");
-    assert_eq!(corner.fg, Some(ScreenColor::from_rgb(255, 255, 255)));
+    assert_eq!(corner.fg, Some(ScreenColor::from_rgb(127, 127, 127)));
     assert!(
         corner.bg.is_some(),
         "the translucent overlay should have blended into the border cell's background"
