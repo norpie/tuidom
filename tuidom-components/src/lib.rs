@@ -12,6 +12,7 @@ mod field;
 mod label;
 mod modal;
 mod panel;
+mod popup_list;
 mod progress_bar;
 mod radio_group;
 mod scrollable;

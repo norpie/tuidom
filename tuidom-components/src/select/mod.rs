@@ -1,16 +1,14 @@
 #[cfg(test)]
 mod tests;
 
-use tuidom::NodeId;
 use tuidom::event::KeyCode;
-use tuidom::style::{
-    AnchorAxis, AnchorEdge, Border, Color, EdgeInsets, FlexDirection, Position, Sides, Style,
-};
+use tuidom::style::{Color, Style};
 use tuidom_ui::{Signal, View, component, derived, node_ref, state, view};
 use unicode_width::UnicodeWidthStr;
 
 use crate::field::FieldLook;
-use crate::theme::{Density, Shape, Surface, Theme, use_shape, use_theme};
+use crate::popup_list::{PopupList, PopupListProps, PopupRow, padded};
+use crate::theme::use_shape;
 
 /// A field showing the selected option, which opens a list of `options` to pick from: `selected`
 /// is the index into `options`, read and written.
@@ -32,10 +30,8 @@ pub fn Select(
     #[prop(default)] style: Style,
 ) -> View {
     let shape = use_shape();
-    let theme = use_theme();
     let focused = state(false);
     let open = state(false);
-    let highlight = state(0_usize);
     let trigger = node_ref();
 
     let look = derived(move || FieldLook {
@@ -57,18 +53,11 @@ pub fn Select(
             .unwrap_or_default();
         padded(&current, widest.get())
     });
-    let list = derived(move || list_style(trigger.node(), &shape.get(), theme));
 
     let show = move || {
-        let count = options.get().len();
-        if count > 0 {
-            highlight.set(selected.get().min(count - 1));
+        if !options.get().is_empty() {
             open.set(true);
         }
-    };
-    let choose = move |index: usize| {
-        selected.set(index);
-        open.set(false);
     };
 
     view! {
@@ -91,34 +80,15 @@ pub fn Select(
             text(" ▾") { style: chevron() },
             if open.get() {
                 portal {
-                    box {
-                        trap_focus: true,
-                        style: list.get(),
-                        on_press_outside: move |_| open.set(false),
-                        on_key_press: move |ev| {
-                            let last = options.get().len().saturating_sub(1);
-                            match ev.code {
-                                KeyCode::Up => highlight.update(|h| *h = h.saturating_sub(1)),
-                                KeyCode::Down => highlight.update(|h| *h = (*h + 1).min(last)),
-                                KeyCode::Enter | KeyCode::Char(' ') => choose(highlight.get()),
-                                KeyCode::Esc => open.set(false),
-                                _ => return,
-                            }
-                            ev.prevent_default();
-                            ev.stop_propagation();
+                    PopupList {
+                        rows: rows(&options.get(), selected.get()),
+                        anchor: trigger.node(),
+                        initial: selected.get(),
+                        on_choose: move |index| {
+                            selected.set(index);
+                            open.set(false);
                         },
-                        each i, option in options.get() key = (i, option.clone()) {
-                            box {
-                                style: row_style(highlight.get() == i, shape.get().density),
-                                on_click: move |_| choose(i),
-                                text(padded(&option, widest.get())) {
-                                    style: row_text(highlight.get() == i)
-                                },
-                                text(if selected.get() == i { " ✓" } else { "  " }) {
-                                    style: row_text(highlight.get() == i)
-                                },
-                            }
-                        },
+                        on_close: move |_| open.set(false),
                     }
                 }
             },
@@ -126,67 +96,21 @@ pub fn Select(
     }
 }
 
-/// `label` followed by spaces out to `width` columns.
-fn padded(label: &str, width: usize) -> String {
-    let fill = width.saturating_sub(label.width());
-    format!("{label}{}", " ".repeat(fill))
+/// The options as list rows, with a check beside the selected one.
+fn rows(options: &[String], selected: usize) -> Vec<PopupRow> {
+    options
+        .iter()
+        .enumerate()
+        .map(|(i, option)| PopupRow {
+            label: option.clone(),
+            detail: if i == selected { " ✓" } else { "  " }.to_string(),
+            ..PopupRow::default()
+        })
+        .collect()
 }
 
 fn chevron() -> Style {
     let mut style = Style::new();
     style.color(Color::var("--muted-foreground"));
-    style
-}
-
-/// The list's frame: below the field, in the popover colors, with the theme's surface. The
-/// palette is declared on it because the portal mounts it outside any `ThemeScope` the field
-/// sits in.
-fn list_style(trigger: Option<NodeId>, shape: &Shape, theme: Option<Signal<Theme>>) -> Style {
-    let mut style = Style::new();
-    if let Some(theme) = theme {
-        theme.get().palette.declare_on(&mut style);
-    }
-    style.stacking_context(true);
-    style.flex_direction(FlexDirection::Column);
-    style.background(Color::var("--popover"));
-    if let Some(trigger) = trigger {
-        style.position(Position::Anchored {
-            anchor: trigger,
-            x: AnchorAxis::new(AnchorEdge::Start, AnchorEdge::Start),
-            y: AnchorAxis::new(AnchorEdge::End, AnchorEdge::Start),
-        });
-    }
-    match shape.surface {
-        Surface::Bordered => {
-            style.border(Border::new(shape.border));
-            style.border_color(Color::var("--border"));
-        }
-        Surface::HalfBlock => style.half_block_edges(Sides::new(false, true, false, true)),
-        Surface::Flat => {}
-    }
-    style
-}
-
-/// An option's row, padded like the field so the two line up.
-fn row_style(highlighted: bool, density: Density) -> Style {
-    let mut style = Style::new();
-    let padding = match density {
-        Density::Compact => 0,
-        Density::Comfortable => 1,
-    };
-    style.padding(EdgeInsets::symmetric(padding, 0));
-    if highlighted {
-        style.background(Color::var("--accent"));
-    }
-    style
-}
-
-fn row_text(highlighted: bool) -> Style {
-    let mut style = Style::new();
-    style.color(Color::var(if highlighted {
-        "--accent-foreground"
-    } else {
-        "--popover-foreground"
-    }));
     style
 }

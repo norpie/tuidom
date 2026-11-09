@@ -105,7 +105,13 @@ fn the_highlight_starts_on_the_selection_in_the_accent() {
     open(&mut h);
     let list = list(&mut h).unwrap();
     let doc = h.document();
-    let rows = doc.get_node(list).unwrap().children;
+    let rows: Vec<NodeId> = doc
+        .get_node(list)
+        .unwrap()
+        .children
+        .into_iter()
+        .filter(|&row| !doc.get_node(row).unwrap().children.is_empty())
+        .collect();
     let background = |row| doc.resolved_style(row).unwrap().background;
     let dark = Palette::dark();
     assert_eq!(background(rows[2]), Some(literal(&dark.accent)));
