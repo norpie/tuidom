@@ -41,6 +41,7 @@ pub fn Select(
     });
     let frame = derived(move || {
         let mut frame = look.get().frame();
+        frame.selectable(false);
         frame.merge(&style.get());
         frame
     });

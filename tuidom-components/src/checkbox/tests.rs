@@ -138,3 +138,12 @@ fn without_a_label_it_is_just_the_box() {
     });
     assert_eq!(h.row(0), "[✓]");
 }
+
+#[test]
+fn a_click_that_wobbles_still_toggles_and_selects_nothing() {
+    let checked = state(false);
+    let mut h = harness(Theme::dark(), checked, false);
+    crate::test_support::wobble(&mut h, "Remember");
+    assert!(checked.get());
+    assert_eq!(h.document().selection(), None);
+}

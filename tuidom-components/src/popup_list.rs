@@ -140,6 +140,7 @@ fn list_style(anchor: Option<NodeId>, shape: &Shape, theme: Option<Signal<Theme>
         theme.get().palette.declare_on(&mut style);
     }
     style.stacking_context(true);
+    style.selectable(false);
     style.flex_direction(FlexDirection::Column);
     style.background(Color::var("--popover"));
     if let Some(anchor) = anchor {

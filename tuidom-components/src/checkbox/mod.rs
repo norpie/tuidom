@@ -32,6 +32,7 @@ pub fn Checkbox(
     });
     let row = derived(move || {
         let mut row = look.get().row();
+        row.selectable(false);
         row.merge(&style.get());
         row
     });

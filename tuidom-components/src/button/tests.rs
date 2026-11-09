@@ -296,3 +296,12 @@ fn the_style_props_merge_over_its_own() {
     h.focus(button);
     assert_eq!(resolved(&h, button).background, Some(ResolvedColor::red()));
 }
+
+#[test]
+fn a_click_that_wobbles_still_presses_and_selects_nothing() {
+    let presses = state(0);
+    let mut h = harness(Theme::dark(), counting(presses, false));
+    crate::test_support::wobble(&mut h, "ok");
+    assert_eq!(presses.get(), 1);
+    assert_eq!(h.document().selection(), None);
+}

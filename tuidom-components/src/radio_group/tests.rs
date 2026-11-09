@@ -124,3 +124,12 @@ fn a_changed_option_redraws() {
     options.update(|o| o[0] = "Tiny".to_string());
     assert_eq!(h.row(0).trim_end(), "(•) Tiny");
 }
+
+#[test]
+fn a_click_that_wobbles_still_selects_the_option_and_no_text() {
+    let selected = state(0);
+    let mut h = harness(selected, false);
+    crate::test_support::wobble(&mut h, "Large");
+    assert_eq!(selected.get(), 2);
+    assert_eq!(h.document().selection(), None);
+}

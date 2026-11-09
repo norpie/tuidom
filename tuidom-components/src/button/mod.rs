@@ -157,6 +157,7 @@ impl Appearance {
 
     fn frame(&self) -> Style {
         let mut style = Style::new();
+        style.selectable(false);
         let (fill, _) = self.fill_and_text();
         if let Some(fill) = fill {
             style.background(fill);

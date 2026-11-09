@@ -139,3 +139,12 @@ fn a_ring_marks_the_active_tab_while_the_strip_is_focused() {
         literal(&Palette::dark().muted_foreground)
     );
 }
+
+#[test]
+fn a_click_that_wobbles_still_activates_the_tab_and_selects_nothing() {
+    let selected = state(0);
+    let mut h = harness(selected);
+    crate::test_support::wobble(&mut h, "Three");
+    assert_eq!(selected.get(), 2);
+    assert_eq!(h.document().selection(), None);
+}

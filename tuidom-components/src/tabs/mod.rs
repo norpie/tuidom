@@ -75,6 +75,7 @@ pub fn Tabs(
 
 fn strip() -> Style {
     let mut style = Style::new();
+    style.selectable(false);
     style.background(Color::var("--muted"));
     style
 }

@@ -219,3 +219,14 @@ fn the_list_covers_content_that_comes_after_the_field() {
     open(&mut h);
     assert_eq!(h.row(3), "╭──────────╮xxxx");
 }
+
+#[test]
+fn clicks_that_wobble_open_the_list_and_pick_a_row_without_selecting() {
+    let selected = state(0);
+    let mut h = harness(selected, state(0));
+    crate::test_support::wobble(&mut h, "Small");
+    assert!(list(&mut h).is_some());
+    crate::test_support::wobble(&mut h, "Large");
+    assert_eq!(selected.get(), 2);
+    assert_eq!(h.document().selection(), None);
+}

@@ -34,6 +34,7 @@ pub fn RadioGroup(
     let column = derived(move || {
         let mut column = Style::new();
         column.flex_direction(FlexDirection::Column);
+        column.selectable(false);
         column.merge(&style.get());
         column
     });

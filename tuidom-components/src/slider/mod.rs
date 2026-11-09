@@ -40,6 +40,7 @@ pub fn Slider(
         frame.width(Length::Percent(100.0));
         frame.height(Length::Cells(1));
         frame.align_items(AlignItems::FlexStart);
+        frame.selectable(false);
         frame.merge(&style.get());
         frame
     });

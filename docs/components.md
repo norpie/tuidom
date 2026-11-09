@@ -159,6 +159,9 @@ The components share a few rules, so they combine without fighting over keys:
   and Escape or a press outside closes it. Focus goes back to the control that opened it.
 - A modal traps focus until it closes, then gives it back.
 - Hovering focuses, so tooltips show on hover as well as focus.
+- A control's own text is [not selectable](focus-and-selection.md#text-that-cannot-be-selected),
+  so a click that wobbles a cell still clicks. Labels, panels, list and tree rows and table cells
+  stay selectable.
 
 A key handler on the document root still sees keys typed into a `TextInput`, because key
 events bubble. The examples skip their shortcuts when the key's target is an input.
