@@ -7,7 +7,7 @@ use tuidom_ui::{Signal, View, component, state, view};
 
 use super::*;
 use crate::test_support::literal;
-use crate::theme::{Palette, ThemeScope, ThemeScopeProps, install_theme};
+use crate::theme::{Palette, Shape, Surface, ThemeScope, ThemeScopeProps, install_theme};
 
 /// Hands the toaster it finds to the test.
 #[component]
@@ -17,11 +17,15 @@ fn Grab(into: Signal<Option<ToasterHandle>>) -> View {
     view! { box {} }
 }
 
-/// A toaster around a clickable label, on a 30×10 screen, with its handle.
 fn harness(clicks: Signal<u32>) -> (Harness, ToasterHandle) {
+    harness_in(Theme::dark(), clicks)
+}
+
+/// A toaster around a clickable label, on a 30×10 screen, with its handle.
+fn harness_in(theme: Theme, clicks: Signal<u32>) -> (Harness, ToasterHandle) {
     let grabbed = state(None);
     let mut h = Harness::new(30, 10, move || {
-        install_theme(Theme::dark());
+        install_theme(theme.clone());
         view! {
             Toaster {
                 box {
@@ -65,12 +69,13 @@ fn toasts_stack_in_the_bottom_right_corner_newest_last() {
         title: "Second".to_string(),
         ..Toast::default()
     });
-    assert_eq!(h.row(3), "                ╭────────────╮");
-    assert_eq!(h.row(4), "                │  Saved     │");
-    assert_eq!(h.row(5), "                │  All good  │");
-    assert_eq!(h.row(7), "                  ╭──────────╮");
-    assert_eq!(h.row(8), "                  │  Second  │");
-    assert_eq!(h.row(9), "                  ╰──────────╯");
+    assert_eq!(h.row(3), "                  ▗▄▄▄▄▄▄▄▄▄▄▖");
+    assert_eq!(h.row(4), "                  ▐ Saved    ▌");
+    assert_eq!(h.row(5), "                  ▐ All good ▌");
+    assert_eq!(h.row(6), "                  ▝▀▀▀▀▀▀▀▀▀▀▘");
+    assert_eq!(h.row(7), "                    ▗▄▄▄▄▄▄▄▄▖");
+    assert_eq!(h.row(8), "                    ▐ Second ▌");
+    assert_eq!(h.row(9), "                    ▝▀▀▀▀▀▀▀▀▘");
 }
 
 #[test]
@@ -124,22 +129,34 @@ fn dismissing_one_toast_leaves_the_others_on_their_own_clocks() {
 
 #[test]
 fn the_tone_colors_the_edge() {
-    let (mut h, toaster) = harness(state(0));
-    toaster.show(Toast {
-        title: "Failed".to_string(),
-        tone: Tone::Destructive,
-        ..Toast::default()
-    });
-    let card = cards(&mut h)[0];
-    let doc = h.document();
-    assert_eq!(
-        doc.resolved_style(card).unwrap().border_color,
-        Some(literal(&Palette::dark().destructive))
-    );
-    assert_eq!(
-        doc.resolved_style(card).unwrap().background,
-        Some(literal(&Palette::dark().popover))
-    );
+    let dark = Palette::dark();
+    for surface in [Surface::Bordered, Surface::HalfBlock] {
+        let theme = Theme {
+            shape: Shape {
+                container: surface,
+                ..Shape::default()
+            },
+            ..Theme::dark()
+        };
+        let (mut h, toaster) = harness_in(theme, state(0));
+        toaster.show(Toast {
+            title: "Failed".to_string(),
+            tone: Tone::Destructive,
+            ..Toast::default()
+        });
+        let card = cards(&mut h)[0];
+        let style = h.document().resolved_style(card).unwrap();
+        let edge = match surface {
+            Surface::Bordered => style.border_color,
+            _ => style.half_block_inner_color,
+        };
+        assert_eq!(edge, Some(literal(&dark.destructive)), "{surface:?}");
+        assert_eq!(
+            style.background,
+            Some(literal(&dark.popover)),
+            "{surface:?}"
+        );
+    }
 }
 
 #[test]

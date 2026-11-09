@@ -34,7 +34,7 @@ fn surfaced(surface: Surface) -> Theme {
 
 #[test]
 fn a_bordered_panel_draws_its_title_on_the_border() {
-    let mut h = harness(Theme::dark(), "Title");
+    let mut h = harness(surfaced(Surface::Bordered), "Title");
     assert_eq!(h.row(0).trim_end(), "╭─ Title ──╮");
     assert_eq!(h.row(1).trim_end(), "│  first   │");
     assert_eq!(h.row(2).trim_end(), "│  second  │");
@@ -43,7 +43,7 @@ fn a_bordered_panel_draws_its_title_on_the_border() {
 
 #[test]
 fn without_a_title_the_border_is_unbroken() {
-    let mut h = harness(Theme::dark(), "");
+    let mut h = harness(surfaced(Surface::Bordered), "");
     assert_eq!(h.row(0).trim_end(), "╭──────────╮");
 }
 

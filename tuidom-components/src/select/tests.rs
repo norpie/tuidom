@@ -6,16 +6,20 @@ use tuidom_ui::{Signal, state, view};
 
 use super::*;
 use crate::test_support::literal;
-use crate::theme::{Palette, Theme, ThemeScope, ThemeScopeProps, install_theme};
+use crate::theme::{Palette, Shape, Surface, Theme, ThemeScope, ThemeScopeProps, install_theme};
 
 fn sizes() -> Vec<String> {
     ["Small", "Medium", "Large"].map(String::from).to_vec()
 }
 
-/// The select at its own width, with a clickable label beside it.
 fn harness(selected: Signal<usize>, clicks: Signal<u32>) -> Harness {
+    harness_in(Theme::dark(), selected, clicks)
+}
+
+/// The select at its own width, with a clickable label beside it.
+fn harness_in(theme: Theme, selected: Signal<usize>, clicks: Signal<u32>) -> Harness {
     Harness::new(20, 8, move || {
-        install_theme(Theme::dark());
+        install_theme(theme.clone());
         let mut host = Style::new();
         host.align_items(AlignItems::FlexStart);
         view! {
@@ -56,12 +60,10 @@ fn open(h: &mut Harness) {
 fn the_field_shows_the_selection_at_the_widest_options_width() {
     let selected = state(0);
     let mut h = harness(selected, state(0));
-    assert_eq!(h.row(0).trim_end(), "╭──────────╮beside");
-    assert_eq!(h.row(1).trim_end(), "│ Small  ▾ │");
-    assert_eq!(h.row(2).trim_end(), "╰──────────╯");
+    assert_eq!(h.row(0).trim_end(), " Small  ▾ beside");
 
     selected.set(1);
-    assert_eq!(h.row(1).trim_end(), "│ Medium ▾ │");
+    assert_eq!(h.row(0).trim_end(), " Medium ▾ beside");
 }
 
 #[test]
@@ -69,6 +71,25 @@ fn opening_draws_the_list_below_the_field_over_what_is_there() {
     let mut h = harness(state(1), state(0));
     open(&mut h);
     assert!(list(&mut h).is_some());
+    assert_eq!(h.row(1).trim_end(), " Small");
+    assert_eq!(h.row(2).trim_end(), " Medium ✓");
+    assert_eq!(h.row(3).trim_end(), " Large");
+}
+
+#[test]
+fn a_bordered_select_frames_the_field_and_the_list() {
+    let theme = Theme {
+        shape: Shape {
+            field: Surface::Bordered,
+            ..Shape::default()
+        },
+        ..Theme::dark()
+    };
+    let mut h = harness_in(theme, state(1), state(0));
+    assert_eq!(h.row(0).trim_end(), "╭──────────╮beside");
+    assert_eq!(h.row(1).trim_end(), "│ Medium ▾ │");
+    assert_eq!(h.row(2).trim_end(), "╰──────────╯");
+    open(&mut h);
     assert_eq!(h.row(3).trim_end(), "╭──────────╮");
     assert_eq!(h.row(4).trim_end(), "│ Small    │");
     assert_eq!(h.row(5).trim_end(), "│ Medium ✓ │");
@@ -217,7 +238,7 @@ fn the_list_covers_content_that_comes_after_the_field() {
         }
     });
     open(&mut h);
-    assert_eq!(h.row(3), "╭──────────╮xxxx");
+    assert_eq!(h.row(1), " Small  ✓ xxxxxx");
 }
 
 #[test]

@@ -47,7 +47,8 @@ background, so white cards and popovers stand apart from it without a border.
 
 The **Shape** is the rest of the look:
 
-- `border`, the charset every bordered component draws with. It stands in for a corner radius.
+- `border`, the charset bordered surfaces and lines such as dividers draw with. It stands in
+  for a corner radius.
 - `button`, `field` and `container`, each a **Surface**: how buttons, fields and containers
   are framed, with a border, with [half-block edges](styling.md#half-block-edges), or not at
   all. A border takes a cell on each side; half-block edges take none. Fields are the text
@@ -58,13 +59,17 @@ The **Shape** is the rest of the look:
   `--ring`, underlining its label, or swapping its colors. Where there is no edge to recolor, a
   ring tints a field's fill toward `--ring` and swaps a button's colors.
 
+The default shape gives buttons and containers half-block edges and leaves fields unframed, so
+the rounded charset shows only in lines such as dividers. Density is comfortable and the focus
+mark is a ring.
+
 Both are plain structs, so a variant of the default is a struct update:
 
 ```rust
 use tuidom_components::{Shape, Surface, Theme};
 
 let theme = Theme {
-    shape: Shape { field: Surface::HalfBlock, ..Shape::default() },
+    shape: Shape { container: Surface::Bordered, ..Shape::default() },
     ..Theme::default()
 };
 ```

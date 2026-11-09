@@ -3,8 +3,8 @@ use tuidom::style::BorderCharset;
 /// The non-color half of a theme: how components frame, space, and mark themselves.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shape {
-    /// Characters every bordered component draws with. The terminal stand-in for a corner
-    /// radius.
+    /// Characters bordered surfaces and lines such as dividers draw with. The terminal stand-in
+    /// for a corner radius.
     pub border: BorderCharset,
     /// How buttons are framed.
     pub button: Surface,
@@ -23,9 +23,9 @@ impl Default for Shape {
     fn default() -> Self {
         Self {
             border: BorderCharset::rounded(),
-            button: Surface::Bordered,
-            field: Surface::Bordered,
-            container: Surface::Bordered,
+            button: Surface::HalfBlock,
+            field: Surface::Flat,
+            container: Surface::HalfBlock,
             density: Density::Comfortable,
             focus: FocusMark::Ring,
         }

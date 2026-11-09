@@ -44,10 +44,9 @@ fn resolved(h: &Harness, node: NodeId) -> ResolvedStyle {
 
 #[test]
 fn a_bordered_button_frames_its_label() {
-    let mut h = harness(
-        Theme::dark(),
-        || view! { Button { label: "ok".to_string() } },
-    );
+    let mut h = harness(shaped(Surface::Bordered, FocusMark::Ring), || {
+        view! { Button { label: "ok".to_string() } }
+    });
     assert_eq!(h.row(0).trim_end(), "╭──────╮");
     assert_eq!(h.row(1).trim_end(), "│  ok  │");
     assert_eq!(h.row(2).trim_end(), "╰──────╯");
@@ -59,8 +58,8 @@ fn a_stretched_button_centers_its_label() {
         install_theme(Theme::dark());
         view! { box { Button { label: "ok".to_string() } } }
     });
-    assert_eq!(h.row(2).trim_end(), "│  ok  │");
-    assert_eq!(h.row(4).trim_end(), "╰──────╯");
+    assert_eq!(h.row(2).trim_end(), "▐ ok ▌");
+    assert_eq!(h.row(4).trim_end(), "▐    ▌");
 }
 
 #[test]
@@ -88,7 +87,7 @@ fn compact_density_pads_one_cell() {
         ..Theme::dark()
     };
     let mut h = harness(theme, || view! { Button { label: "ok".to_string() } });
-    assert_eq!(h.row(1).trim_end(), "│ ok │");
+    assert_eq!(h.row(0).trim_end(), "▐ok▌");
 }
 
 #[test]
@@ -129,14 +128,18 @@ fn each_variant_takes_its_colors() {
 
 #[test]
 fn an_outline_button_is_framed_in_the_input_color() {
-    let mut h = harness(Theme::dark(), || {
-        view! { Button { label: "ok".to_string(), variant: ButtonVariant::Outline } }
-    });
-    let (button, _) = nodes(&mut h);
-    assert_eq!(
-        resolved(&h, button).border_color,
-        Some(literal(&Palette::dark().input))
-    );
+    let input = Some(literal(&Palette::dark().input));
+    for surface in [Surface::Bordered, Surface::HalfBlock] {
+        let mut h = harness(shaped(surface, FocusMark::Ring), || {
+            view! { Button { label: "ok".to_string(), variant: ButtonVariant::Outline } }
+        });
+        let (button, _) = nodes(&mut h);
+        let edge = match surface {
+            Surface::Bordered => resolved(&h, button).border_color,
+            _ => resolved(&h, button).half_block_inner_color,
+        };
+        assert_eq!(edge, input, "{surface:?}");
+    }
 }
 
 #[test]
@@ -204,10 +207,9 @@ fn a_disabled_button_cannot_be_pressed_or_focused() {
 
 #[test]
 fn a_ring_recolors_the_border_while_focused() {
-    let mut h = harness(
-        Theme::dark(),
-        || view! { Button { label: "ok".to_string() } },
-    );
+    let mut h = harness(shaped(Surface::Bordered, FocusMark::Ring), || {
+        view! { Button { label: "ok".to_string() } }
+    });
     let (button, _) = nodes(&mut h);
     h.focus(button);
     assert_eq!(
@@ -292,7 +294,7 @@ fn the_style_props_merge_over_its_own() {
         view! { Button { label: "ok".to_string(), style: wide.clone(), focus_style: red.clone() } }
     });
     let (button, _) = nodes(&mut h);
-    assert_eq!(h.row(1).trim_end(), "│    ok    │");
+    assert_eq!(h.row(0).trim_end(), "▐    ok    ▌");
     h.focus(button);
     assert_eq!(resolved(&h, button).background, Some(ResolvedColor::red()));
 }

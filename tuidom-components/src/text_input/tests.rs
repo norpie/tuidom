@@ -63,7 +63,7 @@ fn named(value: Signal<String>) -> impl Fn() -> View + Send + Sync {
 
 #[test]
 fn a_bordered_field_fills_its_container_and_shows_the_placeholder_while_empty() {
-    let mut h = harness(Theme::dark(), named(state(String::new())));
+    let mut h = harness(surfaced(Surface::Bordered), named(state(String::new())));
     assert_eq!(h.row(0), "╭──────────╮");
     assert_eq!(h.row(1), "│ Name     │");
     assert_eq!(h.row(2), "╰──────────╯");
@@ -83,12 +83,12 @@ fn typing_writes_the_callers_signal_and_hides_the_placeholder() {
     h.focus(input);
     h.type_text("Ada");
     assert_eq!(value.get(), "Ada");
-    assert_eq!(h.row(1), "│ Ada      │");
+    assert_eq!(h.row(0).trim_end(), " Ada");
 
     value.set("Grace".to_string());
-    assert_eq!(h.row(1), "│ Grace    │");
+    assert_eq!(h.row(0).trim_end(), " Grace");
     value.set(String::new());
-    assert_eq!(h.row(1), "│ Name     │");
+    assert_eq!(h.row(0).trim_end(), " Name");
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn a_masked_field_hides_its_value() {
     let mut h = harness(Theme::dark(), move || {
         view! { TextInput { value: value, mask: Some('•') } }
     });
-    assert_eq!(h.row(1), "│ ••       │");
+    assert_eq!(h.row(0).trim_end(), " ••");
 }
 
 #[test]
@@ -107,9 +107,8 @@ fn a_long_value_scrolls_instead_of_widening_the_field() {
     let (_, input) = nodes(&mut h);
     h.focus(input);
     h.type_text("abcdefghijkl");
-    assert_eq!(h.row(0), "╭──────────╮");
-    let row = h.row(1);
-    assert!(row.starts_with("│ ") && row.ends_with(" │"), "{row:?}");
+    let row = h.row(0);
+    assert!(row.starts_with(' '), "{row:?}");
     assert!(row.contains("ijkl") && !row.contains('a'), "{row:?}");
 }
 
@@ -117,13 +116,13 @@ fn a_long_value_scrolls_instead_of_widening_the_field() {
 fn clicking_the_frame_focuses_the_input() {
     let mut h = harness(Theme::dark(), named(state(String::new())));
     let (_, input) = nodes(&mut h);
-    h.click(0, 1);
+    h.click(0, 0);
     assert_eq!(h.document().focused(), Some(input));
 }
 
 #[test]
 fn focus_rings_the_edge() {
-    let mut h = harness(Theme::dark(), named(state(String::new())));
+    let mut h = harness(surfaced(Surface::Bordered), named(state(String::new())));
     let (frame, input) = nodes(&mut h);
     let dark = Palette::dark();
     assert_eq!(resolved(&h, frame).border_color, Some(literal(&dark.input)));
@@ -134,7 +133,7 @@ fn focus_rings_the_edge() {
 #[test]
 fn a_disabled_field_cannot_be_focused_or_edited() {
     let value = state("x".to_string());
-    let mut h = harness(Theme::dark(), move || {
+    let mut h = harness(surfaced(Surface::Bordered), move || {
         view! { TextInput { value: value, disabled: true } }
     });
     let (frame, input) = nodes(&mut h);
@@ -186,7 +185,7 @@ fn a_flat_field_tints_its_fill_toward_the_ring_while_focused() {
 
 #[test]
 fn the_style_prop_merges_over_the_frame() {
-    let mut h = harness(Theme::dark(), || {
+    let mut h = harness(surfaced(Surface::Bordered), || {
         let mut narrow = Style::new();
         narrow.width(Length::Cells(6));
         view! { TextInput { value: state(String::new()), style: narrow.clone() } }
@@ -200,6 +199,7 @@ fn a_stretched_field_keeps_its_text_on_the_middle_row() {
         install_theme(Theme::dark());
         view! { box { TextInput { value: state("hi".to_string()) } } }
     });
-    assert_eq!(h.row(2).trim_end(), "│ hi   │");
-    assert_eq!(h.row(4).trim_end(), "╰──────╯");
+    assert_eq!(h.row(1).trim_end(), "");
+    assert_eq!(h.row(2).trim_end(), " hi");
+    assert_eq!(h.row(3).trim_end(), "");
 }
