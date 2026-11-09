@@ -17,6 +17,7 @@ mod panel;
 mod popup_list;
 mod progress_bar;
 mod radio_group;
+mod roving;
 mod scrollable;
 mod select;
 mod slider;

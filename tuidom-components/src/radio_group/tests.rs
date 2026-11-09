@@ -35,6 +35,11 @@ fn group(h: &mut Harness) -> NodeId {
     h.document().get_node(host).unwrap().children[0]
 }
 
+fn option(h: &mut Harness, index: usize) -> NodeId {
+    let group = group(h);
+    h.document().get_children(group)[index]
+}
+
 /// The text nodes of one option's row: open paren, mark, close paren, space, label.
 fn row_parts(h: &mut Harness, index: usize) -> Vec<NodeId> {
     let group = group(h);
@@ -64,48 +69,55 @@ fn clicking_an_option_selects_it() {
 }
 
 #[test]
-fn up_and_down_move_the_selection_then_leave_the_group_at_its_ends() {
+fn tab_reaches_the_selected_option_and_up_and_down_move_focus_and_selection_together() {
     let selected = state(0);
     let mut h = harness(selected, false);
-    let group = group(&mut h);
-    h.focus(group);
+    h.press(KeyCode::Tab);
+    assert_eq!(h.document().focused(), Some(option(&mut h, 0)));
     h.press(KeyCode::Down);
     h.press(KeyCode::Down);
     assert_eq!(selected.get(), 2);
-    assert_eq!(h.document().focused(), Some(group));
+    assert_eq!(h.document().focused(), Some(option(&mut h, 2)));
 
     h.press(KeyCode::Down);
     assert_eq!(selected.get(), 2);
     assert_eq!(h.document().focused(), h.find_attr("test_id", "below"));
 
-    h.focus(group);
+    h.press(KeyCode::BackTab);
+    assert_eq!(h.document().focused(), Some(option(&mut h, 2)));
     h.press(KeyCode::Up);
     assert_eq!(selected.get(), 1);
+    assert_eq!(h.document().focused(), Some(option(&mut h, 1)));
 }
-
 #[test]
-fn the_focus_mark_is_drawn_on_the_selected_row() {
-    let mut h = harness(state(1), false);
-    let group = group(&mut h);
-    h.focus(group);
+fn hovering_an_option_focuses_it_and_space_selects_it() {
+    let selected = state(1);
+    let mut h = harness(selected, false);
     let ring = literal(&Palette::dark().ring);
     let input = literal(&Palette::dark().input);
     let bracket = |h: &mut Harness, index| {
         let open = row_parts(h, index)[0];
         h.document().resolved_style(open).unwrap().color
     };
-    assert_eq!(bracket(&mut h, 1), ring);
-    assert_eq!(bracket(&mut h, 0), input);
-}
 
+    let (x, y) = h.find_text("Small").unwrap();
+    h.runtime().simulate_mouse_move(x, y);
+    assert_eq!(h.document().focused(), Some(option(&mut h, 0)));
+    assert_eq!(bracket(&mut h, 0), ring);
+    assert_eq!(bracket(&mut h, 1), input);
+    assert_eq!(selected.get(), 1);
+
+    h.press(KeyCode::Char(' '));
+    assert_eq!(selected.get(), 0);
+}
 #[test]
 fn a_disabled_group_cannot_change() {
     let selected = state(0);
     let mut h = harness(selected, true);
     h.click_text("Large");
     assert_eq!(selected.get(), 0);
-    let group = group(&mut h);
-    assert!(h.document().focus(group).is_err() || h.document().focused() != Some(group));
+    let large = option(&mut h, 2);
+    assert!(h.document().focus(large).is_err() || h.document().focused() != Some(large));
 
     let label = row_parts(&mut h, 2)[4];
     assert_eq!(
