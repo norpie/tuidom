@@ -257,6 +257,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Sidebar, main content, input areas can be separate boundaries
   - [x] An Input is an implicit boundary: dragging inside it drives the input's own
         selection (and click positions the input cursor)
+- [x] Unselectable subtrees — `selectable: false`, so a control's text clicks instead of selecting
 - [x] Selection state tracked at document level:
   - [x] Which boundary container
   - [x] Anchor/focus as `SelectionPoint` (Text node + grapheme-normalized byte offset);

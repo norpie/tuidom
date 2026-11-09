@@ -176,6 +176,7 @@ impl Document {
                 }
                 Some(PendingSelection::Input { node, anchor })
             }
+            DragBoundary::Document(_) if self.unselectable(hit) => None,
             DragBoundary::Document(boundary) => {
                 let anchor = self.selection_point_at(x, y, boundary)?;
                 Some(PendingSelection::Document { boundary, anchor })
@@ -441,6 +442,7 @@ impl Document {
                 .text_content_of(node)
                 .is_some_and(|content| !content.is_empty())
                 && !self.blocks_interaction(node)
+                && !self.unselectable(node)
             {
                 nodes.push(node);
             }
@@ -471,7 +473,7 @@ impl Document {
                 continue;
             }
             // Inert and disabled subtrees swallow interaction, selection included.
-            if self.blocks_interaction(entry.id) {
+            if self.blocks_interaction(entry.id) || self.unselectable(entry.id) {
                 continue;
             }
             let Some((distance, offset)) = text_candidate(entry, content, x, y) else {
@@ -544,6 +546,21 @@ impl Document {
         ))
     }
 
+    /// Whether `node` or an ancestor sets `selectable: false`.
+    fn unselectable(&self, node: NodeId) -> bool {
+        let mut current = Some(node);
+        while let Some(node) = current {
+            if self
+                .resolved_style(node)
+                .is_ok_and(|style| !style.selectable)
+            {
+                return true;
+            }
+            current = self.get_parent(node);
+        }
+        false
+    }
+
     /// All nodes in `boundary`'s subtree, boundary included.
     fn subtree_of(&self, boundary: NodeId) -> HashSet<NodeId> {
         let mut subtree = HashSet::new();
@@ -584,7 +601,7 @@ impl Document {
                 } else {
                     len
                 };
-                if from < to {
+                if from < to && !self.unselectable(node) {
                     ranges.push((node, from..to));
                 }
             }

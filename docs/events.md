@@ -316,8 +316,12 @@ doc.on_wheel(node, |event| {
 })?;
 ```
 
-A click is synthesized from a matching press and release, and reports the modifiers held
-at **press** time. Letting go of ctrl before the mouse button still reads as a ctrl+click.
+A click is synthesized when a press and a release of the same button land on the same node,
+on any of its cells, unless the press selected text. A wobble while clicking selectable text
+is therefore a selection; marking a control's text
+[not selectable](focus-and-selection.md#text-that-cannot-be-selected) keeps it a click. The
+click reports the modifiers held at **press** time. Letting go of ctrl before the mouse button
+still reads as a ctrl+click.
 
 Horizontal wheel arrives two ways, and tuidom normalizes both: terminals that send
 `ScrollLeft`/`ScrollRight` natively, and terminals that send a *vertical* scroll with the

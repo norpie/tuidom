@@ -186,6 +186,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Selection Boundary** — A container marked `selection_boundary: true`, confining a drag to the boundary it started in. An Input is an implicit one. See [selection boundaries](focus-and-selection.md#selection-boundaries).
 
+**Selectable** — Style marking a subtree's text as selectable or not. `false` starts no selection on a press there and leaves the text out of any selection. Checked on ancestors, not inherited. See [text that cannot be selected](focus-and-selection.md#text-that-cannot-be-selected).
+
 **SelectionPoint** — A position in a selection: a Text node plus a grapheme-aligned byte offset. Content-addressed, so scrolling never invalidates it. See [`SelectionPoint` is content-addressed](focus-and-selection.md#selectionpoint-is-content-addressed).
 
 **Selection Colors** — `selection_bg` / `selection_fg`; unset means reverse video. See [selection colors](focus-and-selection.md#selection-colors).

@@ -130,8 +130,6 @@ pub(crate) fn drain_and_coalesce(
 #[derive(Debug, Clone, Copy)]
 struct ClickCandidate {
     target: NodeId,
-    x: i32,
-    y: i32,
     button: MouseButton,
     /// Modifiers held at press time. A click reports these rather than the release's,
     /// so letting go of ctrl before the button still reads as a ctrl+click.
@@ -226,8 +224,6 @@ pub(crate) fn process_runtime_event(
             }
             state.pending_click = Some(ClickCandidate {
                 target,
-                x: mouse.x,
-                y: mouse.y,
                 button: mouse.button,
                 modifiers: mouse.modifiers,
             });
@@ -284,6 +280,8 @@ pub(crate) fn process_runtime_event(
                 doc.dispatch_drag_to(drag.node, &mut event);
             }
             let target = mouse_target(doc, mouse.x, mouse.y);
+            // A press that selected text was for selecting, not a click.
+            let selected = state.pending_selection.is_some() && doc.selection().is_some();
             // Release clears the pressed state wherever the cursor ended up, so dragging
             // off a node before releasing leaves nothing stuck active.
             set_active_node(doc, None);
@@ -292,12 +290,9 @@ pub(crate) fn process_runtime_event(
             doc.set_scrollbar_grab(None);
             doc.dispatch_mouse_up_to(target, &mut mouse);
 
-            let matched = state.pending_click.filter(|down| {
-                down.target == target
-                    && down.x == mouse.x
-                    && down.y == mouse.y
-                    && down.button == mouse.button
-            });
+            let matched = state
+                .pending_click
+                .filter(|down| !selected && down.target == target && down.button == mouse.button);
             if let Some(down) = matched {
                 let mut click =
                     MouseEvent::with_modifiers(mouse.x, mouse.y, mouse.button, down.modifiers);
@@ -773,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn click_is_not_generated_when_up_cell_differs() {
+    fn a_release_on_another_cell_of_the_pressed_node_clicks() {
         let doc = Document::new().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_handler = calls.clone();
@@ -794,7 +789,7 @@ mod tests {
             &mut state,
         );
 
-        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(state.pending_click.is_none());
     }
 }

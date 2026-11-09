@@ -98,6 +98,8 @@ pub struct ResolvedStyle {
     pub stacking_context: bool,
     /// Whether mouse drag selection is confined to this node's subtree.
     pub selection_boundary: bool,
+    /// Whether this node's subtree can be selected with the mouse.
+    pub selectable: bool,
     /// Resolved selected-text background. `None` means reverse video: selected glyphs
     /// swap their foreground and background.
     pub selection_bg: Option<ResolvedColor>,
@@ -179,6 +181,7 @@ pub(crate) struct StyleDefaults {
     z_index: i32,
     stacking_context: bool,
     selection_boundary: bool,
+    selectable: bool,
     selection_bg: Option<ResolvedColor>,
     selection_fg: Option<ResolvedColor>,
     bold: bool,
@@ -233,6 +236,7 @@ impl Default for StyleDefaults {
             z_index: 0,
             stacking_context: false,
             selection_boundary: false,
+            selectable: true,
             selection_bg: None,
             selection_fg: None,
             bold: false,
@@ -319,6 +323,7 @@ impl StyleDefaults {
             z_index: self.z_index,
             stacking_context: self.stacking_context,
             selection_boundary: self.selection_boundary,
+            selectable: self.selectable,
             selection_bg: self.selection_bg,
             selection_fg: self.selection_fg,
             bold: self.bold,
@@ -549,6 +554,11 @@ impl ResolvedStyle {
                 &data.style.selection_boundary,
                 parent.map(|p| &p.selection_boundary),
                 &defaults.selection_boundary,
+            ),
+            selectable: resolve(
+                &data.style.selectable,
+                parent.map(|p| &p.selectable),
+                &defaults.selectable,
             ),
             selection_bg: resolve_opt(
                 &data.style.selection_bg,
@@ -833,6 +843,12 @@ impl ResolvedStyle {
             &style.selection_boundary,
             parent.map(|p| &p.selection_boundary),
             &defaults.selection_boundary,
+        );
+        apply_override(
+            &mut self.selectable,
+            &style.selectable,
+            parent.map(|p| &p.selectable),
+            &defaults.selectable,
         );
         apply_opt_override(
             &mut self.selection_bg,

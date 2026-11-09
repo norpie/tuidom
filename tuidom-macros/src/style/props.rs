@@ -109,6 +109,7 @@ pub(crate) const PROPS: &[Prop] = &[
     prop!(z_index, PropType::Number("i32")),
     prop!(stacking_context, PropType::Bool),
     prop!(selection_boundary, PropType::Bool),
+    prop!(selectable, PropType::Bool),
     prop!(selection_bg, PropType::Color),
     prop!(selection_fg, PropType::Color),
     prop!(cursor_shape, PropType::Enum("CursorShape")),

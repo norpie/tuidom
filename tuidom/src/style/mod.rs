@@ -454,6 +454,8 @@ pub struct Style {
     pub(crate) stacking_context: StyleValue<bool>,
     /// Whether mouse drag selection is confined to this node's subtree.
     pub(crate) selection_boundary: StyleValue<bool>,
+    /// Whether this node's subtree can be selected with the mouse.
+    pub(crate) selectable: StyleValue<bool>,
     /// Background for selected text. Unset swaps the glyph's colors (reverse video).
     pub(crate) selection_bg: StyleValue<Color>,
     /// Foreground for selected text. Unset swaps the glyph's colors (reverse video).
@@ -519,6 +521,7 @@ impl Style {
             z_index: StyleValue::Unset,
             stacking_context: StyleValue::Unset,
             selection_boundary: StyleValue::Unset,
+            selectable: StyleValue::Unset,
             selection_bg: StyleValue::Unset,
             selection_fg: StyleValue::Unset,
             bold: StyleValue::Unset,
@@ -1189,6 +1192,25 @@ impl Style {
         self.selection_boundary = StyleValue::Unset;
     }
 
+    // -- Selectable ----------------------------------------------------
+
+    /// Set whether text in this node's subtree can be selected with the mouse. `false` covers
+    /// the whole subtree: a press there starts no selection, and a selection dragged across it
+    /// leaves its text out. Inputs stay editable.
+    pub fn selectable(&mut self, value: bool) {
+        self.selectable = StyleValue::Set(value);
+    }
+
+    /// Explicitly inherit selectability from the parent node.
+    pub fn inherit_selectable(&mut self) {
+        self.selectable = StyleValue::Inherit;
+    }
+
+    /// Reset selectability to the document/default style.
+    pub fn unset_selectable(&mut self) {
+        self.selectable = StyleValue::Unset;
+    }
+
     // -- Selection Colors ----------------------------------------------
 
     /// Set the background color for selected text.
@@ -1335,6 +1357,7 @@ impl Style {
             z_index,
             stacking_context,
             selection_boundary,
+            selectable,
             selection_bg,
             selection_fg,
             bold,
@@ -1380,6 +1403,7 @@ impl Style {
         layer(&mut self.z_index, z_index);
         layer(&mut self.stacking_context, stacking_context);
         layer(&mut self.selection_boundary, selection_boundary);
+        layer(&mut self.selectable, selectable);
         layer(&mut self.selection_bg, selection_bg);
         layer(&mut self.selection_fg, selection_fg);
         layer(&mut self.bold, bold);
@@ -1424,6 +1448,7 @@ mod tests {
         style.z_index(10);
         style.stacking_context(true);
         style.selection_boundary(true);
+        style.selectable(false);
         style.cursor_shape(CursorShape::Bar);
         style.set_custom("--role", "panel");
 
@@ -1447,6 +1472,7 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Set(10));
         assert_eq!(style.stacking_context, StyleValue::Set(true));
         assert_eq!(style.selection_boundary, StyleValue::Set(true));
+        assert_eq!(style.selectable, StyleValue::Set(false));
         assert_eq!(style.cursor_shape, StyleValue::Set(CursorShape::Bar));
         assert_eq!(style.get_custom("--role"), Some("panel"));
     }
@@ -1471,6 +1497,7 @@ mod tests {
         assert_eq!(style.z_index, StyleValue::Unset);
         assert_eq!(style.stacking_context, StyleValue::Unset);
         assert_eq!(style.selection_boundary, StyleValue::Unset);
+        assert_eq!(style.selectable, StyleValue::Unset);
         assert_eq!(style.cursor_shape, StyleValue::Unset);
         assert_eq!(style.get_custom("--role"), None);
     }
@@ -1509,6 +1536,7 @@ mod tests {
         style.inherit_z_index();
         style.inherit_stacking_context();
         style.inherit_selection_boundary();
+        style.inherit_selectable();
         style.inherit_cursor_shape();
 
         assert_eq!(style.width, StyleValue::Inherit);
@@ -1624,6 +1652,7 @@ mod tests {
             z_index: StyleValue::Inherit,
             stacking_context: StyleValue::Inherit,
             selection_boundary: StyleValue::Inherit,
+            selectable: StyleValue::Inherit,
             selection_bg: StyleValue::Inherit,
             selection_fg: StyleValue::Inherit,
             bold: StyleValue::Inherit,

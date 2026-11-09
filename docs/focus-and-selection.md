@@ -234,6 +234,21 @@ unmarked columns select browser-style — the tail of one plus the head of the o
 An Input is an **implicit boundary**. Dragging inside one drives that input's own selection
 rather than the document's, and a click positions its cursor.
 
+### Text that cannot be selected
+
+Controls draw text that is a label, not content: a button's caption, a tab's name. Mark them
+**not selectable** and the subtree drops out of selection:
+
+```rust
+let mut tab = Style::new();
+tab.selectable(false);
+```
+
+A press there starts no selection, so a pointer that wobbles a cell before the release still
+clicks. A selection dragged from elsewhere across it leaves its text out of the copied range.
+Like a boundary, it covers the whole subtree without inheriting: the engine checks the
+ancestors when selecting. An Input inside one stays editable.
+
 ### Editing an Input from the keyboard
 
 A focused Input claims its own keys before anything else does, and every movement it

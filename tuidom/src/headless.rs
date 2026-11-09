@@ -1733,8 +1733,10 @@ mod tests {
     }
 
     #[test]
-    fn simulated_mouse_drag_does_not_synthesize_click_when_release_differs() {
+    fn a_drag_that_selects_text_is_not_a_click() {
         let doc = Document::new().unwrap();
+        let text = doc.create_text("hello").unwrap();
+        doc.append_child(doc.root(), text).unwrap();
         let calls = Arc::new(Mutex::new(0));
         let calls_for_handler = calls.clone();
         doc.on_click(doc.root(), move |_| {
@@ -1746,7 +1748,60 @@ mod tests {
         runtime.render().unwrap();
         runtime.simulate_mouse_drag((0, 0), (1, 0));
 
+        assert!(runtime.document().selection().is_some());
         assert_eq!(*calls.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn a_press_on_unselectable_text_selects_nothing_and_clicks_on_the_same_node() {
+        let doc = Document::new().unwrap();
+        let mut unselectable = Style::new();
+        unselectable.selectable(false);
+        doc.set_style(doc.root(), &unselectable).unwrap();
+        let left = doc.create_text("ab").unwrap();
+        let right = doc.create_text("cd").unwrap();
+        doc.append_child(doc.root(), left).unwrap();
+        doc.append_child(doc.root(), right).unwrap();
+        let clicks = Arc::new(Mutex::new(Vec::new()));
+        let clicks_for_handler = clicks.clone();
+        doc.on_click(doc.root(), move |event| {
+            clicks_for_handler.lock().unwrap().push(event.target());
+        })
+        .unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 10, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (1, 0));
+        assert_eq!(runtime.document().selection(), None);
+        assert_eq!(*clicks.lock().unwrap(), vec![left]);
+
+        runtime.simulate_mouse_drag((0, 0), (2, 0));
+        assert_eq!(runtime.document().selection(), None);
+        assert_eq!(*clicks.lock().unwrap(), vec![left]);
+    }
+
+    #[test]
+    fn a_selection_leaves_out_unselectable_text() {
+        let doc = Document::new().unwrap();
+        let hello = doc.create_text("hello").unwrap();
+        let skipped = doc.create_box().unwrap();
+        let mut unselectable = Style::new();
+        unselectable.selectable(false);
+        doc.set_style(skipped, &unselectable).unwrap();
+        let tab = doc.create_text("tab").unwrap();
+        let world = doc.create_text("world").unwrap();
+        doc.append_child(doc.root(), hello).unwrap();
+        doc.append_child(doc.root(), skipped).unwrap();
+        doc.append_child(skipped, tab).unwrap();
+        doc.append_child(doc.root(), world).unwrap();
+
+        let mut runtime = HeadlessRuntime::new(doc, 20, 3);
+        runtime.render().unwrap();
+        runtime.simulate_mouse_drag((0, 0), (12, 0));
+        assert_eq!(
+            runtime.document().get_selection().as_deref(),
+            Some("helloworld")
+        );
     }
 
     #[test]
