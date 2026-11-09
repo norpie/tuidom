@@ -1432,6 +1432,37 @@ fn MaybeEmit(#[prop(default)] on_fire: Callback<i32>) -> View {
     }
 }
 
+/// A child that asks its parent for each row through a callback that returns a view, and for
+/// an optional suffix through one that falls back to the default value.
+#[crate::component]
+fn Rows(
+    count: usize,
+    render: Callback<usize, View>,
+    #[prop(default)] suffix: Callback<usize, String>,
+) -> View {
+    let rows = (0..count.get())
+        .map(|i| fragment([render.call(i), text(suffix.call(i)).into()]))
+        .collect::<Vec<_>>();
+    fragment(rows)
+}
+
+#[test]
+fn a_callback_prop_returns_what_the_parents_closure_builds() {
+    let mut h = Harness::new(16, 1, || {
+        crate::view! {
+            box {
+                Rows { count: 2, render: move |i| crate::view! { text(format!("r{i}")) } },
+                Rows {
+                    count: 2,
+                    render: move |_| crate::view! { text("s") },
+                    suffix: move |i| format!("{i}!"),
+                },
+            }
+        }
+    });
+    assert_eq!(h.row(0).trim_end(), "r0r1s0!s1!");
+}
+
 #[test]
 fn component_callback_prop_talks_back_to_the_parent() {
     // `view!` lowers the parent's closure to a `Callback::new(..)`; the child calls it, and the

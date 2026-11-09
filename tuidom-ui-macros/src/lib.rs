@@ -190,7 +190,8 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// closure, the child invokes `on_x.call(arg)`. It is stored raw (not a signal), and `view!`
 /// lowers a closure-valued prop to it automatically. A callback is required unless
 /// `#[prop(default)]` gives it the no-op default. A callback already built (`on_x: handler`, with
-/// `handler` a `Callback`) passes through as it is.
+/// `handler` a `Callback`) passes through as it is. A `Callback<A, R>` returns what the closure
+/// does, so `render: move |i| view! { .. }` hands a `Callback<usize, View>` prop a row builder.
 ///
 /// # Bound signal props
 ///

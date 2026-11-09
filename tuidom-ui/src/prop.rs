@@ -49,7 +49,7 @@ impl<F: FnOnce() -> NodeRef> FromPropExpr<F> for NodeRef {
     }
 }
 
-impl<A, F: FnOnce() -> Callback<A>> FromPropExpr<F> for Callback<A> {
+impl<A, R, F: FnOnce() -> Callback<A, R>> FromPropExpr<F> for Callback<A, R> {
     fn from_prop_expr(f: F) -> Self {
         f()
     }

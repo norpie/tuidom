@@ -27,44 +27,46 @@ use std::sync::Arc;
 /// view! { Emitter { on_fire: move |n| received.set(n) } };
 /// ```
 ///
+/// A callback can also return a value, `R`, which lets a parent hand a child a builder: a list
+/// taking `render: Callback<usize, View>` asks its parent for each row as it needs one.
+///
 /// Unlike a [`Signal`], a `Callback` is `Clone` but not `Copy` — it holds an `Arc`. A body that
-/// invokes it from more than one closure clones it per closure, the same shape a [`Children`]
-/// prop takes.
+/// invokes it from more than one closure clones it per closure.
 ///
 /// [`Signal`]: crate::Signal
-/// [`Children`]: crate::Children
-pub struct Callback<A>(Arc<dyn Fn(A) + Send + Sync>);
+pub struct Callback<A, R = ()>(Arc<dyn Fn(A) -> R + Send + Sync>);
 
-impl<A> Callback<A> {
+impl<A, R> Callback<A, R> {
     /// Wrap a closure as a callback.
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(A) + Send + Sync + 'static,
+        F: Fn(A) -> R + Send + Sync + 'static,
     {
         Callback(Arc::new(f))
     }
 
-    /// Invoke the callback with `arg`.
+    /// Invoke the callback with `arg`, returning what it returns.
     ///
     /// The framework never calls this — the child body does, at a moment of its choosing that is
     /// typically already inside a caught engine listener, so no panic guard is added here.
-    pub fn call(&self, arg: A) {
+    pub fn call(&self, arg: A) -> R {
         (self.0)(arg)
     }
 }
 
 // Hand-written rather than derived: cloning an `Arc` is always cheap and never needs `A: Clone`,
 // which `#[derive(Clone)]` would demand.
-impl<A> Clone for Callback<A> {
+impl<A, R> Clone for Callback<A, R> {
     fn clone(&self) -> Self {
         Callback(self.0.clone())
     }
 }
 
-/// A no-op callback — the default a `#[prop(default)]` callback prop falls back to when the call
-/// site supplies none, so an optional handler needs no `Option` dance at the call.
-impl<A> Default for Callback<A> {
+/// A no-op callback returning `R::default()` — the default a `#[prop(default)]` callback prop
+/// falls back to when the call site supplies none, so an optional handler needs no `Option`
+/// dance at the call.
+impl<A, R: Default> Default for Callback<A, R> {
     fn default() -> Self {
-        Callback(Arc::new(|_| {}))
+        Callback(Arc::new(|_| R::default()))
     }
 }
