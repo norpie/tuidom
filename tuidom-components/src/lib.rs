@@ -21,6 +21,7 @@ mod select;
 mod slider;
 mod spinner;
 mod split;
+mod status_bar;
 mod tabs;
 #[cfg(test)]
 mod test_support;
@@ -44,6 +45,7 @@ pub use select::{Select, SelectProps};
 pub use slider::{Slider, SliderProps};
 pub use spinner::{Spinner, SpinnerProps};
 pub use split::{Split, SplitProps};
+pub use status_bar::{KeyHint, KeyHintProps, StatusBar, StatusBarProps};
 pub use tabs::{Tabs, TabsProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
