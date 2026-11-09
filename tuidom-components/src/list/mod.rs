@@ -93,21 +93,10 @@ pub fn List(
                 }
                 let last = count - 1;
                 let current = selected.get().min(last);
-                let next = match ev.code {
-                    KeyCode::Up if current > 0 => Some(current - 1),
-                    KeyCode::Down if current < last => Some(current + 1),
-                    KeyCode::PageUp => Some(current.saturating_sub(page())),
-                    KeyCode::PageDown => Some((current + page()).min(last)),
-                    KeyCode::Home => Some(0),
-                    KeyCode::End => Some(last),
-                    KeyCode::Enter => {
-                        on_activate.call(current);
-                        None
-                    }
-                    _ => return,
-                };
-                if let Some(next) = next {
-                    select(next);
+                match moved(ev.code, current, last, page()) {
+                    Some(next) => select(next),
+                    None if ev.code == KeyCode::Enter => on_activate.call(current),
+                    None => return,
                 }
                 ev.prevent_default();
                 ev.stop_propagation();
@@ -117,15 +106,29 @@ pub fn List(
     }
 }
 
+/// Where a key moves a selection at `current` among rows `0..=last`, `page` rows to a screenful.
+/// `None` for a key that does not move it, including Up or Down at an end, so focus moves on.
+pub(crate) fn moved(code: KeyCode, current: usize, last: usize, page: usize) -> Option<usize> {
+    match code {
+        KeyCode::Up if current > 0 => Some(current - 1),
+        KeyCode::Down if current < last => Some(current + 1),
+        KeyCode::PageUp => Some(current.saturating_sub(page)),
+        KeyCode::PageDown => Some((current + page).min(last)),
+        KeyCode::Home => Some(0),
+        KeyCode::End => Some(last),
+        _ => None,
+    }
+}
+
 /// The scroll container fills the list's frame.
-fn list_style() -> Style {
+pub(crate) fn list_style() -> Style {
     let mut style = Style::new();
     style.flex_grow(1.0);
     style.flex_shrink(1.0);
     style
 }
 
-fn row_style(selected: bool, focused: bool, height: u16) -> Style {
+pub(crate) fn row_style(selected: bool, focused: bool, height: u16) -> Style {
     let mut style = Style::new();
     style.height(Length::Cells(height.max(1)));
     style.flex_shrink(0.0);
