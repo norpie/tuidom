@@ -198,7 +198,7 @@ impl Appearance {
                 style.border_color(self.edge().unwrap_or(Color::CurrentBg));
             }
             Surface::HalfBlock => {
-                style.half_block_edges(Sides::new(true, true, true, true));
+                style.half_block_edges(Sides::new(true, false, true, false));
                 if let Some(edge) = self.edge() {
                     style.half_block_inner_color(edge);
                 }

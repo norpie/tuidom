@@ -57,11 +57,11 @@ fn a_closed_modal_draws_nothing() {
 fn an_open_modal_centers_its_panel_over_a_dimmed_screen() {
     let mut h = harness(state(true), true, state(0));
     let backdrop = backdrop(&mut h).unwrap();
-    assert_eq!(h.row(1).trim_end(), "      ▗▄▄▄▄▄▄▄▄▄▄▄▖");
-    assert_eq!(h.row(2).trim_end(), "      ▐ Confirm   ▌");
-    assert_eq!(h.row(3).trim_end(), "      ▐ Sure?     ▌");
-    assert_eq!(h.row(5).trim_end(), "      ▐ ▐ Close ▌ ▌");
-    assert_eq!(h.row(7).trim_end(), "      ▝▀▀▀▀▀▀▀▀▀▀▀▘");
+    assert_eq!(h.row(1).trim_end(), "      ▄▄▄▄▄▄▄▄▄▄▄▄▄");
+    assert_eq!(h.row(2).trim_end(), "        Confirm");
+    assert_eq!(h.row(3).trim_end(), "        Sure?");
+    assert_eq!(h.row(5).trim_end(), "          Close");
+    assert_eq!(h.row(7).trim_end(), "      ▀▀▀▀▀▀▀▀▀▀▀▀▀");
     assert_ne!(
         h.document().resolved_style(backdrop).unwrap().background,
         None

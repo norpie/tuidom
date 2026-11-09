@@ -172,7 +172,7 @@ fn card_style(shape: &Shape, tone: Tone) -> Style {
             style.padding(EdgeInsets::symmetric(padding, 0));
         }
         Surface::HalfBlock => {
-            style.half_block_edges(Sides::new(true, true, true, true));
+            style.half_block_edges(Sides::new(true, false, true, false));
             style.half_block_inner_color(tone.color());
             style.padding(EdgeInsets::symmetric(padding, 1));
         }

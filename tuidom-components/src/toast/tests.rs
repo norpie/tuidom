@@ -69,13 +69,13 @@ fn toasts_stack_in_the_bottom_right_corner_newest_last() {
         title: "Second".to_string(),
         ..Toast::default()
     });
-    assert_eq!(h.row(3), "                  ▗▄▄▄▄▄▄▄▄▄▄▖");
-    assert_eq!(h.row(4), "                  ▐ Saved    ▌");
-    assert_eq!(h.row(5), "                  ▐ All good ▌");
-    assert_eq!(h.row(6), "                  ▝▀▀▀▀▀▀▀▀▀▀▘");
-    assert_eq!(h.row(7), "                    ▗▄▄▄▄▄▄▄▄▖");
-    assert_eq!(h.row(8), "                    ▐ Second ▌");
-    assert_eq!(h.row(9), "                    ▝▀▀▀▀▀▀▀▀▘");
+    assert_eq!(h.row(3), "                  ▄▄▄▄▄▄▄▄▄▄▄▄");
+    assert_eq!(h.row(4), "                    Saved");
+    assert_eq!(h.row(5), "                    All good");
+    assert_eq!(h.row(6), "                  ▀▀▀▀▀▀▀▀▀▀▀▀");
+    assert_eq!(h.row(7), "                    ▄▄▄▄▄▄▄▄▄▄");
+    assert_eq!(h.row(8), "                      Second");
+    assert_eq!(h.row(9), "                    ▀▀▀▀▀▀▀▀▀▀");
 }
 
 #[test]

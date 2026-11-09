@@ -56,7 +56,7 @@ fn surface(shape: &Shape) -> Style {
             style.padding(EdgeInsets::symmetric(padding, 0));
         }
         Surface::HalfBlock => {
-            style.half_block_edges(Sides::new(true, true, true, true));
+            style.half_block_edges(Sides::new(true, false, true, false));
             style.padding(EdgeInsets::symmetric(padding, 1));
         }
         Surface::Flat => style.padding(EdgeInsets::symmetric(padding, 0)),

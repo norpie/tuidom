@@ -56,9 +56,9 @@ fn unbordered_panels_put_the_title_on_its_own_bold_row() {
     assert!(h.cell(x, y).unwrap().bold);
 
     let mut h = harness(surfaced(Surface::HalfBlock), "Title");
-    assert_eq!(h.row(0).trim_end(), "▗▄▄▄▄▄▄▄▄▖");
-    assert_eq!(h.row(1).trim_end(), "▐ Title  ▌");
-    assert_eq!(h.row(3).trim_end(), "▐ second ▌");
+    assert_eq!(h.row(0).trim_end(), "▄▄▄▄▄▄▄▄▄▄");
+    assert_eq!(h.row(1).trim_end(), "  Title");
+    assert_eq!(h.row(3).trim_end(), "  second");
 }
 
 #[test]

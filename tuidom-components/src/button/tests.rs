@@ -58,8 +58,8 @@ fn a_stretched_button_centers_its_label() {
         install_theme(Theme::dark());
         view! { box { Button { label: "ok".to_string() } } }
     });
-    assert_eq!(h.row(2).trim_end(), "▐ ok ▌");
-    assert_eq!(h.row(4).trim_end(), "▝▀▀▀▀▘");
+    assert_eq!(h.row(2).trim_end(), "  ok");
+    assert_eq!(h.row(4).trim_end(), "▀▀▀▀▀▀");
 }
 
 #[test]
@@ -67,9 +67,13 @@ fn a_half_block_button_pads_its_label_with_half_cells_of_its_fill() {
     let mut h = harness(shaped(Surface::HalfBlock, FocusMark::Ring), || {
         view! { Button { label: "ok".to_string() } }
     });
-    assert_eq!(h.row(0).trim_end(), "▗▄▄▄▄▖");
-    assert_eq!(h.row(1).trim_end(), "▐ ok ▌");
-    assert_eq!(h.row(2).trim_end(), "▝▀▀▀▀▘");
+    assert_eq!(h.row(0).trim_end(), "▄▄▄▄▄▄");
+    assert_eq!(h.row(1).trim_end(), "  ok");
+    assert_eq!(h.row(2).trim_end(), "▀▀▀▀▀▀");
+    let fill = h.cell(2, 1).unwrap().bg;
+    for x in [0, 5] {
+        assert_eq!(h.cell(x, 1).unwrap().bg, fill, "column {x}");
+    }
 }
 
 #[test]
@@ -91,7 +95,7 @@ fn compact_density_pads_one_cell() {
         ..Theme::dark()
     };
     let mut h = harness(theme, || view! { Button { label: "ok".to_string() } });
-    assert_eq!(h.row(1).trim_end(), "▐ok▌");
+    assert_eq!(h.row(1).trim_end(), " ok");
 }
 
 #[test]
@@ -333,7 +337,7 @@ fn the_style_props_merge_over_its_own() {
         view! { Button { label: "ok".to_string(), style: wide.clone(), focus_style: red.clone() } }
     });
     let (button, _) = nodes(&mut h);
-    assert_eq!(h.row(1).trim_end(), "▐    ok    ▌");
+    assert_eq!(h.row(1).trim_end(), "     ok");
     h.focus(button);
     assert_eq!(resolved(&h, button).background, Some(ResolvedColor::red()));
 }
