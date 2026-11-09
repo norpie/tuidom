@@ -2,8 +2,8 @@
 //!
 //! Tab / Shift-Tab   — move focus (hovering focuses too)
 //! Left / Right      — switch sections while the tab strip is focused
-//! Enter / Space     — press a button, toggle a checkbox, open or pick in a select
-//! Arrows            — move a radio selection, a slider, a select's highlight, or a split
+//! Enter / Space     — press a button, toggle a checkbox, open or pick in a select or menu
+//! Arrows            — move a radio selection, a slider, a list's highlight, or a split
 //! Mouse drag        — move the split's divider
 //! Click a toast     — dismiss it
 //! t                 — switch between the dark and light themes (outside a text field)
@@ -13,20 +13,28 @@ use tuidom::NodeKindView;
 use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Style};
 use tuidom_components::{
-    Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Divider, DividerProps, Label,
-    LabelProps, LabelTone, Modal, ModalProps, Orientation, Panel, PanelProps, ProgressBar,
-    ProgressBarProps, RadioGroup, RadioGroupProps, Scrollable, ScrollableProps, Select,
-    SelectProps, Side, Slider, SliderProps, Spinner, SpinnerProps, Split, SplitProps, Tabs,
-    TabsProps, TextInput, TextInputProps, Theme, Toast, Toaster, ToasterProps, Tone, Tooltip,
-    TooltipProps, install_theme, use_toaster,
+    Button, ButtonProps, ButtonVariant, Checkbox, CheckboxProps, Divider, DividerProps, KeyHint,
+    KeyHintProps, Label, LabelProps, LabelTone, Menu, MenuItem, MenuProps, Modal, ModalProps,
+    Orientation, Panel, PanelProps, ProgressBar, ProgressBarProps, RadioGroup, RadioGroupProps,
+    Scrollable, ScrollableProps, Select, SelectProps, Side, Slider, SliderProps, Spinner,
+    SpinnerProps, Split, SplitProps, StatusBar, StatusBarProps, Tabs, TabsProps, TextInput,
+    TextInputProps, Theme, Toast, Toaster, ToasterProps, Tone, Tooltip, TooltipProps,
+    install_theme, use_toaster,
 };
-use tuidom_ui::{App, Signal, View, component, state, use_document, view};
+use tuidom_ui::{App, Signal, View, component, fragment, state, use_document, view};
 
-fn page() -> Style {
+fn screen() -> Style {
     let mut style = Style::new();
     style.width(Length::Percent(100.0));
     style.height(Length::Percent(100.0));
     style.flex_direction(FlexDirection::Column);
+    style
+}
+
+fn page() -> Style {
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.flex_grow(1.0);
     style.padding(EdgeInsets::symmetric(2, 1));
     style.gap(FlexGap::new(1, 0));
     style
@@ -85,9 +93,16 @@ fn heading() -> Style {
 }
 
 fn sections() -> Vec<String> {
-    ["Buttons", "Inputs", "Containers", "Feedback", "Labels"]
-        .map(String::from)
-        .to_vec()
+    [
+        "Buttons",
+        "Inputs",
+        "Containers",
+        "Feedback",
+        "Navigation",
+        "Labels",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 fn plans() -> Vec<String> {
@@ -290,6 +305,58 @@ fn Feedback(progress: Signal<f64>) -> View {
     }
 }
 
+fn file_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::new("New").hint("n"),
+        MenuItem::new("Open").hint("o"),
+        MenuItem::new("Save").hint("s"),
+        MenuItem::new("Save as"),
+        MenuItem::new("Close").separated(),
+    ]
+}
+
+fn edit_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::new("Undo").hint("u"),
+        MenuItem::new("Redo").hint("r").disabled(),
+        MenuItem::new("Cut").hint("x").separated(),
+        MenuItem::new("Copy").hint("c"),
+        MenuItem::new("Paste").hint("v"),
+    ]
+}
+
+fn navigation(chosen: Signal<String>) -> View {
+    view! {
+        box {
+            style: section(),
+            box {
+                style: row(),
+                Menu {
+                    label: "File".to_string(),
+                    items: file_items(),
+                    on_select: move |i: usize| chosen.set(format!("File › {}", file_items()[i].label)),
+                },
+                Menu {
+                    label: "Edit".to_string(),
+                    items: edit_items(),
+                    on_select: move |i: usize| chosen.set(format!("Edit › {}", edit_items()[i].label)),
+                },
+                Menu {
+                    label: "Outline".to_string(),
+                    items: file_items(),
+                    variant: ButtonVariant::Outline,
+                    on_select: move |i: usize| chosen.set(format!("Outline › {}", file_items()[i].label)),
+                },
+            },
+            Label { text: format!("Last chosen: {}", chosen.get()), tone: LabelTone::Muted },
+            Label {
+                text: "The status bar along the bottom is a StatusBar with KeyHints.".to_string(),
+                tone: LabelTone::Muted,
+            },
+        }
+    }
+}
+
 fn labels() -> View {
     view! {
         box {
@@ -322,6 +389,7 @@ async fn main() -> std::io::Result<()> {
         let ratio = state(0.4);
         let progress = state(60.0);
         let modal = state(false);
+        let chosen = state(String::from("nothing yet"));
 
         let doc = use_document().expect("an App body has a document");
         let quit = doc.clone();
@@ -347,28 +415,36 @@ async fn main() -> std::io::Result<()> {
 
         view! {
             Toaster {
-            box {
-                style: page(),
-                Label { text: "tuidom-components".to_string(), style: heading() },
-                Label {
-                    text: "Tab moves focus · ←/→ on the strip switch sections · t switches theme · q quits"
-                        .to_string(),
-                    tone: LabelTone::Muted,
-                },
-                Divider {},
-                Tabs {
-                    tabs: sections(),
-                    selected: tab,
-                    style: grow(),
-                    match tab.get() {
-                        0 => { buttons(last) },
-                        1 => { inputs(fields) },
-                        2 => { containers(ratio, modal) },
-                        3 => Feedback { progress: progress },
-                        _ => { labels() },
-                    }
-                },
-            }
+                box {
+                    style: screen(),
+                    box {
+                        style: page(),
+                        Label { text: "tuidom-components".to_string(), style: heading() },
+                        Divider {},
+                        Tabs {
+                            tabs: sections(),
+                            selected: tab,
+                            style: grow(),
+                            match tab.get() {
+                                0 => { buttons(last) },
+                                1 => { inputs(fields) },
+                                2 => { containers(ratio, modal) },
+                                3 => Feedback { progress: progress },
+                                4 => { navigation(chosen) },
+                                _ => { labels() },
+                            }
+                        },
+                    },
+                    StatusBar {
+                        left: fragment([
+                            view! { KeyHint { key: "tab".to_string(), label: "focus".to_string() } },
+                            view! { KeyHint { key: "←/→".to_string(), label: "sections".to_string() } },
+                            view! { KeyHint { key: "t".to_string(), label: "theme".to_string() } },
+                            view! { KeyHint { key: "q".to_string(), label: "quit".to_string() } },
+                        ]),
+                        right: view! { text(sections()[tab.get()].clone()) },
+                    },
+                }
             }
         }
     })
