@@ -494,6 +494,62 @@ What stays true here regardless of the macro:
 - [x] Event handlers wrapped in `catch_unwind` — one bad handler doesn't crash the app
 - [x] Handler panics logged
 
+## Reactive UI (`tuidom-ui`)
+
+- [x] Signal runtime with no `Document` dependency
+  - [x] `Copy`, `Send + Sync` signal handles; `set` skips equal values, `update` mutates in place
+  - [x] Lazy, memoized deriveds; dependencies found by reading and re-collected each run
+  - [x] Effects, and `batch` for one flush over a group of writes
+  - [x] A runaway effect loop is stopped and logged rather than hanging
+  - [x] Handles to disposed slots are inert, never dangling
+- [x] Scopes own signals, effects, cleanups and tasks, and free them on dispose
+  - [x] `on_cleanup`, and `spawn` for tasks aborted with their scope
+  - [x] Context by type with `provide_context` / `use_context`, nearer providers shadowing
+  - [x] Off-task writes deferred to the event task and flushed on the next frame
+  - [ ] A resource type for async data (the pattern is a task plus a signal)
+- [x] View layer binding signals to engine nodes, one effect per bound property
+  - [x] Dynamic blocks rebuild their content in place on a change
+  - [x] Keyed lists move surviving items' nodes, keeping their runtime state
+  - [x] Portals mount content under the root while keeping the declaring scope
+  - [x] Virtual lists, uniform and measured, mounting only the window in view
+  - [x] `VirtualListRef::scroll_into_view`
+- [x] `view!` template macro
+  - [x] Literal values applied once, other expressions bound reactively
+  - [x] `if`, `match`, keyed and unkeyed `each`, view holes, `frames`, `portal`
+  - [x] `ref:` and `trap_focus:` attributes
+- [x] `#[component]` with props arriving as signals
+  - [x] Optional props through `#[prop(default)]`, `#[prop(default = expr)]` and `Option<T>`
+  - [x] Missing required props are compile errors
+  - [x] `children` and named slots
+  - [x] Callback props, optionally returning a value
+  - [x] Bound `Signal<T>` props for two-way binding
+  - [x] `NodeRef` props
+- [x] `NodeRef` for focus, scrolling, animation, cursor and selection, and reactive layout reads
+- [x] `on_mount` and `use_document`
+- [x] `App` with `on_quit`, and `mount_on` / `AppSession` for wiring without a terminal
+- [x] `Harness` for headless component tests, behind the `testing` feature
+  - [x] Settles before and after every action and before every read
+  - [x] Finds nodes by on-screen text or by attribute
+
+## Components (`tuidom-components`)
+
+- [x] Themes from color variables, with shadcn's dark and light neutral palettes
+  - [x] Shape: border charset, surface, density, focus mark
+  - [x] `install_theme`, switched in place through its signal
+  - [x] `ThemeScope` for re-theming a subtree
+  - [x] Popups declare the palette themselves, so scoped themes reach them
+- [x] Every component takes a `style` merged over its own
+- [x] Primitives: `Button` (five variants), `Label`, `Divider`
+- [x] Inputs: `TextInput`, `Checkbox`, `RadioGroup`, `Select`, `Slider`
+- [x] Containers: `Panel`, `Split`, `Tabs`, `Modal`, `Scrollable`
+- [x] Feedback: `Spinner`, `ProgressBar`, `Toaster` and toasts, `Tooltip`
+- [x] Navigation: `Menu` with hints, disabled items and separators; `StatusBar` and `KeyHint`
+  - [ ] A menu bar moving between menus from the keyboard
+- [x] Data: `List`, `Tree` and `Table`, virtualized
+  - [x] `Table` cells update when a signal they read changes
+  - [ ] `Table` windows its columns as well as its rows
+- [x] Showcase and tracker examples
+
 ## Future Considerations
 
 - RTL / bidirectional text support (text rendering, layout direction, Input cursor/selection)
