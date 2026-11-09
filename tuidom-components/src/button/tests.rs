@@ -59,17 +59,21 @@ fn a_stretched_button_centers_its_label() {
         view! { box { Button { label: "ok".to_string() } } }
     });
     assert_eq!(h.row(2).trim_end(), "▐ ok ▌");
-    assert_eq!(h.row(4).trim_end(), "▐    ▌");
+    assert_eq!(h.row(4).trim_end(), "▝▀▀▀▀▘");
 }
 
 #[test]
-fn half_block_and_flat_buttons_take_one_row() {
+fn a_half_block_button_pads_its_label_with_half_cells_of_its_fill() {
     let mut h = harness(shaped(Surface::HalfBlock, FocusMark::Ring), || {
         view! { Button { label: "ok".to_string() } }
     });
-    assert_eq!(h.row(0).trim_end(), "▐ ok ▌");
-    assert_eq!(h.row(1).trim_end(), "");
+    assert_eq!(h.row(0).trim_end(), "▗▄▄▄▄▖");
+    assert_eq!(h.row(1).trim_end(), "▐ ok ▌");
+    assert_eq!(h.row(2).trim_end(), "▝▀▀▀▀▘");
+}
 
+#[test]
+fn a_flat_button_takes_one_row() {
     let mut h = harness(shaped(Surface::Flat, FocusMark::Ring), || {
         view! { Button { label: "ok".to_string() } }
     });
@@ -87,7 +91,7 @@ fn compact_density_pads_one_cell() {
         ..Theme::dark()
     };
     let mut h = harness(theme, || view! { Button { label: "ok".to_string() } });
-    assert_eq!(h.row(0).trim_end(), "▐ok▌");
+    assert_eq!(h.row(1).trim_end(), "▐ok▌");
 }
 
 #[test]
@@ -156,6 +160,11 @@ fn unfilled_buttons_fill_with_the_accent_while_focused() {
             "{variant:?}"
         );
         assert_eq!(
+            resolved(&h, button).half_block_inner_color,
+            None,
+            "{variant:?}"
+        );
+        assert_eq!(
             resolved(&h, label).color,
             literal(&Palette::dark().accent_foreground),
             "{variant:?}"
@@ -219,17 +228,47 @@ fn a_ring_recolors_the_border_while_focused() {
 }
 
 #[test]
-fn a_ring_recolors_half_block_edges_while_focused() {
-    let mut h = harness(shaped(Surface::HalfBlock, FocusMark::Ring), || {
-        view! { Button { label: "ok".to_string() } }
-    });
-    let (button, _) = nodes(&mut h);
-    assert_eq!(resolved(&h, button).half_block_inner_color, None);
-    h.focus(button);
-    assert_eq!(
-        resolved(&h, button).half_block_inner_color,
-        Some(literal(&Palette::dark().ring))
-    );
+fn a_ring_shifts_a_half_block_buttons_fill_toward_its_text_edges_and_all() {
+    let cases = [
+        (ButtonVariant::Primary, "--primary", "--primary-foreground"),
+        (
+            ButtonVariant::Secondary,
+            "--secondary",
+            "--secondary-foreground",
+        ),
+        (ButtonVariant::Destructive, "--destructive", "--foreground"),
+    ];
+    for (variant, fill, text) in cases {
+        let mut h = Harness::new(20, 6, move || {
+            install_theme(Theme::dark());
+            let mut host = Style::new();
+            host.align_items(AlignItems::FlexStart);
+            let mut shifted = Style::new();
+            shifted.background(Color::var(fill).mix(Color::var(text), 0.2));
+            view! {
+                box {
+                    box {
+                        test_id: "host",
+                        style: host.clone(),
+                        Button { label: "ok".to_string(), variant: variant },
+                    },
+                    box { test_id: "probe", style: shifted.clone() },
+                }
+            }
+        });
+        let (button, _) = nodes(&mut h);
+        let probe = h.find_attr("test_id", "probe").unwrap();
+        let unfocused = resolved(&h, button).background;
+        h.focus(button);
+        let focused = resolved(&h, button);
+        assert_ne!(focused.background, unfocused, "{variant:?}");
+        assert_eq!(
+            focused.background,
+            resolved(&h, probe).background,
+            "{variant:?}"
+        );
+        assert_eq!(focused.half_block_inner_color, None, "{variant:?}");
+    }
 }
 
 #[test]
@@ -294,7 +333,7 @@ fn the_style_props_merge_over_its_own() {
         view! { Button { label: "ok".to_string(), style: wide.clone(), focus_style: red.clone() } }
     });
     let (button, _) = nodes(&mut h);
-    assert_eq!(h.row(0).trim_end(), "▐    ok    ▌");
+    assert_eq!(h.row(1).trim_end(), "▐    ok    ▌");
     h.focus(button);
     assert_eq!(resolved(&h, button).background, Some(ResolvedColor::red()));
 }

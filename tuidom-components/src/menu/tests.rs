@@ -78,15 +78,15 @@ fn open(h: &mut Harness) {
 #[test]
 fn the_list_opens_below_the_button_with_hints_and_separators() {
     let mut h = harness(state(Vec::new()), state(0));
-    assert_eq!(h.row(0).trim_end(), "  File ▾  beside");
+    assert_eq!(h.row(1).trim_end(), "  File ▾");
     open(&mut h);
     assert!(list(&mut h).is_some());
     for (y, expected) in [
-        (1, " Open    o"),
-        (2, " Export  e"),
-        (3, " Save    s"),
-        (4, "───────────"),
-        (5, " Quit    q"),
+        (3, " Open    o"),
+        (4, " Export  e"),
+        (5, " Save    s"),
+        (6, "───────────"),
+        (7, " Quit    q"),
     ] {
         assert_eq!(h.row(y).trim_end(), expected, "row {y}");
     }

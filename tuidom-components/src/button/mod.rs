@@ -27,7 +27,7 @@ pub enum ButtonVariant {
 /// Space while focused.
 ///
 /// `disabled` blocks focus and pressing and draws it muted. Its frame comes from the theme's
-/// [`Shape`]: a [`Bordered`](Surface::Bordered) button is three rows tall, the others one. Like
+/// [`Shape`]: a [`Flat`](Surface::Flat) button is one row tall, the others three. Like
 /// any flex item it stretches across its container's cross axis unless `style` says otherwise,
 /// and keeps its label centered when it does.
 ///
@@ -96,6 +96,9 @@ struct Appearance {
     shape: Shape,
 }
 
+/// How far a focused half-block button's fill moves toward its text color.
+const FOCUS_TINT: f64 = 0.2;
+
 /// The colors a button draws with, as variable names.
 struct Colors {
     fill: Option<&'static str>,
@@ -134,19 +137,36 @@ impl Appearance {
         }
     }
 
-    /// Background and foreground, after a reverse focus mark swaps them.
+    /// Background and foreground, after the focus mark changes them. Half-block edges take the
+    /// fill's color, so a ring there shifts the fill toward the text instead.
     fn fill_and_text(&self) -> (Option<Color>, Color) {
         let Colors { fill, text } = self.colors();
+        let filled = matches!(
+            self.variant,
+            ButtonVariant::Primary | ButtonVariant::Secondary | ButtonVariant::Destructive
+        );
         match (self.mark(), fill) {
             (Some(FocusMark::Reverse), Some(fill)) => (Some(Color::var(text)), Color::var(fill)),
+            (Some(FocusMark::Ring), Some(fill))
+                if filled && self.shape.button == Surface::HalfBlock =>
+            {
+                (
+                    Some(Color::var(fill).mix(Color::var(text), FOCUS_TINT)),
+                    Color::var(text),
+                )
+            }
             _ => (fill.map(Color::var), Color::var(text)),
         }
     }
 
-    /// The color of the border or half-block edges, where the surface has one.
+    /// The color of the border or half-block edges, where it differs from the fill.
     fn edge(&self) -> Option<Color> {
-        if self.mark() == Some(FocusMark::Ring) {
-            return Some(Color::var("--ring"));
+        match self.shape.button {
+            Surface::Bordered if self.mark() == Some(FocusMark::Ring) => {
+                return Some(Color::var("--ring"));
+            }
+            Surface::HalfBlock if self.focused => return None,
+            _ => {}
         }
         match self.variant {
             ButtonVariant::Outline if self.disabled => Some(Color::var("--border")),
@@ -166,7 +186,9 @@ impl Appearance {
             Density::Compact => 1,
             Density::Comfortable => 2,
         };
-        style.padding(EdgeInsets::symmetric(padding, 0));
+        // Half-block edges sit in the padding, so they need a row above and below the label.
+        let rows = u16::from(self.shape.button == Surface::HalfBlock);
+        style.padding(EdgeInsets::symmetric(padding, rows));
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
         match self.shape.button {
@@ -176,7 +198,7 @@ impl Appearance {
                 style.border_color(self.edge().unwrap_or(Color::CurrentBg));
             }
             Surface::HalfBlock => {
-                style.half_block_edges(Sides::new(false, true, false, true));
+                style.half_block_edges(Sides::new(true, true, true, true));
                 if let Some(edge) = self.edge() {
                     style.half_block_inner_color(edge);
                 }

@@ -56,8 +56,10 @@ The **Shape** is the rest of the look:
   and toasts.
 - `density`, a **Density**: how much padding sits inside controls, compact or comfortable.
 - `focus`, a **FocusMark**: how a focused component shows it, by recoloring its edge to
-  `--ring`, underlining its label, or swapping its colors. Where there is no edge to recolor, a
-  ring tints a field's fill toward `--ring` and swaps a button's colors.
+  `--ring`, underlining its label, or swapping its colors. A half-block button's edges are
+  part of its fill, so a ring shifts the whole button 20% toward its text color instead. Where
+  there is no edge at all, a ring tints a field's fill toward `--ring` and swaps a button's
+  colors.
 
 The default shape gives buttons and containers half-block edges and leaves fields unframed, so
 the rounded charset shows only in lines such as dividers. Density is comfortable and the focus
