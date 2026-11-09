@@ -31,6 +31,7 @@ mod theme;
 mod toast;
 mod tone;
 mod tooltip;
+mod tree;
 
 pub use button::{Button, ButtonProps, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxProps};
@@ -57,3 +58,4 @@ pub use theme::{
 pub use toast::{Toast, Toaster, ToasterHandle, ToasterProps, use_toaster};
 pub use tone::Tone;
 pub use tooltip::{Side, Tooltip, TooltipProps};
+pub use tree::{Tree, TreeNode, TreeProps};
