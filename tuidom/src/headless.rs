@@ -1492,7 +1492,7 @@ mod tests {
         let text = doc.create_text("Hi").unwrap();
         doc.append_child(doc.root(), text).unwrap();
 
-        let mut runtime = HeadlessRuntime::new(doc, 20, 5);
+        let mut runtime = HeadlessRuntime::new(doc, 80, 24);
         runtime.render_flushed().unwrap();
 
         let first = runtime.flush_output().len();
@@ -1516,7 +1516,7 @@ mod tests {
         let text = doc.create_text("ab").unwrap();
         doc.append_child(doc.root(), text).unwrap();
 
-        let mut runtime = HeadlessRuntime::new(doc, 40, 10);
+        let mut runtime = HeadlessRuntime::new(doc, 80, 24);
         runtime.render_flushed().unwrap();
         let full = runtime.flush_output().len();
 

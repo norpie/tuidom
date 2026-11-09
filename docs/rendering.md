@@ -123,6 +123,10 @@ than rewriting every cell in order. Resizes always take this path. The screen is
 first: every cell is written anyway, and a clear would show the terminal's own background until
 they arrive.
 
+Each flush is wrapped in a **synchronized update**, which tells the terminal to show the frame
+only once all of it has arrived. Without it, a large frame can appear half old and half new for
+a moment. Terminals that do not support it ignore the markers.
+
 Text attributes emit as **sticky SGR state** — a transition is written only when attributes
 change between adjacent cells, so a long bold run costs one sequence rather than one per
 character.

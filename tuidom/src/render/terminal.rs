@@ -12,7 +12,8 @@ use crossterm::style::{
     Attribute, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode,
 };
 
 use crate::panic::install_hook;
@@ -137,6 +138,9 @@ fn queue_bell<W: Write>(out: &mut W, bell: bool) -> io::Result<()> {
 /// Split from [`Terminal`] so the flush path can be driven against any writer —
 /// a headless byte sink runs exactly the code a real terminal gets, which is
 /// what makes the flush side measurable and assertable without a tty.
+///
+/// Both flushes wrap the frame in a synchronized update, so a terminal that supports it shows
+/// the frame only once all of it has arrived, and others ignore it.
 pub(crate) fn flush_changes_into<W: Write>(
     out: &mut W,
     changes: &[CellChange],
@@ -144,6 +148,7 @@ pub(crate) fn flush_changes_into<W: Write>(
     bell: bool,
 ) -> io::Result<()> {
     queue_bell(out, bell)?;
+    queue!(out, BeginSynchronizedUpdate)?;
     // Attributes are sticky, so each flush starts from a known state and then emits only
     // transitions. `Attribute::Reset` also resets colors, which is harmless here because
     // every cell write re-specifies its own fg and bg.
@@ -153,6 +158,7 @@ pub(crate) fn flush_changes_into<W: Write>(
         queue_cell(out, change.x, change.y, &change.cell, &mut attrs)?;
     }
     queue_cursor(out, cursor)?;
+    queue!(out, EndSynchronizedUpdate)?;
     out.flush()
 }
 
@@ -168,7 +174,12 @@ pub(crate) fn flush_full_into<W: Write>(
     bell: bool,
 ) -> io::Result<()> {
     queue_bell(out, bell)?;
-    queue!(out, Hide, SetAttribute(Attribute::Reset))?;
+    queue!(
+        out,
+        BeginSynchronizedUpdate,
+        Hide,
+        SetAttribute(Attribute::Reset)
+    )?;
     let mut current_attrs = CellAttrs::default();
 
     for (y, row) in grid.cells.iter().enumerate() {
@@ -214,6 +225,7 @@ pub(crate) fn flush_full_into<W: Write>(
         }
     }
     queue_cursor(out, cursor)?;
+    queue!(out, EndSynchronizedUpdate)?;
     out.flush()
 }
 
@@ -343,7 +355,9 @@ fn queue_restore<W: Write>(out: &mut W, state: u8) -> io::Result<()> {
         SetCursorStyle::DefaultUserShape,
         Print("\x1b]112\x07"),
         ResetColor,
-        SetAttribute(Attribute::Reset)
+        SetAttribute(Attribute::Reset),
+        // A flush that failed partway leaves the terminal holding its output back.
+        EndSynchronizedUpdate
     )
 }
 
@@ -522,17 +536,41 @@ mod tests {
         assert_eq!(restore_bytes(RAW_MODE), restore_bytes(0));
     }
 
-    fn full_bytes() -> String {
+    const BEGIN_SYNC: &str = "\x1b[?2026h";
+    const END_SYNC: &str = "\x1b[?2026l";
+
+    fn full_bytes(bell: bool) -> String {
         let mut out = Vec::new();
-        flush_full_into(&mut out, &Grid::new(4, 2), None, false)
+        flush_full_into(&mut out, &Grid::new(4, 2), None, bell)
             .expect("writing to a Vec cannot fail");
+        String::from_utf8(out).expect("flush output is valid utf-8")
+    }
+
+    fn changes_bytes(bell: bool) -> String {
+        let mut out = Vec::new();
+        flush_changes_into(&mut out, &[], None, bell).expect("writing to a Vec cannot fail");
         String::from_utf8(out).expect("flush output is valid utf-8")
     }
 
     #[test]
     fn a_full_redraw_writes_over_the_screen_without_clearing_it() {
-        let full = full_bytes();
+        let full = full_bytes(false);
         assert!(!full.contains("\x1b[2J"), "{full:?}");
         assert_eq!(full.matches(' ').count(), 8, "{full:?}");
+    }
+
+    #[test]
+    fn both_flushes_are_one_synchronized_update_after_the_bell() {
+        for frame in [full_bytes(true), changes_bytes(true)] {
+            let rest = frame.strip_prefix('\x07').expect("the bell comes first");
+            assert!(rest.starts_with(BEGIN_SYNC), "{frame:?}");
+            assert!(rest.ends_with(END_SYNC), "{frame:?}");
+            assert_eq!(rest.matches(BEGIN_SYNC).count(), 1, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn restoring_ends_any_synchronized_update() {
+        assert!(restore_bytes(0).contains(END_SYNC));
     }
 }
