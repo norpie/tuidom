@@ -199,3 +199,25 @@ fn a_disabled_menu_stays_closed() {
     h.click_text("File");
     assert!(list(&mut h).is_none());
 }
+
+#[test]
+fn hovering_a_row_focuses_and_highlights_it_and_skips_a_disabled_one() {
+    let picks = state(Vec::new());
+    let mut h = harness(picks, state(0));
+    open(&mut h);
+    let rows = item_rows(&mut h);
+    assert_eq!(h.document().focused(), Some(rows[0]));
+
+    let (x, y) = h.find_text("Export").unwrap();
+    h.runtime().simulate_mouse_move(x, y);
+    assert_eq!(h.document().focused(), Some(rows[0]));
+
+    let (x, y) = h.find_text("Save").unwrap();
+    h.runtime().simulate_mouse_move(x, y);
+    assert_eq!(h.document().focused(), Some(rows[2]));
+    h.press(KeyCode::Up);
+    assert_eq!(h.document().focused(), Some(rows[0]));
+    h.press(KeyCode::Down);
+    h.press(KeyCode::Enter);
+    assert_eq!(picks.get(), vec![2]);
+}

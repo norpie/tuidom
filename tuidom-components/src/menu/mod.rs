@@ -51,8 +51,8 @@ impl MenuItem {
 /// A [`Button`] showing `label ▾`, which opens a list of `items` below it, drawn over
 /// everything else in `--popover`.
 ///
-/// Pressing the button opens the list. While it is open it holds the keyboard: Up and Down move
-/// a highlight in `--accent` over the enabled items, and Enter or Space, or a click on an item,
+/// Pressing the button opens the list. While it is open it holds the keyboard: Up and Down, or
+/// hovering, move a highlight in `--accent` over the enabled items, and Enter or Space, or a click on an item,
 /// closes the list and calls `on_select` with the item's index in `items`. Escape or a press
 /// anywhere outside closes it without selecting. Focus goes back to the button either way.
 /// `variant` is the button's, [`Ghost`](ButtonVariant::Ghost) unless given; `disabled` keeps the

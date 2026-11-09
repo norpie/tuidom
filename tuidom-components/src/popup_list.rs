@@ -3,9 +3,10 @@ use tuidom::event::KeyCode;
 use tuidom::style::{
     AnchorAxis, AnchorEdge, Border, Color, EdgeInsets, FlexDirection, Position, Sides, Style,
 };
-use tuidom_ui::{Callback, Signal, View, component, derived, state, view};
+use tuidom_ui::{Callback, Signal, View, component, derived, node_ref, state, view};
 use unicode_width::UnicodeWidthStr;
 
+use crate::roving::focus_item;
 use crate::theme::{Density, Shape, Surface, Theme, use_shape, use_theme};
 
 /// One row of a [`PopupList`].
@@ -24,7 +25,8 @@ pub(crate) struct PopupRow {
 /// `rows` drawn below `anchor` over everything else, holding the keyboard while mounted.
 ///
 /// Up and Down move a highlight in `--accent` over the enabled rows, starting from the first
-/// enabled row at or after `initial`. Enter or Space, or a click on an enabled row, calls
+/// enabled row at or after `initial`. The highlighted row holds focus, so hovering an enabled row
+/// highlights it too. Enter or Space, or a click on an enabled row, calls
 /// `on_choose` with the row's index; Escape or a press outside calls `on_close`.
 #[component]
 pub(crate) fn PopupList(
@@ -52,6 +54,7 @@ pub(crate) fn PopupList(
 
     let enabled = move |i: usize| rows.get().get(i).is_some_and(|row| !row.disabled);
     let highlight = state(first_enabled(&rows.get(), initial.get()));
+    let list = node_ref();
     let step = move |forward: bool| {
         let Some(from) = highlight.get() else {
             return;
@@ -62,8 +65,9 @@ pub(crate) fn PopupList(
         } else {
             (0..from).rev().find(|&i| enabled(i))
         };
-        if next.is_some() {
-            highlight.set(next);
+        if let Some(next) = next {
+            highlight.set(Some(next));
+            focus_item(list, next);
         }
     };
     let widest = derived(move || rows.get().iter().map(|r| r.label.width()).max());
@@ -72,6 +76,7 @@ pub(crate) fn PopupList(
 
     view! {
         box {
+            ref: list,
             trap_focus: true,
             style: frame.get(),
             on_press_outside: move |_| close(),
@@ -95,7 +100,11 @@ pub(crate) fn PopupList(
                     box { style: separator(&shape.get()) }
                 },
                 box {
+                    item: i,
+                    focusable: !row.disabled,
+                    tab_stop: highlight.get() == Some(i),
                     style: row_style(highlight.get() == Some(i), &shape.get()),
+                    on_focus: move |_| highlight.set(Some(i)),
                     on_click: move |_| {
                         if !row.disabled {
                             choose(i);

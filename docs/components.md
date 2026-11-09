@@ -155,7 +155,8 @@ The components share a few rules, so they combine without fighting over keys:
   divider take focus as a whole and move inside themselves with the arrows.
 - At its end, a control gives the arrow back. Up on a list's first row, or Right on the last
   tab, moves focus on as spatial navigation would, instead of doing nothing.
-- An open popup holds the keyboard. Up and Down move its highlight, Enter or Space picks,
+- An open popup holds the keyboard. Up and Down move its highlight, as hovering a row does,
+  Enter or Space picks,
   and Escape or a press outside closes it. Focus goes back to the control that opened it.
 - A modal traps focus until it closes, then gives it back.
 - Hovering focuses, so tooltips show on hover as well as focus.

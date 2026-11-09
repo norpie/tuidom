@@ -14,8 +14,8 @@ use crate::theme::use_shape;
 /// is the index into `options`, read and written.
 ///
 /// A click, or Enter or Space while focused, opens the list below the field, drawn over
-/// everything else in `--popover`. While it is open it holds the keyboard: Up and Down move a
-/// highlight in `--accent`, Enter or Space picks the highlighted option and closes it, and Escape
+/// everything else in `--popover`. While it is open it holds the keyboard: Up and Down, or
+/// hovering, move a highlight in `--accent`, Enter or Space picks the highlighted option and closes it, and Escape
 /// or a press anywhere outside closes it without changing the selection. The field is framed like
 /// a [`TextInput`](crate::TextInput), and it and the list are both as wide as the widest option,
 /// so a field stretched wider than that is wider than its list. `disabled` keeps it closed and

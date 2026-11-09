@@ -230,3 +230,14 @@ fn clicks_that_wobble_open_the_list_and_pick_a_row_without_selecting() {
     assert_eq!(selected.get(), 2);
     assert_eq!(h.document().selection(), None);
 }
+
+#[test]
+fn hovering_an_option_highlights_it_for_enter() {
+    let selected = state(0);
+    let mut h = harness(selected, state(0));
+    open(&mut h);
+    let (x, y) = h.find_text("Large").unwrap();
+    h.runtime().simulate_mouse_move(x, y);
+    h.press(KeyCode::Enter);
+    assert_eq!(selected.get(), 2);
+}
