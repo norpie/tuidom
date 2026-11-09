@@ -1325,16 +1325,21 @@ fn mount_view(
                 // Reading `produce()` subscribes this effect to exactly the signals the
                 // author read while choosing the content — not the content's own bindings.
                 let view = produce();
-                // Not held across the mount: mounting runs user code, which may read this
-                // block's nodes through an enclosing mount.
-                let old = lock(&current).take();
-                if let Some(old) = old {
-                    old.unmount();
-                }
-                match mount_at(&doc, parent, Some(marker), view, Some(owner)) {
-                    Ok(mounted) => *lock(&current) = Some(mounted),
-                    Err(err) => tracing::warn!(?marker, "dynamic block failed to mount: {err}"),
-                }
+                // Untracked, so a signal the content reads while mounting does not rebuild it.
+                untracked(|| {
+                    // Not held across the mount: mounting runs user code, which may read this
+                    // block's nodes through an enclosing mount.
+                    let old = lock(&current).take();
+                    if let Some(old) = old {
+                        old.unmount();
+                    }
+                    match mount_at(&doc, parent, Some(marker), view, Some(owner)) {
+                        Ok(mounted) => *lock(&current) = Some(mounted),
+                        Err(err) => {
+                            tracing::warn!(?marker, "dynamic block failed to mount: {err}")
+                        }
+                    }
+                });
             });
 
             Ok(vec![Root::Dynamic { content, marker }])
@@ -1360,10 +1365,13 @@ fn mount_view(
                 // building the key sequence — the collection, not the items' own bindings.
                 let produced = produce();
                 // Taken out rather than locked across the reconcile, for the same reason a
-                // dynamic block does not hold its content's lock while mounting.
-                let mut state = mem::take(&mut *lock(&items));
-                reconcile(&doc, parent, marker, owner, &mut state, produced);
-                *lock(&items) = state;
+                // dynamic block does not hold its content's lock while mounting. Untracked for the
+                // same reason too: building and mounting items reads signals of their own.
+                untracked(|| {
+                    let mut state = mem::take(&mut *lock(&items));
+                    reconcile(&doc, parent, marker, owner, &mut state, produced);
+                    *lock(&items) = state;
+                });
             });
 
             Ok(vec![Root::Keyed {

@@ -16,8 +16,8 @@ use tuidom::style::{
 use tuidom::{Document, NodeId};
 
 use super::{
-    Children, View, VirtualListRef, boxed, dyn_text, dynamic, fragment, keyed, mount, node_ref,
-    text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
+    Children, View, VirtualListRef, boxed, component, dyn_text, dynamic, fragment, keyed, mount,
+    node_ref, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
 };
 use crate::testing::Harness;
 use crate::{Callback, Signal, state};
@@ -336,6 +336,22 @@ fn content_bindings_update_without_remounting_the_block() {
     rt.render().unwrap();
     assert_eq!(rt.get_cell(0, 0).unwrap().text, "y");
     assert_eq!(produce_runs.load(Ordering::SeqCst), 1); // not remounted
+}
+
+#[test]
+fn a_dynamic_block_ignores_what_its_content_reads_while_mounting() {
+    let doc = Document::new().unwrap();
+    let name = state("a".to_string());
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        dynamic(move || component(move || text(name.get()).into())),
+    )
+    .unwrap();
+    let before = doc.get_children(doc.root());
+
+    name.set("b".to_string());
+    assert_eq!(doc.get_children(doc.root()), before);
 }
 
 #[test]
@@ -1877,6 +1893,26 @@ fn item_roots(doc: &Document, parent: NodeId) -> Vec<NodeId> {
     let mut kids = doc.get_children(parent);
     kids.pop(); // drop the marker
     kids
+}
+
+#[test]
+fn a_keyed_list_ignores_what_its_items_read_while_mounting() {
+    let doc = Document::new().unwrap();
+    let name = state("a".to_string());
+    let runs = Arc::new(AtomicUsize::new(0));
+    let counted = runs.clone();
+    let _m = mount(
+        &doc,
+        doc.root(),
+        keyed(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            [(0, move || text(name.get()).into())]
+        }),
+    )
+    .unwrap();
+
+    name.set("b".to_string());
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
 #[test]
