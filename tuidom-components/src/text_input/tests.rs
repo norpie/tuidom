@@ -21,7 +21,7 @@ fn harness(theme: Theme, field: impl Fn() -> View + Send + Sync + 'static) -> Ha
 fn surfaced(surface: Surface) -> Theme {
     Theme {
         shape: Shape {
-            surface,
+            field: surface,
             ..Shape::default()
         },
         ..Theme::dark()

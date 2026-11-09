@@ -25,7 +25,7 @@ fn harness(theme: Theme, title: &'static str) -> Harness {
 fn surfaced(surface: Surface) -> Theme {
     Theme {
         shape: Shape {
-            surface,
+            container: surface,
             ..Shape::default()
         },
         ..Theme::dark()

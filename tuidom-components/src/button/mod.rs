@@ -128,7 +128,7 @@ impl Appearance {
         if !self.focused {
             return None;
         }
-        match (self.shape.focus, self.shape.surface) {
+        match (self.shape.focus, self.shape.button) {
             (FocusMark::Ring, Surface::Flat) => Some(FocusMark::Reverse),
             (mark, _) => Some(mark),
         }
@@ -169,7 +169,7 @@ impl Appearance {
         style.padding(EdgeInsets::symmetric(padding, 0));
         style.justify_content(JustifyContent::Center);
         style.align_items(AlignItems::Center);
-        match self.shape.surface {
+        match self.shape.button {
             Surface::Bordered => {
                 style.border(Border::new(self.shape.border));
                 // With no edge color of its own, the border is drawn in the color it sits on.

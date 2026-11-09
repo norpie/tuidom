@@ -165,7 +165,7 @@ fn card_style(shape: &Shape, tone: Tone) -> Style {
         Density::Compact => 1,
         Density::Comfortable => 2,
     };
-    match shape.surface {
+    match shape.container {
         Surface::Bordered => {
             style.border(Border::new(shape.border));
             style.border_color(tone.color());
@@ -184,7 +184,7 @@ fn card_style(shape: &Shape, tone: Tone) -> Style {
 fn title_style(shape: &Shape, tone: Tone) -> Style {
     let mut style = Style::new();
     style.bold(true);
-    let color = if shape.surface == Surface::Flat {
+    let color = if shape.container == Surface::Flat {
         tone.color()
     } else {
         Color::var("--popover-foreground")

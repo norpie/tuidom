@@ -140,8 +140,8 @@ fn aligned_right(text: &str, width: usize) -> String {
     format!("{}{text}", " ".repeat(fill))
 }
 
-/// The list's frame: below the anchor, in the popover colors, with the theme's surface. The
-/// palette is declared on it because a portal mounts it outside any `ThemeScope` its anchor
+/// The list's frame: below the anchor, in the popover colors, with the theme's field surface.
+/// The palette is declared on it because a portal mounts it outside any `ThemeScope` its anchor
 /// sits in.
 fn list_style(anchor: Option<NodeId>, shape: &Shape, theme: Option<Signal<Theme>>) -> Style {
     let mut style = Style::new();
@@ -159,7 +159,7 @@ fn list_style(anchor: Option<NodeId>, shape: &Shape, theme: Option<Signal<Theme>
             y: AnchorAxis::new(AnchorEdge::End, AnchorEdge::Start),
         });
     }
-    match shape.surface {
+    match shape.field {
         Surface::Bordered => {
             style.border(Border::new(shape.border));
             style.border_color(Color::var("--border"));

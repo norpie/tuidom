@@ -537,7 +537,8 @@ What stays true here regardless of the macro:
 ## Components (`tuidom-components`)
 
 - [x] Themes from color variables, with shadcn's dark and light neutral palettes
-  - [x] Shape: border charset, surface, density, focus mark
+  - [x] Shape: border charset, a surface each for buttons, fields and containers, density,
+        focus mark
   - [x] `install_theme`, switched in place through its signal
   - [x] `ThemeScope` for re-theming a subtree
   - [x] Popups declare the palette themselves, so scoped themes reach them

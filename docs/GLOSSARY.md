@@ -284,9 +284,9 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Palette** — The twenty colors a theme declares as color variables, named after shadcn's (`--primary`, `--muted`, `--ring`, …). Components reference only these. See [what a theme holds](components.md#what-a-theme-holds).
 
-**Shape** — The non-color half of a theme: border charset, surface, density, and focus mark. See [what a theme holds](components.md#what-a-theme-holds).
+**Shape** — The non-color half of a theme: border charset, a surface each for buttons, fields and containers, density, and focus mark. See [what a theme holds](components.md#what-a-theme-holds).
 
-**Surface** — How panels and fields are framed: `Bordered`, `HalfBlock`, or `Flat`. See [what a theme holds](components.md#what-a-theme-holds).
+**Surface** — How buttons, fields or containers are framed: `Bordered`, `HalfBlock`, or `Flat`. See [what a theme holds](components.md#what-a-theme-holds).
 
 **Density** — How much padding sits inside controls: `Compact` or `Comfortable`. See [what a theme holds](components.md#what-a-theme-holds).
 

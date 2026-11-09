@@ -49,7 +49,7 @@ fn surface(shape: &Shape) -> Style {
         Density::Compact => 1,
         Density::Comfortable => 2,
     };
-    match shape.surface {
+    match shape.container {
         Surface::Bordered => {
             style.border(Border::new(shape.border));
             style.border_color(Color::var("--border"));
@@ -66,7 +66,7 @@ fn surface(shape: &Shape) -> Style {
 
 /// On a border the title is set off from the line by a space each side.
 fn title_text(title: &str, shape: &Shape) -> String {
-    match shape.surface {
+    match shape.container {
         Surface::Bordered => format!(" {title} "),
         Surface::HalfBlock | Surface::Flat => title.to_string(),
     }
@@ -76,7 +76,7 @@ fn heading(shape: &Shape) -> Style {
     let mut style = Style::new();
     style.bold(true);
     // Absolute offsets count from inside the border, so this lands on the top border row.
-    if shape.surface == Surface::Bordered {
+    if shape.container == Surface::Bordered {
         style.position(Position::Absolute { x: 1, y: -1 });
     }
     style

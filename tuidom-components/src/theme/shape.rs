@@ -6,8 +6,13 @@ pub struct Shape {
     /// Characters every bordered component draws with. The terminal stand-in for a corner
     /// radius.
     pub border: BorderCharset,
-    /// How surfaces such as panels and inputs are framed.
-    pub surface: Surface,
+    /// How buttons are framed.
+    pub button: Surface,
+    /// How fields are framed: the text input, the select trigger, and the list a select or menu
+    /// opens.
+    pub field: Surface,
+    /// How containers are framed: panels, modals, and toasts.
+    pub container: Surface,
     /// How much padding sits inside controls and containers.
     pub density: Density,
     /// How a focused component shows it.
@@ -18,7 +23,9 @@ impl Default for Shape {
     fn default() -> Self {
         Self {
             border: BorderCharset::rounded(),
-            surface: Surface::Bordered,
+            button: Surface::Bordered,
+            field: Surface::Bordered,
+            container: Surface::Bordered,
             density: Density::Comfortable,
             focus: FocusMark::Ring,
         }

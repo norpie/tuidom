@@ -11,7 +11,7 @@ use crate::theme::{Palette, Theme, install_theme};
 fn shaped(surface: Surface, focus: FocusMark) -> Theme {
     Theme {
         shape: Shape {
-            surface,
+            button: surface,
             focus,
             ..Shape::default()
         },

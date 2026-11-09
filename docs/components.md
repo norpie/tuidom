@@ -47,9 +47,11 @@ and the dark and light palettes are shadcn's neutral ones.
 The **Shape** is the rest of the look:
 
 - `border`, the charset every bordered component draws with. It stands in for a corner radius.
-- `surface`, a **Surface**: panels and fields framed with a border, with
-  [half-block edges](styling.md#half-block-edges), or not at all. A border takes a cell on each
-  side; half-block edges take none.
+- `button`, `field` and `container`, each a **Surface**: how buttons, fields and containers
+  are framed, with a border, with [half-block edges](styling.md#half-block-edges), or not at
+  all. A border takes a cell on each side; half-block edges take none. Fields are the text
+  input, the select trigger and the list a select or menu opens; containers are panels, modals
+  and toasts.
 - `density`, a **Density**: how much padding sits inside controls, compact or comfortable.
 - `focus`, a **FocusMark**: how a focused component shows it, by recoloring its edge to
   `--ring`, underlining its label, or swapping its colors.
@@ -60,7 +62,7 @@ Both are plain structs, so a variant of the default is a struct update:
 use tuidom_components::{Shape, Surface, Theme};
 
 let theme = Theme {
-    shape: Shape { surface: Surface::HalfBlock, ..Shape::default() },
+    shape: Shape { field: Surface::HalfBlock, ..Shape::default() },
     ..Theme::default()
 };
 ```

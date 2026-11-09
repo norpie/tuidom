@@ -18,7 +18,7 @@ impl FieldLook {
         if !self.focused {
             return None;
         }
-        match (self.shape.focus, self.shape.surface) {
+        match (self.shape.focus, self.shape.field) {
             (FocusMark::Ring, Surface::Flat) => Some(FocusMark::Reverse),
             (mark, _) => Some(mark),
         }
@@ -26,7 +26,7 @@ impl FieldLook {
 
     /// Background and foreground variable names, after a reverse focus mark swaps them.
     fn fill_and_text(&self) -> (Option<&'static str>, &'static str) {
-        let fill = match self.shape.surface {
+        let fill = match self.shape.field {
             Surface::Bordered => None,
             Surface::HalfBlock | Surface::Flat => Some("--input"),
         };
@@ -63,7 +63,7 @@ impl FieldLook {
         };
         style.padding(EdgeInsets::symmetric(padding, 0));
         style.align_items(AlignItems::Center);
-        match self.shape.surface {
+        match self.shape.field {
             Surface::Bordered => {
                 style.border(Border::new(self.shape.border));
                 style.border_color(self.edge());
