@@ -54,7 +54,8 @@ The **Shape** is the rest of the look:
   and toasts.
 - `density`, a **Density**: how much padding sits inside controls, compact or comfortable.
 - `focus`, a **FocusMark**: how a focused component shows it, by recoloring its edge to
-  `--ring`, underlining its label, or swapping its colors.
+  `--ring`, underlining its label, or swapping its colors. Where there is no edge to recolor, a
+  ring tints a field's fill toward `--ring` and swaps a button's colors.
 
 Both are plain structs, so a variant of the default is a struct update:
 

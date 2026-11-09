@@ -13,7 +13,8 @@ use crate::theme::use_shape;
 /// `placeholder` shows in `--muted-foreground` while the value is empty. `mask` draws every
 /// character as the given one, for passwords. `disabled` blocks focus and editing and mutes the
 /// text. The frame follows the theme's [`Shape`](crate::Shape): edged in `--input`, which turns
-/// `--ring` while focused, and filled with `--input` where the surface has no border. It fills its
+/// `--ring` while focused, and filled with `--input` where the surface has no border. A field
+/// with no edge at all tints its fill toward `--ring` while focused instead. It fills its
 /// container's width unless `style` sets one, and scrolls a value too long to show. Stretched
 /// taller by its container, it keeps its text on the middle row.
 ///

@@ -12,20 +12,17 @@ pub(crate) struct FieldLook {
     pub(crate) shape: Shape,
 }
 
+/// How far a focused flat field's fill moves toward `--ring`.
+const FOCUS_TINT: f64 = 0.3;
+
 impl FieldLook {
-    /// The focus mark actually drawn. A flat field has no edge to ring, so it reverses instead.
     fn mark(&self) -> Option<FocusMark> {
-        if !self.focused {
-            return None;
-        }
-        match (self.shape.focus, self.shape.field) {
-            (FocusMark::Ring, Surface::Flat) => Some(FocusMark::Reverse),
-            (mark, _) => Some(mark),
-        }
+        self.focused.then_some(self.shape.focus)
     }
 
-    /// Background and foreground variable names, after a reverse focus mark swaps them.
-    fn fill_and_text(&self) -> (Option<&'static str>, &'static str) {
+    /// Background and foreground, after the focus mark changes them. A flat field has no edge to
+    /// ring, so a ring tints its fill instead.
+    fn fill_and_text(&self) -> (Option<Color>, Color) {
         let fill = match self.shape.field {
             Surface::Bordered => None,
             Surface::HalfBlock | Surface::Flat => Some("--input"),
@@ -35,9 +32,16 @@ impl FieldLook {
         } else {
             "--foreground"
         };
-        match self.mark() {
-            Some(FocusMark::Reverse) => (Some(text), fill.unwrap_or("--background")),
-            _ => (fill, text),
+        match (self.mark(), self.shape.field) {
+            (Some(FocusMark::Reverse), _) => (
+                Some(Color::var(text)),
+                Color::var(fill.unwrap_or("--background")),
+            ),
+            (Some(FocusMark::Ring), Surface::Flat) => (
+                fill.map(|fill| Color::var(fill).mix(Color::var("--ring"), FOCUS_TINT)),
+                Color::var(text),
+            ),
+            _ => (fill.map(Color::var), Color::var(text)),
         }
     }
 
@@ -55,7 +59,7 @@ impl FieldLook {
     pub(crate) fn frame(&self) -> Style {
         let mut style = Style::new();
         if let (Some(fill), _) = self.fill_and_text() {
-            style.background(Color::var(fill));
+            style.background(fill);
         }
         let padding = match self.shape.density {
             Density::Compact => 0,
@@ -82,7 +86,7 @@ impl FieldLook {
     /// The color of the field's text, and its underline when that is the focus mark.
     pub(crate) fn text(&self) -> Style {
         let mut style = Style::new();
-        style.color(Color::var(self.fill_and_text().1));
+        style.color(self.fill_and_text().1);
         if self.mark() == Some(FocusMark::Underline) {
             style.underline(true);
         }

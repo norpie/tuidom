@@ -168,16 +168,20 @@ fn unbordered_surfaces_fill_with_the_input_color() {
 }
 
 #[test]
-fn a_flat_field_reverses_while_focused() {
+fn a_flat_field_tints_its_fill_toward_the_ring_while_focused() {
     let mut h = harness(surfaced(Surface::Flat), named(state(String::new())));
-    let (frame, input) = nodes(&mut h);
+    let (_, input) = nodes(&mut h);
+    let unfocused = h.cell(0, 0).unwrap().bg.unwrap();
     h.focus(input);
-    let dark = Palette::dark();
-    assert_eq!(
-        resolved(&h, frame).background,
-        Some(literal(&dark.foreground))
+    let focused = h.cell(0, 0).unwrap().bg.unwrap();
+    assert!(
+        focused.r > unfocused.r,
+        "{focused:?} focused, {unfocused:?} not"
     );
-    assert_eq!(resolved(&h, input).color, literal(&dark.input));
+    assert_eq!(
+        resolved(&h, input).color,
+        literal(&Palette::dark().foreground)
+    );
 }
 
 #[test]
