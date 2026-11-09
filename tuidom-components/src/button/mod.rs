@@ -2,7 +2,9 @@
 mod tests;
 
 use tuidom::event::KeyCode;
-use tuidom::style::{AlignItems, Border, Color, EdgeInsets, JustifyContent, Sides, Style};
+use tuidom::style::{
+    AlignItems, AlignSelf, Border, Color, EdgeInsets, FlexGap, JustifyContent, Length, Sides, Style,
+};
 use tuidom_ui::{Callback, View, component, derived, state, view};
 
 use crate::theme::{Density, FocusMark, Shape, Surface, use_shape};
@@ -63,6 +65,8 @@ pub fn Button(
         pressed
     });
     let label_style = derived(move || appearance.get().label());
+    let has_sides = derived(move || appearance.get().has_sides());
+    let side = derived(move || appearance.get().side());
     let click = on_press.clone();
 
     view! {
@@ -83,7 +87,13 @@ pub fn Button(
                     on_press.call(());
                 }
             },
+            if has_sides.get() {
+                box { style: side.get() }
+            },
             text(label.get()) { style: label_style.get() },
+            if has_sides.get() {
+                box { style: side.get() }
+            },
         }
     }
 }
@@ -182,14 +192,21 @@ impl Appearance {
         if let Some(fill) = fill {
             style.background(fill);
         }
-        let padding = match self.shape.density {
+        let padding: u16 = match self.shape.density {
             Density::Compact => 1,
             Density::Comfortable => 2,
         };
         // Half-block edges sit in the padding, so they need a row above and below the label.
         let rows = u16::from(self.shape.button == Surface::HalfBlock);
-        style.padding(EdgeInsets::symmetric(padding, rows));
-        style.justify_content(JustifyContent::Center);
+        if self.has_sides() {
+            // The side cells take the padding's outermost column.
+            style.padding(EdgeInsets::symmetric(0, rows));
+            style.gap(FlexGap::new(0, padding.saturating_sub(1)));
+            style.justify_content(JustifyContent::SpaceBetween);
+        } else {
+            style.padding(EdgeInsets::symmetric(padding, rows));
+            style.justify_content(JustifyContent::Center);
+        }
         style.align_items(AlignItems::Center);
         match self.shape.button {
             Surface::Bordered => {
@@ -204,6 +221,26 @@ impl Appearance {
                 }
             }
             Surface::Flat => {}
+        }
+        style
+    }
+
+    /// Whether the label row ends in a cell of the edge color on each side. Half-block edges cover
+    /// only the top and bottom, so an outline draws its sides as whole cells, which are about as
+    /// thick as a half row.
+    fn has_sides(&self) -> bool {
+        self.variant == ButtonVariant::Outline && self.shape.button == Surface::HalfBlock
+    }
+
+    /// One side cell. A focused outline is one block of its fill, so then it has no color of its
+    /// own.
+    fn side(&self) -> Style {
+        let mut style = Style::new();
+        style.width(Length::Cells(1));
+        style.flex_shrink(0.0);
+        style.align_self(AlignSelf::Stretch);
+        if let Some(edge) = self.edge() {
+            style.background(edge);
         }
         style
     }

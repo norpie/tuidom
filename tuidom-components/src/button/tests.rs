@@ -1,6 +1,6 @@
-use tuidom::NodeId;
 use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, Color, Length, ResolvedColor, ResolvedStyle, Style};
+use tuidom::{NodeId, NodeKindView};
 use tuidom_ui::testing::Harness;
 use tuidom_ui::{Signal, state, view};
 
@@ -34,7 +34,13 @@ fn nodes(h: &mut Harness) -> (NodeId, NodeId) {
     let host = h.find_attr("test_id", "host").unwrap();
     let doc = h.document();
     let button = doc.get_node(host).unwrap().children[0];
-    let label = doc.get_node(button).unwrap().children[0];
+    let label = doc
+        .get_node(button)
+        .unwrap()
+        .children
+        .into_iter()
+        .find(|&child| matches!(doc.get_node(child).unwrap().kind, NodeKindView::Text { .. }))
+        .unwrap();
     (button, label)
 }
 
@@ -147,6 +153,26 @@ fn an_outline_button_is_framed_in_the_input_color() {
             _ => resolved(&h, button).half_block_inner_color,
         };
         assert_eq!(edge, input, "{surface:?}");
+    }
+}
+
+#[test]
+fn a_half_block_outline_draws_its_sides_as_whole_cells() {
+    let mut h = harness(Theme::dark(), || {
+        view! { Button { label: "ok".to_string(), variant: ButtonVariant::Outline } }
+    });
+    assert_eq!(h.row(0).trim_end(), "▄▄▄▄▄▄");
+    assert_eq!(h.row(1).trim_end(), "  ok");
+    assert_eq!(h.row(2).trim_end(), "▀▀▀▀▀▀");
+    let edge = h.cell(0, 1).unwrap().bg;
+    assert_eq!(h.cell(5, 1).unwrap().bg, edge);
+    assert_ne!(h.cell(1, 1).unwrap().bg, edge);
+
+    let (button, _) = nodes(&mut h);
+    h.focus(button);
+    let fill = h.cell(2, 1).unwrap().bg;
+    for x in [0, 5] {
+        assert_eq!(h.cell(x, 1).unwrap().bg, fill, "column {x}");
     }
 }
 
