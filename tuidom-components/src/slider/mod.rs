@@ -13,7 +13,7 @@ use crate::theme::{FocusMark, use_shape};
 /// The track is filled in `--primary` up to the thumb and drawn in `--muted` after it. While it is
 /// focused, Left and Right move the value by one step and Home and End jump to the ends, in place
 /// of moving focus; Up and Down still navigate. A click on the track jumps the value to that
-/// point. Values are snapped to the nearest step from `min` and kept inside the range. It fills its
+/// point, and dragging carries it along with the pointer. Values are snapped to the nearest step from `min` and kept inside the range. It fills its
 /// container's width unless `style` sets one. `disabled` blocks focus and changes and mutes it.
 ///
 /// `style` is merged over the track's own style.
@@ -67,6 +67,14 @@ pub fn Slider(
         thumb
     });
     let set = move |next: f64| value.set(range.get().snap(next));
+    let jump = move |x: i32| {
+        if let Some(rect) = track.screen_rect() {
+            let span = f64::from(rect.width.saturating_sub(1).max(1));
+            let at = (f64::from(x - rect.x) / span).clamp(0.0, 1.0);
+            let Range { min, max, .. } = range.get();
+            set(min + at * (max - min));
+        }
+    };
 
     view! {
         box {
@@ -88,14 +96,8 @@ pub fn Slider(
                 ev.prevent_default();
                 ev.stop_propagation();
             },
-            on_click: move |ev| {
-                if let Some(rect) = track.screen_rect() {
-                    let span = f64::from(rect.width.saturating_sub(1).max(1));
-                    let at = (f64::from(ev.x - rect.x) / span).clamp(0.0, 1.0);
-                    let Range { min, max, .. } = range.get();
-                    set(min + at * (max - min));
-                }
-            },
+            on_click: move |ev| jump(ev.x),
+            on_drag: move |ev| jump(ev.x),
             box { style: segment(fraction.get(), BorderCharset::thick(), filled.get()) },
             text("●") { style: thumb.get() },
             box { style: segment(1.0 - fraction.get(), shape.get().border, "--muted") },

@@ -90,6 +90,17 @@ fn a_click_jumps_to_that_point_on_the_step() {
 }
 
 #[test]
+fn dragging_follows_the_pointer_and_selects_no_text() {
+    let value = state(50.0);
+    let mut h = harness(value, 1.0, false);
+    h.drag((5, 0), &[(7, 0), (8, 0)]);
+    assert_eq!(value.get(), 80.0);
+    h.drag((8, 0), &[(4, 0), (-3, 0)]);
+    assert_eq!(value.get(), 0.0);
+    assert_eq!(h.document().selection(), None);
+}
+
+#[test]
 fn the_parts_take_their_colors_and_a_ring_marks_the_thumb() {
     let mut h = harness(state(50.0), 1.0, false);
     let (track, [filled, thumb, rest]) = nodes(&mut h);
