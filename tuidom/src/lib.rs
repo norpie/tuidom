@@ -40,6 +40,8 @@ pub mod performance;
 /// Screen buffer and rendering.
 pub(crate) mod render;
 mod runtime_event;
+/// What the terminal is and what it can do.
+pub mod terminal;
 /// Virtualization primitives: window range math for large collections.
 pub mod virtualize;
 
