@@ -12,11 +12,13 @@ type Mount = Arc<dyn Fn(Option<Children>) -> (View, Kept) + Send + Sync>;
 type Reassign = Arc<dyn Fn(&Kept) + Send + Sync>;
 
 /// What the chain diff compares at each position. A leaf mounts with no slot to fill, so the
-/// same component as a layout and as a leaf are different entries.
+/// same component as a layout and as a leaf are different entries. A focus context opens when
+/// its box mounts, so trapping and not trapping are different entries too.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Identity {
     props: TypeId,
     pub(crate) layout: bool,
+    pub(crate) trap_focus: bool,
 }
 
 /// One component in a chain, with the box it mounts in.
@@ -29,7 +31,6 @@ pub(crate) struct Entry {
     /// Build the props again and assign them into a mounted entry's kept props.
     pub(crate) reassign: Reassign,
     style: Option<Style>,
-    pub(crate) trap_focus: bool,
 }
 
 impl Entry {
@@ -79,11 +80,11 @@ impl Entry {
             identity: Identity {
                 props: TypeId::of::<P>(),
                 layout,
+                trap_focus: false,
             },
             mount,
             reassign,
             style: None,
-            trap_focus: false,
         }
     }
 
@@ -94,7 +95,7 @@ impl Entry {
             fill.flex_direction(FlexDirection::Column);
             fill
         });
-        if self.trap_focus {
+        if self.identity.trap_focus {
             style.stacking_context(true);
         }
         style
@@ -203,6 +204,6 @@ fn set_style(entries: &mut [Entry], style: Style) {
 
 fn set_trap_focus(entries: &mut [Entry]) {
     if let Some(entry) = entries.last_mut() {
-        entry.trap_focus = true;
+        entry.identity.trap_focus = true;
     }
 }

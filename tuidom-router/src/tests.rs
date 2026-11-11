@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use tuidom::NodeId;
 use tuidom::animation::{Easing, TransitionConfig, TransitionProperty};
 use tuidom::style;
 use tuidom::style::Color;
@@ -13,6 +14,7 @@ use crate::{Chain, routed};
 fn Shell(children: Children) -> View {
     view! {
         box {
+            test_id: "shell",
             style: style! { flex_direction: row },
             box { test_id: "outside", focusable: true, text("A:") },
             { children },
@@ -279,4 +281,164 @@ fn a_transition_on_a_kept_layout_runs_to_its_end() {
     route.set(1);
     h.advance(Duration::from_millis(500));
     assert_eq!(ended.get(), 1);
+}
+
+#[component]
+fn Dialog() -> View {
+    view! {
+        box {
+            style: style! { stacking_context: true },
+            trap_focus: true,
+            box { test_id: "dialog", focusable: true, text("ok") },
+        }
+    }
+}
+
+/// The entry box a component's root node mounts in.
+///
+/// The focus context depths below count the document's permanent root context.
+fn entry_box(h: &mut Harness, test_id: &str) -> NodeId {
+    let root = h.find_attr("test_id", test_id).unwrap();
+    h.document().get_parent(root).unwrap()
+}
+
+#[test]
+fn trapping_entries_open_contexts_in_chain_order() {
+    let route = state(0u8);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || match route.get() {
+            0 => Chain::layout(shell)
+                .trap_focus()
+                .leaf(|| page("one"))
+                .trap_focus(),
+            1 => Chain::layout(shell).trap_focus().leaf(other).trap_focus(),
+            2 => Chain::layout(shell).trap_focus().leaf(|| page("two")),
+            _ => Chain::leaf(other),
+        })
+    });
+    let shell_box = entry_box(&mut h, "shell");
+    assert_eq!(h.document().focus_context_depth(), 3);
+    assert_eq!(
+        h.document().active_focus_context(),
+        entry_box(&mut h, "inside")
+    );
+
+    route.set(1);
+    h.row(0);
+    assert_eq!(h.document().focus_context_depth(), 3);
+    assert_eq!(
+        h.document().active_focus_context(),
+        entry_box(&mut h, "other")
+    );
+    assert_eq!(entry_box(&mut h, "shell"), shell_box);
+
+    route.set(0);
+    h.row(0);
+    assert_eq!(h.document().focus_context_depth(), 3);
+    assert_eq!(
+        h.document().active_focus_context(),
+        entry_box(&mut h, "inside")
+    );
+
+    route.set(2);
+    h.row(0);
+    assert_eq!(h.document().focus_context_depth(), 2);
+    assert_eq!(h.document().active_focus_context(), shell_box);
+
+    route.set(3);
+    h.row(0);
+    assert_eq!(h.document().focus_context_depth(), 1);
+    assert_eq!(h.document().active_focus_context(), h.document().root());
+}
+
+#[test]
+fn focus_does_not_stay_in_a_disposed_leaf() {
+    let route = state(0u8);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || {
+            if route.get() == 0 {
+                Chain::layout(shell).leaf(|| page("one"))
+            } else {
+                Chain::layout(shell).leaf(other)
+            }
+        })
+    });
+    let inside = h.find_attr("test_id", "inside").unwrap();
+    h.focus(inside);
+    assert_eq!(h.document().focused(), Some(inside));
+
+    route.set(1);
+    h.row(0);
+    let focused = h.document().focused();
+    assert_ne!(focused, Some(inside));
+    assert!(focused.is_none_or(|node| h.document().get_parent(node).is_some()));
+}
+
+#[test]
+fn closing_a_leaf_context_returns_focus_to_the_shell() {
+    let route = state(0u8);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || {
+            if route.get() == 0 {
+                Chain::layout(shell).leaf(other)
+            } else {
+                Chain::layout(shell).leaf(|| page("one")).trap_focus()
+            }
+        })
+    });
+    let outside = h.find_attr("test_id", "outside").unwrap();
+    h.focus(outside);
+
+    route.set(1);
+    h.row(0);
+    assert_eq!(h.document().focused(), h.find_attr("test_id", "inside"));
+
+    route.set(0);
+    h.row(0);
+    assert_eq!(h.document().focus_context_depth(), 1);
+    assert_eq!(h.document().focused(), Some(outside));
+}
+
+#[test]
+fn a_context_opened_inside_a_leaf_closes_with_it() {
+    let route = state(0u8);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || {
+            if route.get() == 0 {
+                Chain::layout(shell).leaf(|| DialogProps::builder().build())
+            } else {
+                Chain::layout(shell).leaf(other)
+            }
+        })
+    });
+    assert_eq!(h.document().focus_context_depth(), 2);
+    assert_eq!(h.document().focused(), h.find_attr("test_id", "dialog"));
+    let outside = h.find_attr("test_id", "outside").unwrap();
+    assert!(h.document().is_inert(outside).unwrap());
+
+    route.set(1);
+    h.row(0);
+    assert_eq!(h.document().focus_context_depth(), 1);
+    assert!(!h.document().is_inert(outside).unwrap());
+}
+
+#[test]
+fn a_kept_entry_takes_its_new_box_style_in_place() {
+    let padded = state(false);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || {
+            let chain = Chain::leaf(|| page("one"));
+            if padded.get() {
+                chain.style(style! { padding: 1 3 })
+            } else {
+                chain
+            }
+        })
+    });
+    let inside = h.find_attr("test_id", "inside").unwrap();
+    assert_eq!(h.row(0).trim_end(), "one");
+
+    padded.set(true);
+    assert_eq!(h.row(1).trim_end(), "   one");
+    assert_eq!(h.find_attr("test_id", "inside"), Some(inside));
 }

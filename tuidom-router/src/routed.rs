@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use tuidom::style::Style;
 use tuidom_ui::{
     Children, Signal, View, batch, boxed, component, dynamic, effect, fragment, state, untracked,
 };
@@ -12,9 +13,10 @@ use crate::chain::{Chain, Entry, Kept};
 ///
 /// `chain` is where the route is matched: `move || match route.get() { .. }`. On a change the new
 /// chain is compared with the mounted one position by position, by component and by whether the
-/// entry is a layout or the leaf. Entries before the first difference stay mounted: their props
-/// closures run again, untracked, and the values are assigned into their props, so their nodes,
-/// scroll offsets, focus and running transitions are kept and their bodies do not run again.
+/// entry is a layout or the leaf, and by whether it traps focus. Entries before the first
+/// difference stay mounted: their props closures run again, untracked, the values are assigned
+/// into their props, and their boxes take the new chain's styles, so their nodes, scroll
+/// offsets, focus and running transitions are kept and their bodies do not run again.
 /// From the first difference on, the old entries are disposed, innermost first, and the new ones
 /// mount in the slot of the last kept layout.
 pub fn routed<F>(chain: F) -> View
@@ -56,6 +58,8 @@ struct Level {
     slot: Option<Signal<u64>>,
     /// The mounted entry's props.
     kept: Option<Kept>,
+    /// The mounted entry's box style.
+    style: Option<Signal<Style>>,
 }
 
 impl Router {
@@ -72,7 +76,7 @@ fn lock(router: &Shared) -> MutexGuard<'_, Router> {
 }
 
 fn navigate(router: &Shared, next: Arc<[Entry]>) {
-    let (reassign, remount) = {
+    let (reassign, restyle, remount) = {
         let mut r = lock(router);
         let kept_len = r
             .entries
@@ -87,21 +91,28 @@ fn navigate(router: &Shared, next: Arc<[Entry]>) {
                 Some((Arc::clone(&next[i].reassign), kept))
             })
             .collect();
+        let restyle: Vec<_> = (0..kept_len)
+            .filter_map(|i| Some((r.levels.get(i)?.style?, next[i].box_style())))
+            .collect();
         let remount = if unchanged {
             None
         } else {
             for level in r.levels.iter_mut().skip(kept_len) {
                 level.kept = None;
+                level.style = None;
             }
             r.levels.get(kept_len).and_then(|level| level.slot)
         };
         r.entries = next;
-        (reassign, remount)
+        (reassign, restyle, remount)
     };
     // Props closures and the writes they cause run with the router unlocked.
     batch(|| {
         for (reassign, kept) in &reassign {
             reassign(kept);
+        }
+        for (signal, style) in restyle {
+            signal.set(style);
         }
         if let Some(slot) = remount
             && slot.try_get().is_some()
@@ -116,12 +127,11 @@ fn slot(router: &Shared, index: usize) -> View {
     let Some(entry) = lock(router).entries.get(index).cloned() else {
         return fragment(Vec::<View>::new());
     };
-    let style = entry.box_style();
-    let trap_focus = entry.trap_focus;
     let router = Arc::clone(router);
     // Deferred to mount, so the props closure runs untracked and under the entry's own scope,
-    // which then owns the props and the next position's slot.
-    let content = component(move || {
+    // which then owns the props, the box style and the next position's slot.
+    component(move || {
+        let style = state(entry.box_style());
         let children = entry.identity.layout.then(|| {
             let generation = state(0u64);
             lock(&router).level(index + 1).slot = Some(generation);
@@ -132,12 +142,16 @@ fn slot(router: &Shared, index: usize) -> View {
             })
         });
         let (view, kept) = (entry.mount)(children);
-        lock(&router).level(index).kept = Some(kept);
-        view
-    });
-    boxed()
-        .style(style)
-        .trap_focus(trap_focus)
-        .child(content)
-        .into()
+        {
+            let mut r = lock(&router);
+            let level = r.level(index);
+            level.kept = Some(kept);
+            level.style = Some(style);
+        }
+        boxed()
+            .dyn_style(move || style.get())
+            .trap_focus(entry.identity.trap_focus)
+            .child(view)
+            .into()
+    })
 }
