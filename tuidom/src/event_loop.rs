@@ -270,10 +270,15 @@ fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16)
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
-    doc.compute_layout(sw, sh).map_err(io::Error::other)?;
+    let scroll_events = doc
+        .compute_layout_for_frame(sw, sh)
+        .map_err(io::Error::other)?;
     let layout_time = layout_start.elapsed();
 
     let stats = renderer.render_frame(doc)?;
+    for event in scroll_events {
+        let _ = doc.inner.event_tx.send(event);
+    }
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);
@@ -288,10 +293,15 @@ fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) 
     let frame_start = Instant::now();
 
     let layout_start = Instant::now();
-    doc.compute_layout(sw, sh).map_err(io::Error::other)?;
+    let scroll_events = doc
+        .compute_layout_for_frame(sw, sh)
+        .map_err(io::Error::other)?;
     let layout_time = layout_start.elapsed();
 
     let stats = renderer.render_full(doc)?;
+    for event in scroll_events {
+        let _ = doc.inner.event_tx.send(event);
+    }
 
     let frame_time = frame_start.elapsed();
     doc.record_frame_metrics(frame_time, layout_time, stats);

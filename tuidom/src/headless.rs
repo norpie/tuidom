@@ -148,7 +148,7 @@ impl HeadlessRuntime {
         let frame_start = Instant::now();
 
         let layout_start = Instant::now();
-        self.doc.compute_layout(self.width, self.height)?;
+        let scroll_events = self.doc.compute_layout_for_frame(self.width, self.height)?;
         let layout_time = layout_start.elapsed();
 
         // Painted into the frame the last render left behind, which the paint pass
@@ -172,14 +172,7 @@ impl HeadlessRuntime {
         };
         self.doc
             .record_frame_metrics(frame_start.elapsed(), layout_time, stats);
-
-        if let Some(event) = self.doc.pending_post_frame_event() {
-            process_runtime_event(
-                &self.doc,
-                RuntimeEvent::PostFrame(Box::new(event)),
-                &mut self.event_state,
-            );
-        }
+        self.dispatch_after_frame(scroll_events);
         Ok(())
     }
 
@@ -200,8 +193,9 @@ impl HeadlessRuntime {
         let frame_start = Instant::now();
 
         let layout_start = Instant::now();
-        self.doc
-            .compute_layout(self.width, self.height)
+        let scroll_events = self
+            .doc
+            .compute_layout_for_frame(self.width, self.height)
             .map_err(io::Error::other)?;
         let layout_time = layout_start.elapsed();
 
@@ -288,7 +282,16 @@ impl HeadlessRuntime {
 
         self.doc
             .record_frame_metrics(frame_start.elapsed(), layout_time, metrics);
+        self.dispatch_after_frame(scroll_events);
+        Ok(())
+    }
 
+    /// Dispatch what the live loop queues once a frame is painted: the scroll events the
+    /// layout's re-clamps owe, then post-frame.
+    fn dispatch_after_frame(&mut self, scroll_events: Vec<RuntimeEvent>) {
+        for event in scroll_events {
+            process_runtime_event(&self.doc, event, &mut self.event_state);
+        }
         if let Some(event) = self.doc.pending_post_frame_event() {
             process_runtime_event(
                 &self.doc,
@@ -296,7 +299,6 @@ impl HeadlessRuntime {
                 &mut self.event_state,
             );
         }
-        Ok(())
     }
 
     /// Return the terminal output the last [`render_flushed`](Self::render_flushed)

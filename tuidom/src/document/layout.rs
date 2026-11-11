@@ -3,11 +3,13 @@ use std::sync::Arc;
 use crate::document::Document;
 use crate::document::scroll::scrollable_max;
 use crate::error::{Result, TuidomError};
+use crate::event::ScrollEvent;
 use crate::id::NodeId;
 use crate::layout::compute_layout as compute_document_layout;
 use crate::lock;
 use crate::node::{LayoutRect, LayoutView, NodeLayout, NodeView};
 use crate::paint_order::{DrawContext, entry_at};
+use crate::runtime_event::RuntimeEvent;
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{Display, Overflow};
 
@@ -20,9 +22,32 @@ impl Document {
     /// Resolves styles, builds a taffy layout tree, computes positions and
     /// sizes, and stores the results on each node. Nodes with `display: None`
     /// are skipped.
+    ///
+    /// A scroll offset the new layout re-clamps is reported to its `on_scroll` listeners before
+    /// this returns.
     pub fn compute_layout(&self, screen_width: u16, screen_height: u16) -> Result<()> {
+        for event in self.compute_layout_for_frame(screen_width, screen_height)? {
+            if let RuntimeEvent::ScrollClamped { node, offset } = event {
+                self.dispatch_scroll_to(node, &mut ScrollEvent::new(offset.x, offset.y));
+            }
+        }
+        Ok(())
+    }
+
+    /// Compute layout for a frame, returning the scroll events its re-clamps owe instead of
+    /// dispatching them, since a frame is laid out on the render task, which never runs user
+    /// code.
+    pub(crate) fn compute_layout_for_frame(
+        &self,
+        screen_width: u16,
+        screen_height: u16,
+    ) -> Result<Vec<RuntimeEvent>> {
         self.sync_animating_layout_styles();
-        compute_document_layout(self, screen_width, screen_height)
+        let reclamped = compute_document_layout(self, screen_width, screen_height)?;
+        Ok(reclamped
+            .into_iter()
+            .map(|(node, offset)| RuntimeEvent::ScrollClamped { node, offset })
+            .collect())
     }
 
     /// Feed the interpolated style of every layout-animating node to the layout

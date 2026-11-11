@@ -13,7 +13,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
-use crate::event::ScrollEvent;
 use crate::id::NodeId;
 use crate::lock;
 use crate::node::{LayoutRect, NodeKind, NodeLayout, ScrollOffset};
@@ -330,7 +329,15 @@ fn measure_context_for(kind: &NodeKind) -> Option<MeasureContext> {
 // ---------------------------------------------------------------------------
 
 /// Compute layout for the permanent document root using persistent taffy state.
-pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> Result<()> {
+///
+/// Returns every scroll offset the relayout re-clamped, with its new value. The re-clamp is a
+/// scroll the engine made on the container's behalf, so the caller reports each one as a
+/// scroll event, with every lock released, since a listener may mutate the document.
+pub fn compute_layout(
+    doc: &Document,
+    screen_width: u16,
+    screen_height: u16,
+) -> Result<Vec<(NodeId, ScrollOffset)>> {
     // `skipped` and `nodes` are recorded rather than passed: which one applies is not
     // known until the fast path below has been tested.
     let span = tracing::debug_span!(
@@ -354,7 +361,7 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
     // relayout, nothing to catch.
     if !lock::mutex(&doc.inner.layout).needs_compute(screen_width, screen_height) {
         span.record("skipped", true);
-        return Ok(());
+        return Ok(Vec::new());
     }
     span.record("skipped", false);
 
@@ -414,14 +421,7 @@ pub fn compute_layout(doc: &Document, screen_width: u16, screen_height: u16) -> 
         engine.has_anchored = !anchoring.is_empty();
         reclamped
     };
-
-    // The re-clamp is a scroll the engine made on the container's behalf, so it reports
-    // like one. Dispatched with every lock released: a listener may mutate the document.
-    for (id, offset) in reclamped {
-        let mut event = ScrollEvent::new(offset.x, offset.y);
-        doc.dispatch_scroll_to(id, &mut event);
-    }
-    Ok(())
+    Ok(reclamped)
 }
 
 fn collect_visible_tree(

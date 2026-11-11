@@ -16,6 +16,7 @@ use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::paint_order::paint_order;
 use crate::performance::PerformanceDetail;
 use crate::render::grid::ClipRect;
+use crate::runtime_event::{RuntimeEvent, RuntimeEventState, process_runtime_event};
 use crate::style::{
     AlignContent, AlignItems, AlignSelf, AnchorAxis, AnchorEdge, Border, BorderCharset, Color,
     CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position,
@@ -2750,6 +2751,34 @@ fn relayout_reclamp_fires_on_scroll_with_the_clamped_offset() {
     // A relayout that leaves the offset where it is reports nothing.
     doc.compute_layout(10, 4).unwrap();
     assert_eq!(events.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_frames_reclamp_is_queued_rather_than_dispatched() {
+    let (doc, container, lines) = scrolling_column();
+    doc.scroll_to(container, 0, 4).unwrap();
+
+    let calls = Arc::new(Mutex::new(0));
+    let calls_for_handler = calls.clone();
+    doc.on_scroll(container, move |_| *calls_for_handler.lock().unwrap() += 1)
+        .unwrap();
+
+    for line in &lines[6..] {
+        doc.remove_child(container, *line).unwrap();
+    }
+    // A frame is laid out on the render task, which must not run the listener.
+    let events = doc.compute_layout_for_frame(10, 4).unwrap();
+    assert_eq!(*calls.lock().unwrap(), 0);
+    assert!(matches!(
+        events.as_slice(),
+        [RuntimeEvent::ScrollClamped { node, offset }] if *node == container && offset.y == 2
+    ));
+
+    let mut state = RuntimeEventState::default();
+    for event in events {
+        process_runtime_event(&doc, event, &mut state);
+    }
+    assert_eq!(*calls.lock().unwrap(), 1);
 }
 
 #[test]

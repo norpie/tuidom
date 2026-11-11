@@ -5,11 +5,11 @@ use crate::document::Document;
 use crate::document::selection::PendingSelection;
 use crate::event::{
     DragEvent, DragPhase, KeyEvent, KeyModifiers, MouseButton, MouseEvent, PostFrameEvent,
-    ResizeEvent, WheelEvent,
+    ResizeEvent, ScrollEvent, WheelEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
-use crate::node::LayoutRect;
+use crate::node::{LayoutRect, ScrollOffset};
 use crate::paint_order::{PaintEntry, entry_at, offset_for_thumb, scrollbar_strip_of};
 
 /// Internal runtime event used by runtime event queues and simulated input.
@@ -58,6 +58,8 @@ pub(crate) enum RuntimeEvent {
         handle: AnimationHandle,
         iteration: u64,
     },
+    /// A scroll offset a relayout re-clamped, queued by the render task for scroll dispatch.
+    ScrollClamped { node: NodeId, offset: ScrollOffset },
     /// A request to run the registered flush hook on the event task.
     ///
     /// Enqueued from any thread by [`Document::request_runtime_flush`](crate::Document::request_runtime_flush)
@@ -328,6 +330,9 @@ pub(crate) fn process_runtime_event(
         // Not input either: a transition finishing mid-click must not suppress it.
         // A node removed after its transition finished has an empty event path, so
         // dispatch is naturally a no-op.
+        RuntimeEvent::ScrollClamped { node, offset } => {
+            doc.dispatch_scroll_to(node, &mut ScrollEvent::new(offset.x, offset.y));
+        }
         RuntimeEvent::TransitionEnd { node, property } => {
             doc.dispatch_transition_end_to(node, property);
         }
