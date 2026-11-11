@@ -37,10 +37,23 @@ pub(crate) fn rewrite_body(
     let mut rewriter = Rewriter {
         scopes: vec![props],
         uses: Vec::new(),
+        lowered: Vec::new(),
         error: None,
     };
     rewriter.visit_block_mut(block);
-    rewriter.error.map_or(Ok(()), Err)
+    if let Some(error) = rewriter.error {
+        return Err(error);
+    }
+    // A lowered macro is never expanded, so the import that named it would be reported unused.
+    // Naming its path in a `use` counts as using that import.
+    let mut uses = Vec::new();
+    for path in &rewriter.lowered {
+        uses.push(syn::parse2::<Stmt>(
+            quote_spanned! {path.span()=> #[allow(unused_imports)] use #path as _; },
+        )?);
+    }
+    block.stmts.splice(0..0, uses);
+    Ok(())
 }
 
 struct Rewriter {
@@ -48,6 +61,8 @@ struct Rewriter {
     scopes: Vec<HashMap<String, bool>>,
     /// Every use of a signal name met so far, in order.
     uses: Vec<Ident>,
+    /// The distinct paths of the `view!` and `derived!` calls lowered so far.
+    lowered: Vec<syn::Path>,
     error: Option<syn::Error>,
 }
 
@@ -109,6 +124,15 @@ impl Rewriter {
     /// arguments rewritten, or `None` to leave the macro as is.
     fn lower_macro(&mut self, mac: &Macro) -> Option<Expr> {
         let name = mac.path.segments.last()?.ident.to_string();
+        let path = mac.path.to_token_stream().to_string();
+        if (name == "view" || name == "derived")
+            && !self
+                .lowered
+                .iter()
+                .any(|seen| seen.to_token_stream().to_string() == path)
+        {
+            self.lowered.push(mac.path.clone());
+        }
         let lowered = match name.as_str() {
             "view" => {
                 let mut node: Node = self.parse(mac.parse_body())?;
