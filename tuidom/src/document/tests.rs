@@ -5132,6 +5132,152 @@ fn tab_order_is_scoped_to_the_active_focus_context() {
     assert_eq!(doc.focused(), Some(confirm));
 }
 
+/// Set a node's `display`, keeping it a stacking context so it stays valid as a focus context.
+fn set_display(doc: &Document, node: NodeId, display: Display) {
+    let mut style = Style::new();
+    style.stacking_context(true);
+    style.display(display);
+    doc.set_style(node, &style).unwrap();
+}
+
+#[test]
+fn hiding_a_focus_context_releases_its_trap_until_it_is_shown() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+    let cancel = focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+    doc.focus(cancel).unwrap();
+
+    set_display(&doc, modal, Display::None);
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+    assert!(!doc.is_inert(background).unwrap());
+    assert_eq!(doc.focus_context_depth(), 2);
+
+    set_display(&doc, modal, Display::Flex);
+    assert_eq!(doc.active_focus_context(), modal);
+    assert_eq!(doc.focused(), Some(cancel));
+    assert!(doc.is_inert(background).unwrap());
+}
+
+#[test]
+fn hiding_an_ancestor_of_a_focus_context_releases_it() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let screen = doc.create_box().unwrap();
+    doc.append_child(doc.root(), screen).unwrap();
+    let modal = stacking_context_box(&doc);
+    doc.append_child(screen, modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    let mut hidden = Style::new();
+    hidden.display(Display::None);
+    doc.set_style(screen, &hidden).unwrap();
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+}
+
+#[test]
+fn moving_a_focus_context_under_a_hidden_node_releases_it() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let shelf = doc.create_box().unwrap();
+    doc.append_child(doc.root(), shelf).unwrap();
+    let mut hidden = Style::new();
+    hidden.display(Display::None);
+    doc.set_style(shelf, &hidden).unwrap();
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+
+    doc.append_child(shelf, modal).unwrap();
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+}
+
+#[test]
+fn tab_follows_the_innermost_context_that_is_not_hidden() {
+    let doc = Document::new().unwrap();
+    focusable_child(&doc, doc.root());
+    let outer = stacking_context_box(&doc);
+    doc.append_child(doc.root(), outer).unwrap();
+    let first = focusable_child(&doc, outer);
+    let second = focusable_child(&doc, outer);
+    let inner = stacking_context_box(&doc);
+    doc.append_child(outer, inner).unwrap();
+    let nested = focusable_child(&doc, inner);
+
+    doc.push_focus_context(outer).unwrap();
+    doc.push_focus_context(inner).unwrap();
+    assert_eq!(doc.focused(), Some(nested));
+
+    set_display(&doc, inner, Display::None);
+    assert_eq!(doc.active_focus_context(), outer);
+    assert_eq!(doc.focused(), Some(first));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(second));
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Tab));
+    assert_eq!(doc.focused(), Some(second));
+
+    set_display(&doc, inner, Display::Flex);
+    assert_eq!(doc.focused(), Some(nested));
+}
+
+#[test]
+fn popping_a_hidden_innermost_context_closes_it() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    focusable_child(&doc, modal);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+    set_display(&doc, modal, Display::None);
+
+    assert_eq!(doc.pop_focus_context(), Ok(modal));
+    assert_eq!(doc.focus_context_depth(), 1);
+    assert_eq!(doc.focused(), Some(background));
+
+    set_display(&doc, modal, Display::Flex);
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+}
+
+#[test]
+fn a_context_pushed_on_a_hidden_node_takes_effect_when_shown() {
+    let doc = Document::new().unwrap();
+    let background = focusable_child(&doc, doc.root());
+    let modal = stacking_context_box(&doc);
+    doc.append_child(doc.root(), modal).unwrap();
+    let confirm = focusable_child(&doc, modal);
+    set_display(&doc, modal, Display::None);
+
+    doc.focus(background).unwrap();
+    doc.push_focus_context(modal).unwrap();
+    assert_eq!(doc.focus_context_depth(), 2);
+    assert_eq!(doc.active_focus_context(), doc.root());
+    assert_eq!(doc.focused(), Some(background));
+
+    set_display(&doc, modal, Display::Flex);
+    assert_eq!(doc.active_focus_context(), modal);
+    assert_eq!(doc.focused(), Some(confirm));
+
+    assert_eq!(doc.pop_focus_context(), Ok(modal));
+    assert_eq!(doc.focused(), Some(background));
+}
+
 /// A background button at (0,0) and a modal at (2,0) holding one button, side by side so a
 /// click can target either without overlap.
 fn modal_scene(doc: &Document) -> (NodeId, NodeId, NodeId) {

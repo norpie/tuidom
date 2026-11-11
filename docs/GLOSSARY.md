@@ -174,7 +174,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 *Explained in [focus and selection](focus-and-selection.md).*
 
-**Focus Context** — A subtree that traps focus, opened on a stacking context with `push_focus_context`. Scopes `focused()`, tab order, and navigation; everything outside is inert. See [focus contexts](focus-and-selection.md#focus-contexts).
+**Focus Context** — A subtree that traps focus, opened on a stacking context with `push_focus_context`. Scopes `focused()`, tab order, and navigation; everything outside is inert. Traps nothing while its node is hidden. See [focus contexts](focus-and-selection.md#focus-contexts).
 
 **Focus Stack** — The stack of open contexts, innermost last, each remembering its own focused node so a pop restores focus. See [the focus stack](focus-and-selection.md#the-focus-stack).
 

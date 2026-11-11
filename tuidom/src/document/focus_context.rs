@@ -6,13 +6,19 @@ use crate::lock;
 impl Document {
     /// The node whose subtree currently traps focus.
     ///
-    /// Focus, tab order, and spatial navigation are all scoped to this node's subtree. With
-    /// no modal-like context open this is the document root, so the whole tree is in scope.
+    /// Focus, tab order, and spatial navigation are all scoped to this node's subtree. This is
+    /// the innermost open context whose node is not hidden: a context whose node or an
+    /// ancestor has `display: none` traps nothing until it is shown again. With no such
+    /// context open this is the document root, so the whole tree is in scope.
     pub fn active_focus_context(&self) -> NodeId {
-        lock::mutex(&self.inner.focus_contexts).active().context
+        let hidden = self.hidden_focus_contexts();
+        lock::mutex(&self.inner.focus_contexts)
+            .active(&hidden)
+            .context
     }
 
-    /// The number of open focus contexts, counting the permanent root context.
+    /// The number of open focus contexts, counting the permanent root context and any
+    /// context whose node is hidden.
     ///
     /// A depth of 1 means nothing traps focus.
     pub fn focus_context_depth(&self) -> usize {
@@ -30,6 +36,10 @@ impl Document {
     /// The node must be a stacking context. Trapping focus in a subtree that a sibling can
     /// paint over would leave the user interacting with something they cannot see.
     ///
+    /// While the node is hidden the context is open but traps nothing, and focus stays where
+    /// it is; it takes effect when the node is shown. Each context remembers its own focused
+    /// node, so hiding and showing it again returns focus to where it was inside.
+    ///
     /// # Errors
     ///
     /// Returns an error if `node` does not exist, is not a stacking context, or is already
@@ -40,20 +50,28 @@ impl Document {
             return Err(TuidomError::NotAStackingContext { id: node });
         }
 
+        let hidden = self.hidden_focus_contexts();
         let previous = {
             let mut contexts = lock::mutex(&self.inner.focus_contexts);
             if contexts.contains(node) {
                 return Err(TuidomError::FocusContextAlreadyOpen { id: node });
             }
-            let previous = contexts.active().focused;
+            let previous = contexts.active(&hidden).focused;
             contexts.push(node);
             previous
         };
+        if self.is_effectively_hidden(node) {
+            return Ok(());
+        }
+        lock::mutex(&self.inner.focus_contexts).settled = node;
 
         // The context is active from here on, so this searches inside it.
         let next = self.focusable_in_dom_order().first().copied();
         if let Some(next) = next {
-            lock::mutex(&self.inner.focus_contexts).active_mut().focused = Some(next);
+            let hidden = self.hidden_focus_contexts();
+            lock::mutex(&self.inner.focus_contexts)
+                .active_mut(&hidden)
+                .focused = Some(next);
         }
 
         self.transition_focus(previous, next)
@@ -63,7 +81,8 @@ impl Document {
     ///
     /// Focus returns to the node that was focused when the context opened, provided it still
     /// exists, is still focusable, and is not disabled. Otherwise focus is left cleared
-    /// rather than jumping to some other node the user never selected.
+    /// rather than jumping to some other node the user never selected. The innermost context
+    /// is closed even while its node is hidden, in which case focus was already elsewhere.
     ///
     /// Returns the node whose context was closed.
     ///
@@ -73,13 +92,14 @@ impl Document {
     pub fn pop_focus_context(&self) -> Result<NodeId> {
         let (closed, previous) = {
             let mut contexts = lock::mutex(&self.inner.focus_contexts);
+            let previous = contexts.focused_in(contexts.settled);
             match contexts.pop() {
-                Some(closed) => (closed.context, closed.focused),
+                Some(closed) => (closed.context, previous),
                 None => return Err(TuidomError::CannotPopRootFocusContext),
             }
         };
 
-        self.restore_focus_in_active_context(previous)?;
+        self.restore_focus_in_active_context(previous, false)?;
         Ok(closed)
     }
 
@@ -114,6 +134,18 @@ impl Document {
         self.is_effectively_disabled_unlocked(node) || self.is_inert_unlocked(node)
     }
 
+    /// The nodes of open contexts that are hidden, which the active context skips.
+    ///
+    /// Takes no tree lock, so it is safe from a caller holding one, and resolves styles with
+    /// the context stack unlocked.
+    pub(crate) fn hidden_focus_contexts(&self) -> Vec<NodeId> {
+        let nested = lock::mutex(&self.inner.focus_contexts).nested_nodes();
+        nested
+            .into_iter()
+            .filter(|&node| self.is_effectively_hidden_unlocked(node))
+            .collect()
+    }
+
     /// Close focus contexts whose node has left the tree, then re-validate focus.
     ///
     /// A modal-like component that is removed without being popped would otherwise trap
@@ -122,26 +154,61 @@ impl Document {
     pub(super) fn settle_focus_contexts(&self) {
         let previous = {
             let mut contexts = lock::mutex(&self.inner.focus_contexts);
-            let previous = contexts.active().focused;
+            let previous = contexts.focused_in(contexts.settled);
             contexts.prune(|node| self.inner.nodes.contains_key(&node));
             previous
         };
 
-        if let Err(err) = self.restore_focus_in_active_context(previous) {
+        if let Err(err) = self.restore_focus_in_active_context(previous, false) {
             tracing::error!("failed to settle focus contexts: {err}");
         }
     }
 
+    /// Move focus if a change hid or showed a context's node and so changed which context is
+    /// active: from what the previously active context had focused to what the new one
+    /// remembers, or to its first focusable node when it remembers nothing, as a push would.
+    /// The context left behind keeps its memory for when it is active again.
+    pub(super) fn settle_active_focus_context(&self) {
+        let hidden = self.hidden_focus_contexts();
+        let previous = {
+            let contexts = lock::mutex(&self.inner.focus_contexts);
+            if contexts.active(&hidden).context == contexts.settled {
+                return;
+            }
+            contexts.focused_in(contexts.settled)
+        };
+
+        if let Err(err) = self.restore_focus_in_active_context(previous, true) {
+            tracing::error!("failed to settle the active focus context: {err}");
+        }
+    }
+
     /// Re-focus whatever the now-active context remembers, dropping the memory if the node
-    /// is no longer a valid focus target.
-    fn restore_focus_in_active_context(&self, previous: Option<NodeId>) -> Result<()> {
-        let remembered = lock::mutex(&self.inner.focus_contexts).active().focused;
+    /// is no longer a valid focus target, and record that context as settled. With
+    /// `first_if_none`, a nested context remembering nothing focuses its first focusable node.
+    fn restore_focus_in_active_context(
+        &self,
+        previous: Option<NodeId>,
+        first_if_none: bool,
+    ) -> Result<()> {
+        let hidden = self.hidden_focus_contexts();
+        let (active, remembered) = {
+            let mut contexts = lock::mutex(&self.inner.focus_contexts);
+            let active = contexts.active(&hidden).context;
+            contexts.settled = active;
+            (active, contexts.active(&hidden).focused)
+        };
 
         // `can_focus` consults the context stack itself, so it must be called with the lock
         // released.
-        let restored = remembered.filter(|node| self.can_focus(*node));
+        let mut restored = remembered.filter(|node| self.can_focus(*node));
+        if restored.is_none() && first_if_none && active != self.inner.root {
+            restored = self.focusable_in_dom_order().first().copied();
+        }
         if restored != remembered {
-            lock::mutex(&self.inner.focus_contexts).active_mut().focused = restored;
+            lock::mutex(&self.inner.focus_contexts)
+                .active_mut(&hidden)
+                .focused = restored;
         }
 
         self.transition_focus(previous, restored)

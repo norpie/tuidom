@@ -130,6 +130,8 @@ impl Document {
         self.sync_layout_children(parent)?;
         self.invalidate_resolved_style(child);
         self.sync_layout_subtree_styles(child)?;
+        // A subtree moved under a hidden parent hides with it.
+        self.settle_focus_if_hidden(child);
         self.inner.notify.notify_one();
         Ok(())
     }

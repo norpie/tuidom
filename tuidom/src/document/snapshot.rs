@@ -139,9 +139,10 @@ impl Document {
         // per node. Two reasons, and the second is the one that matters: a per-node query
         // takes a lock per node, and `is_inert`/`is_effectively_disabled` each walk to the
         // root, making the whole walk O(n·depth) instead of O(n).
+        let hidden = self.hidden_focus_contexts();
         let (focused, focus_context, focus_context_depth) = {
             let contexts = lock::mutex(&self.inner.focus_contexts);
-            let active = contexts.active();
+            let active = contexts.active(&hidden);
             (active.focused, active.context, contexts.depth())
         };
         let active = *lock::mutex(&self.inner.active_node);

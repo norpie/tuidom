@@ -144,11 +144,26 @@ selected is worse than an unfocused moment they can resolve with Tab.
 Removing an open context's node closes the context, so focus can never be trapped inside a
 subtree that no longer exists.
 
+### Hidden contexts trap nothing
+
+A context whose node is hidden — its own `display: none`, or an ancestor's — stays on the
+stack but **traps nothing** while hidden. The active context is the innermost one that is
+not hidden, so hiding a screen with a dialog open in it makes the rest of the document
+interactive again instead of leaving everything inert behind something invisible. Focus
+moves to what the next context out remembers, and the hidden context keeps its own memory:
+showing it again makes it active and puts focus back where it was inside. A context that
+remembers nothing focuses its first focusable node when shown, as a push would, and so does
+a context pushed while its node was hidden.
+
+This is what lets a subtree be kept mounted but hidden, a retained screen or a closed tab,
+without its focus contexts being popped and pushed by hand. `pop_focus_context` still closes
+the innermost context on the stack, hidden or not.
+
 Useful when you are building on this:
 
 ```rust
-doc.active_focus_context();      // NodeId of the innermost open context
-doc.focus_context_depth();       // how many are open
+doc.active_focus_context();      // NodeId of the innermost open context not hidden
+doc.focus_context_depth();       // how many are open, hidden ones included
 doc.is_inert(node)?;             // is this node outside the active context
 ```
 

@@ -108,6 +108,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
         added after the push
   - [x] If stored node no longer exists, is unfocusable, or is disabled, focus is left cleared
   - [x] Removing an open context's node closes it, so focus is never trapped in a dead subtree
+  - [x] A context whose node is hidden traps nothing until shown, keeping its focus memory
 
 ## Scrolling & Virtualization
 

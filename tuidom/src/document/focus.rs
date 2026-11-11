@@ -91,9 +91,10 @@ impl Document {
             return Err(TuidomError::NodeNotFocusable { id: node });
         }
 
+        let hidden = self.hidden_focus_contexts();
         let previous = {
             let mut contexts = lock::mutex(&self.inner.focus_contexts);
-            let active = contexts.active_mut();
+            let active = contexts.active_mut(&hidden);
             if active.focused == Some(node) {
                 return Ok(());
             }
@@ -107,8 +108,9 @@ impl Document {
     ///
     /// Dispatches blur listeners for the previously focused node.
     pub fn blur(&self) {
+        let hidden = self.hidden_focus_contexts();
         let previous = lock::mutex(&self.inner.focus_contexts)
-            .active_mut()
+            .active_mut(&hidden)
             .focused
             .take();
         if let Err(err) = self.transition_focus(previous, None) {
@@ -140,7 +142,10 @@ impl Document {
     /// Focus is scoped to the active focus context, so this is the focused node *within* an
     /// open modal-like context, not a document-wide value.
     pub fn focused(&self) -> Option<NodeId> {
-        lock::mutex(&self.inner.focus_contexts).active().focused
+        let hidden = self.hidden_focus_contexts();
+        lock::mutex(&self.inner.focus_contexts)
+            .active(&hidden)
+            .focused
     }
 
     /// Replace the document-level focus key bindings.
@@ -239,26 +244,33 @@ impl Document {
     /// resolves `Display::Flex` itself — this has to walk up rather than read one style,
     /// the same way [`Document::is_effectively_disabled`] does.
     pub(super) fn is_effectively_hidden(&self, node: NodeId) -> bool {
+        let _tree_guard = lock::rw_read(&self.inner.tree_mutation);
+        self.is_effectively_hidden_unlocked(node)
+    }
+
+    pub(super) fn is_effectively_hidden_unlocked(&self, node: NodeId) -> bool {
         let mut current = Some(node);
         while let Some(id) = current {
             if self
-                .resolved_style_arc(id)
+                .resolved_style_unlocked(id)
                 .is_ok_and(|resolved| resolved.display == Display::None)
             {
                 return true;
             }
-            current = self.get_parent(id);
+            current = self.get_parent_unlocked(id);
         }
         false
     }
 
-    /// Blur the focused node if a style change just hid it.
+    /// Settle focus after a change that may have hidden or shown part of the tree: move it if
+    /// the change hid or showed a focus context's node, then blur the focused node if the
+    /// change hid it.
     ///
-    /// Only *tree* mutation settles focus otherwise, so without this, hiding the screen a
-    /// user is typing in strands focus on an invisible node and keys keep routing to it.
-    /// A change at `changed` can only hide nodes in its own subtree, so the parent walk
-    /// dismisses the common case before any style is resolved.
+    /// Without this, hiding the screen a user is typing in strands focus on an invisible node
+    /// and keys keep routing to it. A change at `changed` can only hide nodes in its own
+    /// subtree, so the parent walk dismisses the common case before any style is resolved.
     pub(super) fn settle_focus_if_hidden(&self, changed: NodeId) {
+        self.settle_active_focus_context();
         let Some(focused) = self.focused() else {
             return;
         };
@@ -324,9 +336,10 @@ impl Document {
             }
         };
 
+        let hidden = self.hidden_focus_contexts();
         let removed_focus = {
             let mut contexts = lock::mutex(&self.inner.focus_contexts);
-            let was_focused = contexts.active().focused == Some(node);
+            let was_focused = contexts.active(&hidden).focused == Some(node);
             // An outer context may still remember this node as its focus, so clear every
             // level rather than only the active one.
             for context in contexts.iter_mut() {

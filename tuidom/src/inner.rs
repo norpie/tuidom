@@ -65,10 +65,16 @@ impl FocusContext {
 ///
 /// The root context is stored outside the vector so the stack can never be empty and the
 /// active context is always reachable without a fallible lookup.
+///
+/// The active context is the innermost one whose node is not hidden. Hiddenness lives in
+/// resolved styles the stack cannot see, so callers pass the hidden context nodes in.
 #[derive(Debug)]
 pub(crate) struct FocusStack {
     root: FocusContext,
     nested: Vec<FocusContext>,
+    /// The context that was active when focus last settled, so a change that hides or shows a
+    /// context's node can tell whether the active context moved.
+    pub settled: NodeId,
 }
 
 impl FocusStack {
@@ -77,17 +83,39 @@ impl FocusStack {
         Self {
             root: FocusContext::new(root),
             nested: Vec::new(),
+            settled: root,
         }
     }
 
-    /// The innermost context — the one that currently traps focus.
-    pub fn active(&self) -> &FocusContext {
-        self.nested.last().unwrap_or(&self.root)
+    /// The innermost context not in `hidden` — the one that currently traps focus.
+    pub fn active(&self, hidden: &[NodeId]) -> &FocusContext {
+        self.nested
+            .iter()
+            .rev()
+            .find(|entry| !hidden.contains(&entry.context))
+            .unwrap_or(&self.root)
     }
 
-    /// The innermost context, mutably.
-    pub fn active_mut(&mut self) -> &mut FocusContext {
-        self.nested.last_mut().unwrap_or(&mut self.root)
+    /// The innermost context not in `hidden`, mutably.
+    pub fn active_mut(&mut self, hidden: &[NodeId]) -> &mut FocusContext {
+        self.nested
+            .iter_mut()
+            .rev()
+            .find(|entry| !hidden.contains(&entry.context))
+            .unwrap_or(&mut self.root)
+    }
+
+    /// What the context on `node` remembers as focused, or `None` if no context is on it.
+    pub fn focused_in(&self, node: NodeId) -> Option<NodeId> {
+        std::iter::once(&self.root)
+            .chain(&self.nested)
+            .find(|entry| entry.context == node)
+            .and_then(|entry| entry.focused)
+    }
+
+    /// The node of every nested context, outermost first.
+    pub fn nested_nodes(&self) -> Vec<NodeId> {
+        self.nested.iter().map(|entry| entry.context).collect()
     }
 
     /// Push a nested context, which becomes the active one.
