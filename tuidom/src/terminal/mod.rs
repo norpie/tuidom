@@ -126,6 +126,15 @@ fn is_truecolor_terminal(name: &str) -> bool {
     TRUECOLOR_TERMINALS.contains(&name)
 }
 
+/// Terminals known to support the kitty graphics protocol, by version-string name or `TERM`.
+/// Used where the protocol cannot be queried: inside tmux, and before the probe.
+fn speaks_kitty(name: &str) -> bool {
+    matches!(
+        name,
+        "kitty" | "WezTerm" | "ghostty" | "xterm-kitty" | "xterm-ghostty"
+    )
+}
+
 fn speaks_iterm2(name: &str) -> bool {
     matches!(name, "iTerm.app" | "iTerm2" | "WezTerm")
 }

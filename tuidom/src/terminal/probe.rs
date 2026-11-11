@@ -42,7 +42,7 @@ fn probe_blocking() -> TerminalInfo {
         Ok(info) => info,
         Err(err) => {
             tracing::warn!(%err, "terminal did not take queries");
-            merge(env, &[], tmux.as_ref(), None)
+            merge(env, &[], tmux.as_ref())
         }
     };
     info.pixel_size = pixel_size();
@@ -58,7 +58,7 @@ fn ask_terminal(env: TerminalInfo, tmux: Option<&TmuxClient>) -> io::Result<Term
 
 #[cfg(not(unix))]
 fn ask_terminal(env: TerminalInfo, tmux: Option<&TmuxClient>) -> io::Result<TerminalInfo> {
-    Ok(merge(env, &[], tmux, None))
+    Ok(merge(env, &[], tmux))
 }
 
 pub(crate) fn pixel_size() -> Option<PixelSize> {
@@ -79,20 +79,8 @@ fn probe_with(
     env: TerminalInfo,
     tmux: Option<&TmuxClient>,
 ) -> io::Result<TerminalInfo> {
-    let direct = run_batch(io, &reply::query_batch())?;
-    let direct_answered = direct
-        .iter()
-        .any(|reply| matches!(reply, Reply::DeviceAttributes { .. }));
-    // Sent only after the direct batch is answered, since replies carry nothing that says
-    // which batch asked.
-    let wrapped = match tmux {
-        Some(client) if client.passthrough && direct_answered => Some(run_batch(
-            io,
-            &reply::tmux_passthrough(&reply::outer_batch()),
-        )?),
-        _ => None,
-    };
-    Ok(merge(env, &direct, tmux, wrapped.as_deref()))
+    let replies = run_batch(io, &reply::query_batch())?;
+    Ok(merge(env, &replies, tmux))
 }
 
 /// Send `batch` and collect replies until its DA1 reply arrives or the deadline passes.
@@ -221,36 +209,12 @@ mod tests {
     }
 
     #[test]
-    fn with_passthrough_on_the_outer_batch_follows_the_direct_answer() {
-        let mut io = Scripted::new(vec![
-            vec![b"\x1bP>|tmux 3.4\x1b\\\x1b[?62c"],
-            vec![b"\x1b_Gi=31;OK\x1b\\\x1b[?62;22c"],
-        ]);
+    fn inside_tmux_only_tmux_is_asked() {
+        let mut io = Scripted::new(vec![vec![b"\x1bP>|tmux 3.4\x1b\\\x1b[?62c"]]);
         let info = probe_with(&mut io, in_tmux(), Some(&client(true))).unwrap();
-        assert_eq!(
-            io.written,
-            [
-                reply::query_batch(),
-                reply::tmux_passthrough(&reply::outer_batch())
-            ]
-        );
-        assert!(info.graphics.kitty);
+        assert_eq!(io.written, [reply::query_batch()]);
         assert_eq!(info.name.as_deref(), Some("kitty"));
+        assert!(info.graphics.kitty);
         assert_eq!(info.multiplexer.unwrap().version.as_deref(), Some("3.4"));
-    }
-
-    #[test]
-    fn with_passthrough_off_only_tmux_is_asked() {
-        let mut io = Scripted::new(vec![vec![b"\x1b[?62c"]]);
-        let info = probe_with(&mut io, in_tmux(), Some(&client(false))).unwrap();
-        assert_eq!(io.written, [reply::query_batch()]);
-        assert!(!info.graphics.kitty);
-    }
-
-    #[test]
-    fn an_unanswered_direct_batch_sends_nothing_through_tmux() {
-        let mut io = Scripted::new(vec![vec![]]);
-        probe_with(&mut io, in_tmux(), Some(&client(true))).unwrap();
-        assert_eq!(io.written, [reply::query_batch()]);
     }
 }

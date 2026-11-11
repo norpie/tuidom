@@ -28,7 +28,9 @@ pub(super) fn query_batch() -> Vec<u8> {
     batch.extend_from_slice(b"\x1b[>0q");
     batch.extend_from_slice(b"\x1b]10;?\x1b\\");
     batch.extend_from_slice(b"\x1b]11;?\x1b\\");
-    push_kitty_query(&mut batch);
+    batch.extend_from_slice(b"\x1b_Gi=");
+    batch.extend_from_slice(KITTY_QUERY_ID.as_bytes());
+    batch.extend_from_slice(b",s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
     for capability in ["RGB", "Tc"] {
         batch.extend_from_slice(b"\x1bP+q");
         batch.extend_from_slice(hex_encode(capability).as_bytes());
@@ -36,36 +38,6 @@ pub(super) fn query_batch() -> Vec<u8> {
     }
     batch.extend_from_slice(b"\x1b[c");
     batch
-}
-
-/// The queries for the terminal outside tmux. Everything else it could answer, tmux has
-/// already said or decides itself.
-pub(super) fn outer_batch() -> Vec<u8> {
-    let mut batch = Vec::new();
-    push_kitty_query(&mut batch);
-    batch.extend_from_slice(b"\x1b[c");
-    batch
-}
-
-fn push_kitty_query(batch: &mut Vec<u8>) {
-    batch.extend_from_slice(b"\x1b_Gi=");
-    batch.extend_from_slice(KITTY_QUERY_ID.as_bytes());
-    batch.extend_from_slice(b",s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
-}
-
-/// Wrap `sequence` so tmux forwards it to the terminal outside instead of reading it itself.
-///
-/// tmux ends the wrapper at the first lone `ESC \`, so every ESC inside is doubled.
-pub(super) fn tmux_passthrough(sequence: &[u8]) -> Vec<u8> {
-    let mut wrapped = b"\x1bPtmux;".to_vec();
-    for &byte in sequence {
-        if byte == ESC {
-            wrapped.push(ESC);
-        }
-        wrapped.push(byte);
-    }
-    wrapped.extend_from_slice(b"\x1b\\");
-    wrapped
 }
 
 /// Parse the replies in `buf`, returning them and how many bytes were used.
@@ -362,14 +334,6 @@ mod tests {
             batch
                 .windows(b"\x1bP+q524742\x1b\\".len())
                 .any(|window| window == b"\x1bP+q524742\x1b\\")
-        );
-    }
-
-    #[test]
-    fn tmux_passthrough_doubles_every_escape() {
-        assert_eq!(
-            tmux_passthrough(b"\x1b]11;?\x1b\\\x1b[c"),
-            b"\x1bPtmux;\x1b\x1b]11;?\x1b\x1b\\\x1b\x1b[c\x1b\\"
         );
     }
 }

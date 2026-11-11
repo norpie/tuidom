@@ -1,24 +1,23 @@
 use super::reply::Reply;
 use super::tmux::TmuxClient;
-use super::{ColorDepth, MultiplexerKind, TerminalInfo, is_truecolor_terminal, speaks_iterm2};
+use super::{
+    ColorDepth, MultiplexerKind, TerminalInfo, is_truecolor_terminal, speaks_iterm2, speaks_kitty,
+};
 
 /// Combine what the environment said with what tmux and the terminal answered.
 ///
-/// `direct` holds the replies to the batch sent as is, which inside a multiplexer the
-/// multiplexer answers. `wrapped` holds the replies to the batch tmux was asked to pass through
-/// to the terminal outside it, and is `None` when none was sent.
+/// Inside a multiplexer, the multiplexer is what answered the queries, not the terminal outside it.
 pub(super) fn merge(
     mut info: TerminalInfo,
-    direct: &[Reply],
+    replies: &[Reply],
     tmux: Option<&TmuxClient>,
-    wrapped: Option<&[Reply]>,
 ) -> TerminalInfo {
-    info.probed = answered(direct);
+    info.probed = answered(replies);
     if info.probed && info.multiplexer.is_none() {
-        info.graphics.kitty = kitty_ok(direct);
+        info.graphics.kitty = replies.contains(&Reply::KittyGraphics(true));
     }
 
-    for reply in direct {
+    for reply in replies {
         match reply {
             Reply::DeviceAttributes { sixel } => info.graphics.sixel |= sixel,
             Reply::Version(text) => apply_direct_version(&mut info, text),
@@ -37,21 +36,24 @@ pub(super) fn merge(
             info.version = version;
         }
     }
-    if let Some(wrapped) = wrapped {
-        info.graphics.kitty = kitty_ok(wrapped);
-    }
 
     // Inside a multiplexer the outer terminal's colors are not what the application gets;
     // the multiplexer's own settings decide that.
     if info.multiplexer.is_none() && info.name.as_deref().is_some_and(is_truecolor_terminal) {
         info.color_depth = ColorDepth::TrueColor;
     }
-    // An image protocol is only usable through a multiplexer that passes it on.
+    // An image protocol is only usable through a multiplexer that passes it on. Inside one,
+    // kitty graphics go by name too: a query forwarded through tmux is answered to tmux, which
+    // keeps the reply.
     let reaches_terminal = info
         .multiplexer
         .as_ref()
         .is_none_or(|multiplexer| multiplexer.passthrough);
-    info.graphics.iterm2 = reaches_terminal && info.name.as_deref().is_some_and(speaks_iterm2);
+    let name = info.name.as_deref();
+    if info.multiplexer.is_some() {
+        info.graphics.kitty = reaches_terminal && name.is_some_and(speaks_kitty);
+    }
+    info.graphics.iterm2 = reaches_terminal && name.is_some_and(speaks_iterm2);
     info
 }
 
@@ -59,10 +61,6 @@ fn answered(replies: &[Reply]) -> bool {
     replies
         .iter()
         .any(|reply| matches!(reply, Reply::DeviceAttributes { .. }))
-}
-
-fn kitty_ok(replies: &[Reply]) -> bool {
-    replies.contains(&Reply::KittyGraphics(true))
 }
 
 /// Inside a multiplexer, the version reply could come from the multiplexer or from a terminal
@@ -134,8 +132,8 @@ mod tests {
             },
             ..TerminalInfo::default()
         };
-        assert_eq!(merge(env.clone(), &[], None, None), env);
-        assert_eq!(merge(in_tmux(), &[], None, None), in_tmux());
+        assert_eq!(merge(env.clone(), &[], None), env);
+        assert_eq!(merge(in_tmux(), &[], None), in_tmux());
     }
 
     #[test]
@@ -148,7 +146,7 @@ mod tests {
             },
             ..TerminalInfo::default()
         };
-        let info = merge(env, &[DA1], None, None);
+        let info = merge(env, &[DA1], None);
         assert!(info.probed);
         assert!(!info.graphics.kitty);
         assert_eq!(info.name.as_deref(), Some("kitty"));
@@ -161,7 +159,7 @@ mod tests {
             version: Some("1.95".to_string()),
             ..TerminalInfo::default()
         };
-        let info = merge(env, &[version("WezTerm 20240203-110809"), DA1], None, None);
+        let info = merge(env, &[version("WezTerm 20240203-110809"), DA1], None);
         assert_eq!(info.name.as_deref(), Some("WezTerm"));
         assert_eq!(info.version.as_deref(), Some("20240203-110809"));
         assert_eq!(info.color_depth, ColorDepth::TrueColor);
@@ -196,7 +194,6 @@ mod tests {
                 Reply::DeviceAttributes { sixel: true },
             ],
             None,
-            None,
         );
         assert_eq!(info.foreground, Some(foreground));
         assert_eq!(info.background, Some(background));
@@ -211,7 +208,7 @@ mod tests {
             color_depth: ColorDepth::TrueColor,
             ..TerminalInfo::default()
         };
-        let info = merge(env, &[Reply::TrueColor(false), DA1], None, None);
+        let info = merge(env, &[Reply::TrueColor(false), DA1], None);
         assert_eq!(info.color_depth, ColorDepth::TrueColor);
     }
 
@@ -223,53 +220,46 @@ mod tests {
     }
 
     #[test]
-    fn tmux_names_the_outer_terminal_and_passthrough_finds_its_graphics() {
+    fn tmux_names_the_outer_terminal() {
         let info = merge(
             in_tmux(),
             &[version("tmux 3.4"), Reply::DeviceAttributes { sixel: true }],
-            Some(&client("kitty(0.35.2)", true)),
-            Some(&[Reply::KittyGraphics(true), DA1]),
+            Some(&client("WezTerm 20240203", true)),
         );
         let multiplexer = info.multiplexer.as_ref().unwrap();
         assert_eq!(multiplexer.version.as_deref(), Some("3.4"));
         assert!(multiplexer.passthrough);
-        assert_eq!(info.name.as_deref(), Some("kitty"));
-        assert_eq!(info.version.as_deref(), Some("0.35.2"));
-        assert!(info.graphics.kitty);
+        assert_eq!(info.name.as_deref(), Some("WezTerm"));
+        assert_eq!(info.version.as_deref(), Some("20240203"));
         assert!(info.graphics.sixel);
         assert_eq!(info.color_depth, ColorDepth::Ansi256);
     }
 
     #[test]
-    fn tmux_with_passthrough_off_still_names_the_outer_terminal() {
-        let info = merge(
-            in_tmux(),
-            &[version("tmux 3.4"), DA1],
-            Some(&client("WezTerm 20240203", false)),
-            None,
-        );
-        let multiplexer = info.multiplexer.as_ref().unwrap();
-        assert!(!multiplexer.passthrough);
-        assert_eq!(info.name.as_deref(), Some("WezTerm"));
-        assert!(!info.graphics.kitty);
-        assert!(!info.graphics.iterm2);
+    fn inside_tmux_kitty_graphics_go_by_name_and_need_passthrough() {
+        for terminal in ["kitty(0.35.2)", "ghostty 1.1.0", "xterm-kitty"] {
+            let on = merge(in_tmux(), &[DA1], Some(&client(terminal, true)));
+            assert!(on.graphics.kitty, "{terminal}");
+            let off = merge(in_tmux(), &[DA1], Some(&client(terminal, false)));
+            assert!(!off.graphics.kitty, "{terminal}");
+        }
+        let alacritty = merge(in_tmux(), &[DA1], Some(&client("alacritty", true)));
+        assert!(!alacritty.graphics.kitty);
     }
 
     #[test]
-    fn an_unanswered_outer_batch_means_no_kitty_graphics() {
+    fn inside_tmux_a_kitty_reply_is_tmux_speaking_and_ignored() {
         let info = merge(
             in_tmux(),
-            &[DA1],
-            Some(&client("kitty(0.35.2)", true)),
-            Some(&[]),
+            &[Reply::KittyGraphics(true), DA1],
+            Some(&client("alacritty", true)),
         );
-        assert!(info.multiplexer.unwrap().passthrough);
         assert!(!info.graphics.kitty);
     }
 
     #[test]
     fn a_version_inside_a_multiplexer_is_kept_only_if_it_names_it() {
-        let info = merge(in_tmux(), &[version("kitty(0.35.2)"), DA1], None, None);
+        let info = merge(in_tmux(), &[version("kitty(0.35.2)"), DA1], None);
         assert_eq!(info.name, None);
         assert_eq!(info.multiplexer.unwrap().version, None);
     }

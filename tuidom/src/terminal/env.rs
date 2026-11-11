@@ -1,6 +1,6 @@
 use super::{
     ColorDepth, Graphics, Multiplexer, MultiplexerKind, TerminalInfo, is_truecolor_terminal,
-    speaks_iterm2,
+    speaks_iterm2, speaks_kitty,
 };
 
 pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
@@ -26,7 +26,7 @@ pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
             name.as_deref(),
         ),
         graphics: Graphics {
-            kitty: name.as_deref() == Some("kitty"),
+            kitty: name.as_deref().is_some_and(speaks_kitty),
             sixel: false,
             iterm2: name.as_deref().is_some_and(speaks_iterm2),
         },
