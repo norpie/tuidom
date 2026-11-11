@@ -165,6 +165,16 @@ fn an_effect_reruns_through_a_derived_read_by_projection() {
     assert_eq!(seen.get(), 4);
 }
 
+#[test]
+fn the_derived_macro_recomputes_its_expression() {
+    let s = state(2);
+    let doubled = crate::derived!(s.get() * 2);
+
+    assert_eq!(doubled.get(), 4);
+    s.set(5);
+    assert_eq!(doubled.get(), 10);
+}
+
 // ---- Flush, diamond, batching, operators ------------------------------------------------
 
 #[test]

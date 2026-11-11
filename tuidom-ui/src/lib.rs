@@ -61,3 +61,22 @@ pub use view::{
     component, dyn_text, dynamic, fragment, frames, input, keyed, mount, node_ref, on_mount,
     portal, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
 };
+
+/// A [`Derived`] computing `expr`: shorthand for `derived(move || expr)`.
+#[macro_export]
+macro_rules! derived {
+    ($expr:expr $(,)?) => {
+        $crate::derived(move || $expr)
+    };
+}
+
+/// `handle` itself, unchanged: a [`Signal`] or [`Derived`] passed along rather than read.
+///
+/// It does nothing to its argument. It marks a handle in code where a signal's name would
+/// otherwise stand for its value.
+#[macro_export]
+macro_rules! signal {
+    ($handle:expr $(,)?) => {
+        $handle
+    };
+}
