@@ -11,6 +11,8 @@
 
 #![warn(missing_docs)]
 
+mod reactive;
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
@@ -246,11 +248,27 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// [`on_mount`]: ../tuidom_ui/fn.on_mount.html
 /// [`on_cleanup`]: ../tuidom_ui/fn.on_cleanup.html
 #[proc_macro_attribute]
-pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = syn::parse_macro_input!(item as ItemFn);
-    match expand_component(func) {
+    match parse_component_args(attr.into()).and_then(|reactive| expand_component(func, reactive)) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Whether `#[component(..)]` asks for a reactive body. `reactive` is the only option.
+fn parse_component_args(attr: TokenStream2) -> syn::Result<bool> {
+    if attr.is_empty() {
+        return Ok(false);
+    }
+    let option: Ident = syn::parse2(attr)?;
+    if option == "reactive" {
+        Ok(true)
+    } else {
+        Err(syn::Error::new_spanned(
+            option,
+            "unknown `component` option; expected `reactive`",
+        ))
     }
 }
 
@@ -267,17 +285,21 @@ struct PropSpec {
     /// `None` for a required prop; `Some(value)` for an optional one, holding the full default of
     /// type `field_ty` used when the call site omits it (already `state`-wrapped for signal props).
     default: Option<TokenStream2>,
+    /// Whether the body sees the prop as a signal: everything but children, callbacks and refs.
+    is_signal: bool,
 }
 
 /// Rewrite a component function into its props struct, a typestate builder, and a constructor
 /// taking the props.
 ///
 /// Each parameter `name: T` becomes a `Signal<T>` field on `NameProps` and a binding of the same
-/// name destructured at the top of the body, so the body reads props as signals. The body is
-/// otherwise untouched — a pure source transform, no reactivity analysis. Optionality comes from
-/// `#[prop(default)]`, `#[prop(default = expr)]`, or an `Option<T>` type; everything else is a
-/// required prop the call site must supply.
-fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
+/// name destructured at the top of the body, so the body reads props as signals. Optionality
+/// comes from `#[prop(default)]`, `#[prop(default = expr)]`, or an `Option<T>` type; everything
+/// else is a required prop the call site must supply.
+///
+/// The body is otherwise untouched, unless `reactive` asks for its signal names to be rewritten
+/// into reads.
+fn expand_component(func: ItemFn, reactive: bool) -> syn::Result<TokenStream2> {
     let sig = &func.sig;
     if let Some(param) = sig.generics.params.first() {
         return Err(syn::Error::new_spanned(
@@ -290,7 +312,6 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
     let vis = &func.vis;
     let name = &sig.ident;
     let output = &sig.output;
-    let block = &func.block;
     let props_name = format_ident!("{}Props", name);
 
     let mut props = Vec::new();
@@ -343,6 +364,7 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
         // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
         let bound =
             signal_value_type(ty).map(|inner| quote! { ::tuidom_ui::__private::Bound<#inner> });
+        let is_signal = !is_children && !is_raw_prop_type(ty);
         let (field_ty, default) = if is_children {
             (
                 quote! { #ty },
@@ -362,7 +384,14 @@ fn expand_component(func: ItemFn) -> syn::Result<TokenStream2> {
             field_ty,
             bound,
             default,
+            is_signal,
         });
+    }
+
+    let mut block = func.block.clone();
+    if reactive {
+        let signals = props.iter().filter(|p| p.is_signal).map(|p| p.name.clone());
+        reactive::rewrite_body(&mut block, signals);
     }
 
     let props_api = expand_props_builder(vis, name, &props_name, &props);

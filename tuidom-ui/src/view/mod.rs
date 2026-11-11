@@ -1842,4 +1842,6 @@ fn register_remove(doc: &Document, parent: NodeId, node: NodeId, scope: &Scope) 
 }
 
 #[cfg(test)]
+mod reactive_tests;
+#[cfg(test)]
 mod tests;
