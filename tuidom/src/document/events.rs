@@ -474,6 +474,7 @@ impl Document {
         let target = self
             .focused()
             .unwrap_or_else(|| self.active_focus_context());
+        event.edits_input = self.input_takes_key(event.code, event.modifiers);
         self.dispatch_key_press_to(target, &mut event);
         // Four defaults in precedence order. The two text ones come first and can claim
         // the key outright: a focused input consumes its own editing keys, so Home and

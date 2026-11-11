@@ -316,8 +316,9 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 ## Event System
 
 - [x] Target + bubble propagation (no capture phase)
-- [ ] A way for document-level shortcuts to skip keys an Input handles; they bubble today, so
-      a handler checks the key's target
+- [x] A way for document-level shortcuts to skip keys an Input handles:
+      `KeyEvent::edits_input()`, decided by the Input's own rules, so chords and keys it
+      declines still reach the shortcut
 - [x] `stop_propagation()` to halt bubbling
 - [x] Sync handlers only — user spawns for async
 - [x] Events:

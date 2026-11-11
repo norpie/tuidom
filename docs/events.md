@@ -125,6 +125,31 @@ sets overlap, the established focus binding still wins.
 A single-line Input is the visible edge of this: it has no line to move to, so it declines
 Up and Down and they reach focus navigation instead of being swallowed.
 
+### Shortcuts and typing
+
+Listeners run before the Input edit, so a key typed into an Input bubbles to every
+ancestor first, the root included. A document-level `q`-to-quit shortcut would fire while
+someone types "quit" into a field. `edits_input()` on the key event says whether the
+focused Input is going to take the key, and a shortcut skips it when it is:
+
+```rust
+doc.on_key_press(doc.root(), move |key| {
+    if key.edits_input() {
+        return;
+    }
+    match key.code {
+        KeyCode::Char('q') => quit.quit(),
+        _ => {}
+    }
+})?;
+```
+
+It is decided by running the Input's own rules against a copy of its state, so it is
+`false` for everything the Input lets through: Esc, function keys, control and alt chords
+other than ctrl+a, Enter in a single-line Input, and Up and Down there too. Checking
+whether the target is an Input instead would also skip those, and a ctrl+s shortcut would
+stop working whenever a field has focus.
+
 ### The consequence: handlers see stale state
 
 Because listeners run first, a handler reading state that a default action is *about* to

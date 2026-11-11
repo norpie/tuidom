@@ -178,6 +178,7 @@ pub struct KeyEvent {
     pub modifiers: KeyModifiers,
     metadata: TargetedMetadata,
     default_prevented: bool,
+    pub(crate) edits_input: bool,
 }
 
 impl KeyEvent {
@@ -194,6 +195,7 @@ impl KeyEvent {
             modifiers,
             metadata: TargetedMetadata::pending(),
             default_prevented: false,
+            edits_input: false,
         }
     }
 
@@ -210,6 +212,18 @@ impl KeyEvent {
     /// The current dispatch phase.
     pub fn phase(&self) -> EventPhase {
         self.metadata.phase
+    }
+
+    /// Whether the focused Input will take this key, as typed text, a deletion, or a cursor
+    /// move, once listeners have run and unless one of them prevents the default.
+    ///
+    /// A shortcut on an ancestor checks it to leave typing alone. Keys the Input has no use
+    /// for, such as Esc, function keys, and control or alt chords other than ctrl+a, report
+    /// `false` and still reach the shortcut, as does a motion the Input declines, like Up
+    /// in a single-line Input. It is decided when the key arrives, so a listener that
+    /// changes the Input before the default runs can make it wrong.
+    pub fn edits_input(&self) -> bool {
+        self.edits_input
     }
 
     /// Stop this event from bubbling to ancestor nodes.

@@ -1739,6 +1739,91 @@ fn a_single_line_input_leaves_enter_to_the_other_defaults() {
     assert_eq!(doc.input_value(input).unwrap(), "ab\n");
 }
 
+fn edits_input_seen_at_root(doc: &Document, keys: &[(KeyCode, KeyModifiers)]) -> Vec<bool> {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let handle = doc
+        .on_key_press(doc.root(), move |key| {
+            sink.lock().unwrap().push(key.edits_input());
+        })
+        .unwrap();
+    for &(code, modifiers) in keys {
+        doc.dispatch_key_press(KeyEvent::with_modifiers(code, modifiers));
+    }
+    doc.remove_listener(handle);
+    seen.lock().unwrap().clone()
+}
+
+#[test]
+fn edits_input_reports_only_keys_the_focused_input_takes() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("ab").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_cursor(input, 1).unwrap();
+    let plain = KeyModifiers::empty();
+
+    let seen = edits_input_seen_at_root(
+        &doc,
+        &[
+            (KeyCode::Char('q'), plain),
+            (KeyCode::Char('Q'), KeyModifiers::SHIFT),
+            (KeyCode::Backspace, plain),
+            (KeyCode::Left, plain),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL),
+            (KeyCode::Char('s'), KeyModifiers::CONTROL),
+            (KeyCode::Char('s'), KeyModifiers::ALT),
+            (KeyCode::Esc, plain),
+            (KeyCode::F(1), plain),
+            (KeyCode::Enter, plain),
+            (KeyCode::Up, plain),
+        ],
+    );
+
+    assert_eq!(
+        seen,
+        [
+            true, true, true, true, true, false, false, false, false, false, false
+        ]
+    );
+}
+
+#[test]
+fn edits_input_is_false_only_for_a_motion_the_input_declines() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("ab\ncd").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.focus(input).unwrap();
+    doc.set_input_multiline(input, true).unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+    let plain = KeyModifiers::empty();
+
+    // Out of room, a motion stays put and keeps the key.
+    let multiline = edits_input_seen_at_root(&doc, &[(KeyCode::Left, plain), (KeyCode::Up, plain)]);
+    doc.set_input_multiline(input, false).unwrap();
+    let single_line = edits_input_seen_at_root(&doc, &[(KeyCode::Up, plain)]);
+
+    assert_eq!(multiline, [true, true]);
+    assert_eq!(single_line, [false]);
+}
+
+#[test]
+fn edits_input_is_false_when_no_input_is_focused() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("").unwrap();
+    let other = doc.create_box().unwrap();
+    doc.set_focusable(other, true).unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.append_child(doc.root(), other).unwrap();
+
+    let unfocused = edits_input_seen_at_root(&doc, &[(KeyCode::Char('q'), KeyModifiers::empty())]);
+    doc.focus(other).unwrap();
+    let on_a_box = edits_input_seen_at_root(&doc, &[(KeyCode::Char('q'), KeyModifiers::empty())]);
+
+    assert_eq!(unfocused, [false]);
+    assert_eq!(on_a_box, [false]);
+}
+
 #[test]
 fn prevent_default_skips_input_default_action() {
     let doc = Document::new().unwrap();

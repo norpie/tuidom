@@ -267,26 +267,31 @@ impl Document {
         }
     }
 
+    /// Whether the focused input would claim this key, judged on a copy of its state.
+    pub(crate) fn input_takes_key(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        let Some(node) = self.focused() else {
+            return false;
+        };
+        let page_rows = self.page_rows_for_key(node, code, modifiers);
+        let Some(mut state) = self
+            .inner
+            .nodes
+            .get(&node)
+            .and_then(|data| input_state(&data.kind, node).ok().cloned())
+        else {
+            return false;
+        };
+        edit_input(&mut state, code, modifiers, page_rows).handled
+    }
+
     fn apply_input_default_action_to(
         &self,
         node: NodeId,
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<bool> {
-        let motion = motion_for_key(code, modifiers);
+        let page_rows = self.page_rows_for_key(node, code, modifiers);
 
-        // Page motion sizes itself on the visible box, so it needs layout and a resolved
-        // style — both read here, above the node borrow. Resolving a style takes locks of
-        // its own, and doing that under a `get_mut` guard is the deadlock this repo's
-        // rule exists for.
-        let page_rows = matches!(motion, Some(Motion::PageUp | Motion::PageDown))
-            .then(|| self.input_page_rows(node))
-            .flatten();
-
-        // An input measures on its content, so a value change is exactly what needs
-        // relayout — and exactly what `on_input` reports. The two share one flag because
-        // they are the same condition, not because they happen to coincide today.
-        let mut value_changed = false;
         let (handled, value) = {
             let Some(mut data) = self.inner.nodes.get_mut(&node) else {
                 return Ok(false);
@@ -294,62 +299,19 @@ impl Document {
             let Ok(state) = input_state_mut(&mut data.kind, node) else {
                 return Ok(false);
             };
-
-            // Shift is excluded deliberately: terminals report a capital as its uppercase
-            // char *plus* shift, so treating any modifier as a chord would stop capital
-            // letters from typing. Control and alt are what make a chord.
-            let chorded = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-
-            let handled = if let Some(motion) = motion {
-                // Shift only reaches here having already been masked out of the binding
-                // lookup, so it names the same motion either way and decides one thing:
-                // whether the selection follows the cursor or is discarded by it.
-                let extend = modifiers.contains(KeyModifiers::SHIFT);
-                apply_motion(state, motion, extend, page_rows)
-            } else {
-                match code {
-                    // Ctrl+A arrives as a plain letter like every control chord, so it has
-                    // to be matched above the insert arm rather than beside it.
-                    KeyCode::Char('a') | KeyCode::Char('A')
-                        if modifiers.contains(KeyModifiers::CONTROL)
-                            && !modifiers.contains(KeyModifiers::ALT) =>
-                    {
-                        select_all(state);
-                        true
-                    }
-                    // A control chord arrives as its plain letter — ctrl+a is `Char('a')`
-                    // with control held, not a control character — so without this guard
-                    // every ctrl and alt chord would type its letter into the input.
-                    KeyCode::Char(ch) if !ch.is_control() && !chorded => {
-                        replace_selection_or_insert(state, &ch.to_string());
-                        value_changed = true;
-                        true
-                    }
-                    KeyCode::Backspace => {
-                        value_changed = delete_selection_or_previous_grapheme(state);
-                        true
-                    }
-                    KeyCode::Delete => {
-                        value_changed = delete_selection_or_next_grapheme(state);
-                        true
-                    }
-                    KeyCode::Enter if state.multiline => {
-                        replace_selection_or_insert(state, "\n");
-                        value_changed = true;
-                        true
-                    }
-                    _ => false,
-                }
-            };
+            let edit = edit_input(state, code, modifiers, page_rows);
 
             // Cloned inside the borrow, dispatched outside it: a handler is downstream
             // code and may touch this very node, which would deadlock against the guard.
-            (handled, value_changed.then(|| state.content.clone()))
+            (
+                edit.handled,
+                edit.value_changed.then(|| state.content.clone()),
+            )
         };
 
         if handled {
             self.update_input_scroll(node)?;
-            if value_changed {
+            if value.is_some() {
                 self.register_layout_node(node)?;
             }
             self.inner.notify.notify_one();
@@ -360,6 +322,23 @@ impl Document {
         }
 
         Ok(handled)
+    }
+
+    /// Page motion sizes itself on the visible box, so it needs layout and a resolved style.
+    /// Both are read here, before any node borrow: resolving a style takes locks of its own,
+    /// and doing that under a `get_mut` guard is the deadlock this repo's rule exists for.
+    fn page_rows_for_key(
+        &self,
+        node: NodeId,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<usize> {
+        matches!(
+            motion_for_key(code, modifiers),
+            Some(Motion::PageUp | Motion::PageDown)
+        )
+        .then(|| self.input_page_rows(node))
+        .flatten()
     }
 
     /// How many content rows one page motion covers in an input, per the last layout.
@@ -629,6 +608,73 @@ fn column_offset_in_line(line: &str, column: u16) -> usize {
         col += width;
     }
     line.len()
+}
+
+struct InputEdit {
+    /// The input claimed the key, so no other default action sees it.
+    handled: bool,
+    /// An input measures on its content, so a value change is exactly what needs relayout,
+    /// and exactly what `on_input` reports.
+    value_changed: bool,
+}
+
+fn edit_input(
+    state: &mut InputState,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    page_rows: Option<usize>,
+) -> InputEdit {
+    // Shift is excluded deliberately: terminals report a capital as its uppercase
+    // char *plus* shift, so treating any modifier as a chord would stop capital
+    // letters from typing. Control and alt are what make a chord.
+    let chorded = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+
+    let mut value_changed = false;
+    let handled = if let Some(motion) = motion_for_key(code, modifiers) {
+        // Shift only reaches here having already been masked out of the binding
+        // lookup, so it names the same motion either way and decides one thing:
+        // whether the selection follows the cursor or is discarded by it.
+        let extend = modifiers.contains(KeyModifiers::SHIFT);
+        apply_motion(state, motion, extend, page_rows)
+    } else {
+        match code {
+            // Ctrl+A arrives as a plain letter like every control chord, so it has
+            // to be matched above the insert arm rather than beside it.
+            KeyCode::Char('a') | KeyCode::Char('A')
+                if modifiers.contains(KeyModifiers::CONTROL)
+                    && !modifiers.contains(KeyModifiers::ALT) =>
+            {
+                select_all(state);
+                true
+            }
+            // A control chord arrives as its plain letter — ctrl+a is `Char('a')`
+            // with control held, not a control character — so without this guard
+            // every ctrl and alt chord would type its letter into the input.
+            KeyCode::Char(ch) if !ch.is_control() && !chorded => {
+                replace_selection_or_insert(state, &ch.to_string());
+                value_changed = true;
+                true
+            }
+            KeyCode::Backspace => {
+                value_changed = delete_selection_or_previous_grapheme(state);
+                true
+            }
+            KeyCode::Delete => {
+                value_changed = delete_selection_or_next_grapheme(state);
+                true
+            }
+            KeyCode::Enter if state.multiline => {
+                replace_selection_or_insert(state, "\n");
+                value_changed = true;
+                true
+            }
+            _ => false,
+        }
+    };
+    InputEdit {
+        handled,
+        value_changed,
+    }
 }
 
 fn input_state(kind: &NodeKind, node: NodeId) -> Result<&InputState> {
