@@ -22,12 +22,23 @@ pub enum Side {
 /// Hovering focuses, so the tip also shows on hover. It is drawn over everything else and takes
 /// no space. It does not move to the other side at the screen edge, so pick `side` for where the
 /// content sits.
+///
+/// `style` is merged over the tip's own style.
 #[component]
-pub fn Tooltip(text: String, #[prop(default)] side: Side, children: Children) -> View {
+pub fn Tooltip(
+    text: String,
+    #[prop(default)] side: Side,
+    #[prop(default)] style: Style,
+    children: Children,
+) -> View {
     let theme = use_theme();
     let shown = state(false);
     let content = node_ref();
-    let tip = derived(move || tip_style(content.node(), side.get(), theme));
+    let tip = derived(move || {
+        let mut tip = tip_style(content.node(), side.get(), theme);
+        tip.merge(&style.get());
+        tip
+    });
 
     view! {
         box {

@@ -1,4 +1,4 @@
-use tuidom::style::{Color, FlexDirection, ResolvedColor, Style};
+use tuidom::style::{Color, EdgeInsets, FlexDirection, ResolvedColor, Style};
 use tuidom_ui::testing::Harness;
 use tuidom_ui::view;
 
@@ -80,4 +80,30 @@ fn the_tip_takes_the_theme_its_content_is_in() {
         doc.resolved_style(tip).unwrap().background,
         Some(ResolvedColor::red())
     );
+}
+
+#[test]
+fn the_style_prop_merges_over_the_tip() {
+    let mut h = Harness::new(16, 3, || {
+        install_theme(Theme::dark());
+        let mut column = Style::new();
+        column.flex_direction(FlexDirection::Column);
+        let mut wide = Style::new();
+        wide.padding(EdgeInsets::symmetric(3, 0));
+        view! {
+            box {
+                style: column.clone(),
+                text("other"),
+                Tooltip {
+                    text: "tip".to_string(),
+                    side: Side::Above,
+                    style: wide.clone(),
+                    box { test_id: "save", focusable: true, text("save") },
+                },
+            }
+        }
+    });
+    let save = h.find_attr("test_id", "save").unwrap();
+    h.focus(save);
+    assert_eq!(h.row(0).trim_end(), "   tip");
 }
