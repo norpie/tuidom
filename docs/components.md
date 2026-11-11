@@ -43,7 +43,9 @@ and `--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`
 `--destructive`, `--success`, `--warning`, `--border`, `--input` and `--ring`, with a
 `*-foreground` partner for those that text sits on. The names follow shadcn's theme variables,
 and the dark and light palettes are shadcn's neutral ones. The light one has an off-white
-background, so white cards and popovers stand apart from it without a border.
+background, so white cards and popovers stand apart from it without a border. Its secondary,
+muted and accent colors are darker than shadcn's, since theirs barely differ from that
+background.
 
 The **Shape** is the rest of the look:
 

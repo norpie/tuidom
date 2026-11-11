@@ -77,7 +77,8 @@ impl Palette {
     }
 
     /// shadcn's light neutral palette, on an off-white background so white cards and popovers
-    /// stand apart from it without a border.
+    /// stand apart from it without a border. Secondary, muted and accent are darker than
+    /// shadcn's, which are too close to that background to see.
     pub fn light() -> Self {
         Self {
             background: Color::oklch(0.96, 0.0, 0.0),
@@ -88,11 +89,11 @@ impl Palette {
             popover_foreground: Color::oklch(0.145, 0.0, 0.0),
             primary: Color::oklch(0.205, 0.0, 0.0),
             primary_foreground: Color::oklch(0.985, 0.0, 0.0),
-            secondary: Color::oklch(0.97, 0.0, 0.0),
+            secondary: Color::oklch(0.92, 0.0, 0.0),
             secondary_foreground: Color::oklch(0.205, 0.0, 0.0),
-            muted: Color::oklch(0.97, 0.0, 0.0),
+            muted: Color::oklch(0.92, 0.0, 0.0),
             muted_foreground: Color::oklch(0.556, 0.0, 0.0),
-            accent: Color::oklch(0.97, 0.0, 0.0),
+            accent: Color::oklch(0.92, 0.0, 0.0),
             accent_foreground: Color::oklch(0.205, 0.0, 0.0),
             destructive: Color::oklch(0.577, 0.245, 27.325),
             success: Color::oklch(0.627, 0.194, 149.214),
