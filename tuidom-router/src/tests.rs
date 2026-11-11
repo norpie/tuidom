@@ -442,3 +442,209 @@ fn a_kept_entry_takes_its_new_box_style_in_place() {
     assert_eq!(h.row(1).trim_end(), "   one");
     assert_eq!(h.find_attr("test_id", "inside"), Some(inside));
 }
+
+#[component]
+fn Scroller() -> View {
+    view! {
+        box {
+            test_id: "list",
+            style: style! { height: 2, width: 6, flex_direction: column, overflow_y: scroll },
+            text("1"), text("2"), text("3"), text("4"), text("5"),
+        }
+    }
+}
+
+/// Route 0 shows `retained` in the shell's slot, any other route shows `Other` there.
+fn retaining_harness<P, F>(route: Signal<u8>, retained: F) -> Harness
+where
+    P: tuidom_ui::ComponentProps,
+    F: Fn() -> P + Send + Sync + Clone + 'static,
+{
+    Harness::new(20, 3, move || {
+        let retained = retained.clone();
+        routed(move || {
+            if route.get() == 0 {
+                Chain::layout(shell).leaf(retained.clone()).retain()
+            } else {
+                Chain::layout(shell).leaf(other)
+            }
+        })
+    })
+}
+
+#[test]
+fn a_retained_leaf_comes_back_with_its_nodes_and_scroll_offset() {
+    let route = state(0u8);
+    let mut h = retaining_harness(route, || ScrollerProps::builder().build());
+    let list = h.find_attr("test_id", "list").unwrap();
+    h.document().scroll_to(list, 0, 2).unwrap();
+    assert!(h.row(0).starts_with("A:3"));
+
+    route.set(1);
+    assert_eq!(h.row(0).trim_end(), "A:other");
+    assert!(h.document().get_parent(list).is_some());
+
+    route.set(0);
+    assert!(h.row(0).starts_with("A:3"));
+    assert_eq!(h.find_attr("test_id", "list"), Some(list));
+    assert_eq!(h.document().scroll_offset(list).y, 2);
+}
+
+#[test]
+fn a_retained_leaf_takes_the_returning_chain_s_props() {
+    let route = state(0u8);
+    let title = state("one");
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || {
+            if route.get() == 0 {
+                let title = title.get();
+                Chain::layout(shell).leaf(move || page(title)).retain()
+            } else {
+                Chain::layout(shell).leaf(other)
+            }
+        })
+    });
+    let inside = h.find_attr("test_id", "inside").unwrap();
+
+    route.set(1);
+    h.row(0);
+    title.set("two");
+    route.set(0);
+    assert_eq!(h.row(0).trim_end(), "A:two");
+    assert_eq!(h.find_attr("test_id", "inside"), Some(inside));
+}
+
+#[test]
+fn a_leaf_that_is_not_retained_is_disposed_when_left() {
+    let route = state(0u8);
+    let mut h = harness(route);
+    let inside = h.find_attr("test_id", "inside").unwrap();
+
+    route.set(1);
+    h.row(0);
+    assert!(h.document().get_parent(inside).is_none());
+    route.set(0);
+    h.row(0);
+    assert_ne!(h.find_attr("test_id", "inside"), Some(inside));
+}
+
+#[test]
+fn focus_does_not_stay_in_a_hidden_retained_leaf() {
+    let route = state(0u8);
+    let mut h = retaining_harness(route, || page("one"));
+    let inside = h.find_attr("test_id", "inside").unwrap();
+    h.focus(inside);
+
+    route.set(1);
+    h.row(0);
+    assert_ne!(h.document().focused(), Some(inside));
+}
+
+#[test]
+fn a_retained_leaf_is_disposed_with_its_layout() {
+    let route = state(0u8);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || match route.get() {
+            0 => Chain::layout(shell).leaf(|| page("one")).retain(),
+            1 => Chain::layout(shell).leaf(other),
+            _ => Chain::leaf(other),
+        })
+    });
+    let inside = h.find_attr("test_id", "inside").unwrap();
+
+    route.set(1);
+    h.row(0);
+    assert!(h.document().get_parent(inside).is_some());
+
+    route.set(2);
+    h.row(0);
+    assert!(h.document().get_parent(inside).is_none());
+
+    route.set(0);
+    assert_eq!(h.row(0).trim_end(), "A:one");
+    assert_ne!(h.find_attr("test_id", "inside"), Some(inside));
+}
+
+#[test]
+fn a_hidden_retained_trap_leaves_the_document_interactive() {
+    let route = state(0u8);
+    let mut h = Harness::new(20, 3, move || {
+        routed(move || {
+            if route.get() == 0 {
+                Chain::layout(shell)
+                    .leaf(|| page("one"))
+                    .trap_focus()
+                    .retain()
+            } else {
+                Chain::layout(shell).leaf(other)
+            }
+        })
+    });
+    let inside = h.find_attr("test_id", "inside").unwrap();
+    let outside = h.find_attr("test_id", "outside").unwrap();
+    assert_eq!(h.document().focused(), Some(inside));
+
+    route.set(1);
+    h.row(0);
+    assert_eq!(h.document().active_focus_context(), h.document().root());
+    assert!(!h.document().is_inert(outside).unwrap());
+
+    route.set(0);
+    h.row(0);
+    assert_eq!(h.document().focused(), Some(inside));
+    assert!(h.document().is_inert(outside).unwrap());
+}
+
+#[test]
+fn a_dialog_left_open_in_a_retained_leaf_traps_only_while_shown() {
+    let route = state(0u8);
+    let mut h = retaining_harness(route, || DialogProps::builder().build());
+    let dialog = h.find_attr("test_id", "dialog").unwrap();
+    let outside = h.find_attr("test_id", "outside").unwrap();
+    assert_eq!(h.document().focused(), Some(dialog));
+
+    route.set(1);
+    h.row(0);
+    assert!(!h.document().is_inert(outside).unwrap());
+    h.focus(outside);
+
+    route.set(0);
+    h.row(0);
+    assert_eq!(h.document().focused(), Some(dialog));
+    assert!(h.document().is_inert(outside).unwrap());
+}
+
+#[component]
+fn Numbers() -> View {
+    let mut style = style! { width: 6, height: 2 };
+    style.flex_shrink(0.0);
+    tuidom_ui::virtual_list(
+        style,
+        1,
+        0,
+        || 100,
+        |i| view! { box { test_id: format!("n{i}"), text(i.to_string()) } },
+    )
+    .into()
+}
+
+#[test]
+fn a_hidden_virtual_list_keeps_its_window() {
+    let route = state(0u8);
+    let mut h = retaining_harness(route, || NumbersProps::builder().build());
+    let first = h.find_attr("test_id", "n0").unwrap();
+    let content = h.document().get_parent(first).unwrap();
+    let container = h.document().get_parent(content).unwrap();
+    h.document().scroll_to(container, 0, 50).unwrap();
+    assert!(h.row(0).starts_with("A:50"));
+    let fiftieth = h.find_attr("test_id", "n50").unwrap();
+
+    route.set(1);
+    h.row(0);
+    assert_eq!(h.find_attr("test_id", "n50"), Some(fiftieth));
+    assert_eq!(h.find_attr("test_id", "n0"), None);
+
+    route.set(0);
+    assert!(h.row(0).starts_with("A:50"));
+    assert_eq!(h.find_attr("test_id", "n50"), Some(fiftieth));
+}

@@ -14,7 +14,7 @@ type Reassign = Arc<dyn Fn(&Kept) + Send + Sync>;
 /// What the chain diff compares at each position. A leaf mounts with no slot to fill, so the
 /// same component as a layout and as a leaf are different entries. A focus context opens when
 /// its box mounts, so trapping and not trapping are different entries too.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Identity {
     props: TypeId,
     pub(crate) layout: bool,
@@ -31,6 +31,8 @@ pub(crate) struct Entry {
     /// Build the props again and assign them into a mounted entry's kept props.
     pub(crate) reassign: Reassign,
     style: Option<Style>,
+    /// Hide the leaf instead of disposing it when navigation leaves it.
+    pub(crate) retain: bool,
 }
 
 impl Entry {
@@ -85,6 +87,7 @@ impl Entry {
             mount,
             reassign,
             style: None,
+            retain: false,
         }
     }
 
@@ -107,7 +110,8 @@ impl Entry {
 /// Each entry is a closure building a component's props, called when the entry mounts. A layout
 /// is a component taking `children`, which the chain fills with the next entry. Each entry
 /// mounts inside a box of its own that grows to fill the slot it is placed in, as a column;
-/// [`style`](Chain::style) replaces that box's style.
+/// [`style`](Chain::style) replaces that box's style. A [retained](Chain::retain) leaf is hidden
+/// rather than disposed when navigation leaves it.
 ///
 /// ```ignore
 /// let chain = Chain::layout(|| ShellProps::builder().build())
@@ -155,6 +159,20 @@ impl Chain {
     /// Trap focus inside the leaf's box while it is mounted. The box is made a stacking context.
     pub fn trap_focus(mut self) -> Self {
         set_trap_focus(&mut self.entries);
+        self
+    }
+
+    /// Keep the leaf mounted but hidden when navigation leaves it, and show it again, with its
+    /// nodes and their scroll offsets, focus and selection as they were, when navigation comes
+    /// back to the same component in the same slot. Its props are assigned from the returning
+    /// chain.
+    ///
+    /// A retained leaf lives in the slot of the layout that held it and is disposed with that
+    /// layout. While hidden, any focus context in it traps nothing.
+    pub fn retain(mut self) -> Self {
+        if let Some(entry) = self.entries.last_mut() {
+            entry.retain = true;
+        }
         self
     }
 }
