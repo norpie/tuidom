@@ -8,8 +8,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use tuidom::Document;
 use tuidom::event::KeyCode;
 use tuidom::headless::HeadlessRuntime;
+use tuidom::style::{FlexDirection, Length, Style};
 
 use super::{NodeRef, View, mount};
+use crate::testing::Harness;
 use crate::{Callback, Derived, Signal, derived, state};
 
 fn row0(rt: &HeadlessRuntime) -> String {
@@ -32,7 +34,7 @@ struct Pair {
 fn EveryName(n: i32) -> View {
     let base = state(10);
     let doubled = derived(move || n * 2);
-    let tripled = crate::derived!(n.get() * 3);
+    let tripled = crate::derived!(n * 3);
     let annotated: Signal<i32> = same(crate::signal!(n));
     let total: Derived<(i32, i32, i32, i32, i32, Pair)> =
         derived(move || (n, base, doubled, tripled, annotated, Pair { n }));
@@ -251,4 +253,129 @@ fn callback_and_node_ref_props_are_not_signal_names() {
     .unwrap();
 
     assert_eq!(seen.load(Ordering::SeqCst), 4);
+}
+
+fn column() -> Style {
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style
+}
+
+#[crate::component]
+fn Stepper(value: Signal<i32>) -> View {
+    crate::view! {
+        box {
+            on_click: move || value.update(|v| *v += 10),
+            text(format!("step {}", value.get())),
+        }
+    }
+}
+
+#[crate::component(reactive)]
+fn ReactiveBoard(start: i32) -> View {
+    let count = state(start);
+    let items = state(vec![10, 20]);
+    let doubled = crate::derived!(count * 2);
+    crate::view! {
+        box {
+            style: column(),
+            focusable: true,
+            on_key_press: move |ev| {
+                if ev.code == KeyCode::Char('+') {
+                    count += 1;
+                    let next = count;
+                    items.update(|i| i.push(next));
+                }
+            },
+            text(count),
+            text(doubled),
+            if count > 1 { "big" } else { "small" },
+            match count % 2 {
+                0 => "even",
+                _ => "odd",
+            },
+            each _, item in items key = item { text(item) },
+            Stepper { value: count },
+        }
+    }
+}
+
+#[crate::component]
+fn PlainBoard(start: i32) -> View {
+    let count = state(start.get());
+    let items = state(vec![10, 20]);
+    let doubled = derived(move || count.get() * 2);
+    crate::view! {
+        box {
+            style: column(),
+            focusable: true,
+            on_key_press: move |ev| {
+                if ev.code == KeyCode::Char('+') {
+                    count.update(|c| *c += 1);
+                    let next = count.get();
+                    items.update(|i| i.push(next));
+                }
+            },
+            text(count.get()),
+            text(doubled.get()),
+            if count.get() > 1 { "big" } else { "small" },
+            match count.get() % 2 {
+                0 => "even",
+                _ => "odd",
+            },
+            each _, item in items.get() key = item { text(item) },
+            Stepper { value: count },
+        }
+    }
+}
+
+fn drive(root: impl FnOnce() -> View + Send + Sync + 'static) -> Vec<String> {
+    let mut h = Harness::new(20, 8, root);
+    let mut screens = vec![h.screen()];
+    h.press(KeyCode::Tab);
+    h.press(KeyCode::Char('+'));
+    screens.push(h.screen());
+    h.click_text("step");
+    screens.push(h.screen());
+    screens
+}
+
+#[test]
+fn a_reactive_template_behaves_like_its_form_a_twin() {
+    let reactive = drive(|| crate::view! { ReactiveBoard { start: 0 } });
+    let plain = drive(|| crate::view! { PlainBoard { start: 0 } });
+
+    assert_eq!(reactive, plain);
+    assert_eq!(
+        reactive,
+        [
+            "0\n0\nsmall\neven\n10\n20\nstep 0\n",
+            "1\n2\nsmall\nodd\n10\n20\n1\nstep 1",
+            "11\n22\nbig\nodd\n10\n20\n1\nstep 11",
+        ]
+    );
+}
+
+#[crate::component(reactive)]
+fn EchoField() -> View {
+    let name = state(String::new());
+    let mut field = Style::new();
+    field.width(Length::Cells(8));
+    field.height(Length::Cells(1));
+    crate::view! {
+        box {
+            style: column(),
+            input { style: field.clone(), bind_value: name },
+            text(name),
+        }
+    }
+}
+
+#[test]
+fn bind_value_takes_the_handle_in_a_reactive_template() {
+    let mut h = Harness::new(8, 2, || crate::view! { EchoField {} });
+
+    h.press(KeyCode::Tab);
+    h.type_text("hey");
+    assert_eq!(h.row(1), "hey");
 }

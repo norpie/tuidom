@@ -106,8 +106,7 @@ use syn::{
 #[proc_macro]
 pub fn view(input: TokenStream) -> TokenStream {
     let node = syn::parse_macro_input!(input as Node);
-    let expr = node.expand();
-    quote! { ::tuidom_ui::View::from(#expr) }.into()
+    node.lower().into()
 }
 
 /// Turn a function into a reusable component.
@@ -1115,6 +1114,12 @@ fn is_input_only(name: &str) -> bool {
 }
 
 impl Node {
+    /// The template as a `View` expression.
+    fn lower(&self) -> TokenStream2 {
+        let expr = self.expand();
+        quote! { ::tuidom_ui::View::from(#expr) }
+    }
+
     fn expand(&self) -> TokenStream2 {
         match self {
             Node::Text { content, style } => {

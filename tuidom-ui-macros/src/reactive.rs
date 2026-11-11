@@ -1,8 +1,9 @@
 //! The body rewrite behind `#[component(reactive)]`: signal names used as values become reads.
 //!
 //! Names are resolved lexically, the way the compiler would: a binding of the same name in an
-//! inner scope hides a signal until that scope ends. Macro calls and nested items are skipped,
-//! so `signal!(x)` passes its argument through untouched.
+//! inner scope hides a signal until that scope ends. Nested items are skipped. `view!` and
+//! `derived!` are rewritten and lowered here; other macro calls are skipped, so `signal!(x)`
+//! passes its argument through untouched.
 //!
 //! A `with` or `update` closure runs under the runtime lock, where reading another signal can
 //! deadlock. So everything a rewritten chain or write evaluates is moved into a local ahead of
@@ -13,13 +14,16 @@ use std::mem;
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote_spanned};
+use syn::parse::{ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    BinOp, Block, Expr, ExprMethodCall, ExprPath, FieldValue, Ident, Item, Local, Pat, Stmt, Token,
-    Type, token,
+    BinOp, Block, Expr, ExprMethodCall, ExprPath, FieldValue, Ident, Item, Local, Macro, Pat, Stmt,
+    Token, Type, token,
 };
+
+use crate::{ElseBranch, IfNode, Node};
 
 /// Rewrite `block`, the body of a component whose props named `signals` are signals.
 pub(crate) fn rewrite_body(
@@ -95,6 +99,126 @@ impl Rewriter {
         match syn::parse2(tokens) {
             Ok(rewritten) => *expr = rewritten,
             Err(error) => self.fail(error),
+        }
+    }
+
+    /// A rewritten and lowered `view!` or `derived!` call, or `None` to leave the macro as is.
+    fn lower_macro(&mut self, mac: &Macro) -> Option<Expr> {
+        let name = mac.path.segments.last()?.ident.to_string();
+        let lowered = match name.as_str() {
+            "view" => {
+                let mut node: Node = self.parse(mac.parse_body())?;
+                self.visit_node(&mut node);
+                node.lower()
+            }
+            "derived" => {
+                let mut expr = self.parse(parse_derived.parse2(mac.tokens.clone()))?;
+                self.visit_expr_mut(&mut expr);
+                quote_spanned! {mac.path.span()=> ::tuidom_ui::derived(move || #expr) }
+            }
+            _ => return None,
+        };
+        self.parse(syn::parse2(lowered))
+    }
+
+    fn parse<T>(&mut self, parsed: syn::Result<T>) -> Option<T> {
+        parsed.map_err(|error| self.fail(error)).ok()
+    }
+
+    fn visit_node(&mut self, node: &mut Node) {
+        match node {
+            Node::Text { content, style } => {
+                self.visit_expr_mut(content);
+                if let Some(style) = style {
+                    self.visit_expr_mut(style);
+                }
+            }
+            Node::Frames {
+                list,
+                interval,
+                style,
+            } => {
+                self.visit_expr_mut(list);
+                self.visit_expr_mut(interval);
+                if let Some(style) = style {
+                    self.visit_expr_mut(style);
+                }
+            }
+            Node::Hole(expr) => self.visit_expr_mut(expr),
+            Node::If(node) => self.visit_if_node(node),
+            Node::Match(node) => {
+                self.visit_expr_mut(&mut node.scrutinee);
+                for arm in &mut node.arms {
+                    self.in_scope(|this| {
+                        this.bind(&arm.pat, false);
+                        if let Some(guard) = &mut arm.guard {
+                            this.visit_expr_mut(guard);
+                        }
+                        this.visit_node(&mut arm.body);
+                    });
+                }
+            }
+            Node::Each(node) => {
+                self.visit_expr_mut(&mut node.collection);
+                self.in_scope(|this| {
+                    this.bind(&node.index_pat, false);
+                    this.bind(&node.value_pat, false);
+                    if let Some(key) = &mut node.key {
+                        this.visit_expr_mut(key);
+                    }
+                    this.visit_nodes(&mut node.body);
+                });
+            }
+            Node::Portal(children) => self.visit_nodes(children),
+            Node::Component {
+                props, children, ..
+            } => {
+                for prop in props {
+                    self.visit_handle_or_value(&mut prop.value);
+                }
+                self.visit_nodes(children);
+            }
+            Node::Element {
+                attrs, children, ..
+            } => {
+                for attr in attrs {
+                    if attr.name == "bind_value" {
+                        self.visit_handle_or_value(&mut attr.value);
+                    } else {
+                        self.visit_expr_mut(&mut attr.value);
+                    }
+                }
+                self.visit_nodes(children);
+            }
+        }
+    }
+
+    fn visit_nodes(&mut self, nodes: &mut [Node]) {
+        for node in nodes {
+            self.visit_node(node);
+        }
+    }
+
+    fn visit_if_node(&mut self, node: &mut IfNode) {
+        self.in_scope(|this| {
+            this.visit_condition(&mut node.cond);
+            this.visit_nodes(&mut node.then_branch);
+        });
+        match &mut node.else_branch {
+            Some(ElseBranch::If(inner)) => self.visit_if_node(inner),
+            Some(ElseBranch::Block(children)) => self.visit_nodes(children),
+            None => {}
+        }
+    }
+
+    /// Where a template takes a signal, a bare signal name passes the handle rather than a read.
+    fn visit_handle_or_value(&mut self, value: &mut Expr) {
+        if let Expr::Path(path) = value
+            && let Some(ident) = self.signal_ident(path).cloned()
+        {
+            self.uses.push(ident);
+        } else {
+            self.visit_expr_mut(value);
         }
     }
 
@@ -288,7 +412,12 @@ impl VisitMut for Rewriter {
                 match stmt {
                     Stmt::Local(local) => this.visit_local(local),
                     Stmt::Expr(expr, _) => this.visit_expr_mut(expr),
-                    Stmt::Item(_) | Stmt::Macro(_) => {}
+                    Stmt::Macro(stmt_macro) => {
+                        if let Some(expr) = this.lower_macro(&stmt_macro.mac) {
+                            *stmt = Stmt::Expr(expr, stmt_macro.semi_token);
+                        }
+                    }
+                    Stmt::Item(_) => {}
                 }
             }
         });
@@ -356,7 +485,11 @@ impl VisitMut for Rewriter {
                 this.visit_block_mut(&mut expr_while.body);
             }),
             Expr::Let(expr_let) => self.visit_expr_mut(&mut expr_let.expr),
-            Expr::Macro(_) => {}
+            Expr::Macro(expr_macro) => {
+                if let Some(lowered) = self.lower_macro(&expr_macro.mac) {
+                    *expr = lowered;
+                }
+            }
             _ => visit_mut::visit_expr_mut(self, expr),
         }
     }
@@ -394,6 +527,15 @@ fn starts_with_own_method(expr: &Expr) -> bool {
         Expr::Index(index) => starts_with_own_method(&index.expr),
         _ => false,
     }
+}
+
+/// `derived!`'s argument: one expression and an optional trailing comma.
+fn parse_derived(input: ParseStream) -> syn::Result<Expr> {
+    let expr = input.parse()?;
+    if input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+    }
+    Ok(expr)
 }
 
 fn hoisted_lets(hoisted: &Hoisted, root: &Ident) -> TokenStream {
