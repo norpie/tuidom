@@ -19,18 +19,24 @@ use crate::event::{
     convert_key_event,
 };
 use crate::lock;
-use crate::render::Renderer;
+use crate::render::{Renderer, Terminal};
 use crate::runtime_event::{
     RuntimeEvent, RuntimeEventState, drain_and_coalesce, process_runtime_event, take_pending_resize,
 };
+use crate::terminal;
 
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
+    let terminal = Terminal::new()?;
+    // Before any task starts: the probe reads the terminal's replies itself, and crossterm's
+    // reader would take them for input.
+    *lock::mutex(&doc.inner.terminal_info) = Some(terminal::probe().await);
+
     let mut tasks = JoinSet::new();
 
     tasks.spawn(input_task(doc.clone()));
     tasks.spawn(event_task(doc.clone()));
-    tasks.spawn(render_task(doc.clone()));
+    tasks.spawn(render_task(doc.clone(), terminal));
 
     while let Some(result) = tasks.join_next().await {
         match result {
@@ -121,9 +127,9 @@ async fn event_task(doc: Document) -> io::Result<()> {
     Ok(())
 }
 
-async fn render_task(doc: Document) -> io::Result<()> {
+async fn render_task(doc: Document, terminal: Terminal) -> io::Result<()> {
     let (mut screen_w, mut screen_h) = crossterm::terminal::size()?;
-    let mut renderer = Renderer::new(screen_w, screen_h)?;
+    let mut renderer = Renderer::new(terminal, screen_w, screen_h);
     let mut next_frame_at = None;
     let mut next_anim_frame_at = None;
 

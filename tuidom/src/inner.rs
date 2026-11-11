@@ -17,6 +17,7 @@ use crate::node::{NodeData, NodeLayout, ScrollOffset};
 use crate::performance::{PerformanceState, StyleCounters};
 use crate::runtime_event::RuntimeEvent;
 use crate::style::{Color, Style};
+use crate::terminal::TerminalInfo;
 
 /// Styles merged into a node's resolved style while it is in a pseudo-state.
 ///
@@ -327,6 +328,9 @@ pub(crate) struct DocumentInner {
     /// detected. It is an assumption used for resolving colors and blending translucent ones —
     /// never a color that gets painted.
     pub terminal_background: Mutex<Color>,
+
+    /// What the probe in [`Document::run`](crate::Document::run) found out about the terminal.
+    pub terminal_info: Mutex<Option<TerminalInfo>>,
 
     /// The foreground of every node whose `color` is unset, evaluated at each such node.
     pub default_color: Mutex<Arc<Color>>,

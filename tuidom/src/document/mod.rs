@@ -150,6 +150,7 @@ impl Document {
                 window_blur_listeners: Mutex::new(Vec::new()),
                 color_vars: Mutex::new(HashMap::new()),
                 terminal_background: Mutex::new(Color::black()),
+                terminal_info: Mutex::new(None),
                 default_color: Mutex::new(Arc::new(Color::white())),
                 flush_hook: RwLock::new(None),
             }),

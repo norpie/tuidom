@@ -8,7 +8,7 @@ mod terminal;
 use std::io;
 use std::time::Duration;
 
-use terminal::Terminal;
+pub(crate) use terminal::Terminal;
 pub(crate) use terminal::{flush_changes_into, flush_full_into, restore_for_panic};
 
 use crate::document::Document;
@@ -110,15 +110,15 @@ pub(crate) struct Renderer {
 }
 
 impl Renderer {
-    /// Create a new renderer with screen-sized grids.
-    pub fn new(width: u16, height: u16) -> io::Result<Self> {
-        Ok(Self {
-            terminal: Terminal::new()?,
+    /// Create a renderer drawing to `terminal`, with screen-sized grids.
+    pub fn new(terminal: Terminal, width: u16, height: u16) -> Self {
+        Self {
+            terminal,
             old_grid: grid::Grid::new(width, height),
             new_grid: grid::Grid::new(width, height),
             old_clear_base: FrameClearBase::default(),
             rgb_cache: RgbCache::new(),
-        })
+        }
     }
 
     /// Paint the laid-out document into the frame being built.

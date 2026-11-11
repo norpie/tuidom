@@ -1142,6 +1142,7 @@ dependencies = [
  "dashmap",
  "palette",
  "rustc-hash",
+ "rustix",
  "taffy",
  "thiserror",
  "tokio",
