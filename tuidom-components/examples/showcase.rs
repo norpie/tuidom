@@ -12,7 +12,6 @@
 //! q                 — quit (outside a text field)
 
 use std::collections::HashSet;
-use tuidom::NodeKindView;
 use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Style};
 use tuidom_components::{
@@ -528,11 +527,7 @@ async fn main() -> std::io::Result<()> {
         let doc = use_document().expect("an App body has a document");
         let quit = doc.clone();
         doc.on_key_press(doc.root(), move |key| {
-            // Keys typed into a text field bubble here too; they are text, not shortcuts.
-            let typing = quit
-                .get_node(key.target())
-                .is_some_and(|node| matches!(node.kind, NodeKindView::Input { .. }));
-            if typing {
+            if key.edits_input() {
                 return;
             }
             match key.code {

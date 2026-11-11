@@ -9,10 +9,9 @@
 //! Escape        — back
 //! q             — quit
 
-use tuidom::NodeKindView;
 use tuidom::event::KeyCode;
+use tuidom::style;
 use tuidom::style::{Color, Style};
-use tuidom::{NodeId, style};
 use tuidom_router::{Chain, routed};
 use tuidom_ui::{
     App, Children, Signal, View, component, provide_context, state, use_context, use_document, view,
@@ -224,18 +223,12 @@ fn chain(route: Route) -> Chain {
     }
 }
 
-fn is_input(doc: &tuidom::Document, node: NodeId) -> bool {
-    doc.get_node(node)
-        .is_some_and(|node| matches!(node.kind, NodeKindView::Input { .. }))
-}
-
 fn mail(nav: Nav) -> View {
     provide_context(nav);
     let doc = use_document().expect("a component body has a document");
     let keys = doc.clone();
     doc.on_key_press(doc.root(), move |key| {
-        // Keys typed into the name field bubble here too; they are text, not shortcuts.
-        if is_input(&keys, key.target()) {
+        if key.edits_input() {
             return;
         }
         let reading = match nav.route.get() {

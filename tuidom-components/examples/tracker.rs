@@ -12,7 +12,6 @@
 
 use std::collections::HashSet;
 use std::iter;
-use tuidom::NodeKindView;
 use tuidom::event::KeyCode;
 use tuidom::style::{AlignItems, EdgeInsets, FlexDirection, FlexGap, Length, Overflow, Style};
 use tuidom_components::{
@@ -621,11 +620,7 @@ fn Screen() -> View {
     let doc = use_document().expect("a component body has a document");
     let keys = doc.clone();
     doc.on_key_press(doc.root(), move |key| {
-        // Keys typed into a text field bubble here too; they are text, not shortcuts.
-        let typing = keys
-            .get_node(key.target())
-            .is_some_and(|node| matches!(node.kind, NodeKindView::Input { .. }));
-        if typing || app.creating.get() || app.help.get() {
+        if key.edits_input() || app.creating.get() || app.help.get() {
             return;
         }
         match key.code {
