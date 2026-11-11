@@ -54,7 +54,7 @@
 - [x] Cursor style metadata (document-wide default, per-node override):
   - [x] Shape: block, underline, bar
   - [x] Cursor color follows the focused node's resolved foreground color
-- [ ] Multiple cursors: users sync manually via events (not built-in)
+- [x] Multiple cursors are **not built in**: downstream syncs several through events
 
 ## Focus Management
 
@@ -162,7 +162,11 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
 - [x] Unchanged writes are no-ops: `set_text_content` with identical content triggers no relayout or re-render
 - [x] Completely passive while idle — no polling, no fixed tick rate
 - [x] Active rendering only during animations — drives frames until animation completes, then returns to passive
-- [ ] User-facing subscribe API for node/document changes
+- [x] Change observation is `on_post_frame`, which fires after every rendered frame, read
+      together with a snapshot
+  - [x] **No finer-grained subscription API**: mutations between frames collapse into one
+        post-frame event, so it would only add *what* changed, and nothing is built
+        against it yet
 
 ## Layout
 
@@ -312,7 +316,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
       a handler checks the key's target
 - [x] `stop_propagation()` to halt bubbling
 - [x] Sync handlers only — user spawns for async
-- [ ] Events:
+- [x] Events:
   - [x] Keyboard: key press
     - [x] Modifiers: shift, control, alt — held state on the event, so chords are
           bindable downstream
@@ -323,7 +327,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
             held, not a control character — so the modifier is what distinguishes it
       - [x] Shift is set on every capital, so it never counts as a chord for text entry
   - [x] Terminal resize
-  - [ ] Keyboard: key down, key up — **not planned**: key release needs the kitty
+  - [x] Keyboard: key down, key up — **not planned**: key release needs the kitty
         keyboard protocol, so the API would silently never fire on most terminals.
         `Repeat` is dropped alongside `Release` for the same reason.
   - [x] Mouse: click, mouse down, mouse up, wheel (raw input)
@@ -446,18 +450,19 @@ What stays true here regardless of the macro:
 
 ## Debugging & Developer Tools
 
-- [ ] Tracing integration (`tracing` crate) for internal insight:
-  - [x] `tracing` is the logging dependency — but only as `error!` on caught handler
-        panics and failed default actions. None of the instrumentation below exists yet.
-  - [ ] Event dispatch
-  - [ ] Layout calculations
-  - [ ] Render cycles
-  - [ ] Style resolution
-  - [ ] Animation ticks
-- [ ] Snapshot serialization (bincode for speed):
-  - [ ] Full document snapshot for comparison/testing (no restore — handlers can't be serialized)
-  - [ ] Per-node serialization: `doc.serialize_node(node_id)` for external storage/comparison
-  - [ ] Captures: DOM structure, styles, text content, computed layout, focus/selection state
+- [x] Tracing integration (`tracing` crate) for internal insight:
+  - [x] `error!` on caught handler panics and failed default actions
+  - [x] `debug` spans on per-frame paths only, never per-node ones: `frame`, `dispatch`,
+        `layout`, `render`, `animation_upkeep`, and the signal runtime's `flush`
+  - [x] Style resolution is counted rather than spanned: `style_resolves` and
+        `style_cache_misses` on `FrameMetrics`, where a miss count staying above zero means
+        something invalidates every frame
+- [x] `Debug` on `Document` reads only lock-free fields, so formatting it never deadlocks
+- [x] Snapshots: `doc.snapshot()` and `doc.snapshot_node(id)`
+  - [x] Read under one tree guard, so the nodes and document-level state are mutually consistent
+  - [x] Captures DOM structure, declared and resolved styles, text content, computed layout,
+        focus, selection, scroll offsets, and inert and disabled state
+  - [x] Plain owned data, not serialized — no restore, since handlers cannot be serialized
 - [x] Public performance metrics API:
   - [x] FPS / frame time
   - [ ] Node count — `layout_node_count` exists but is crate-internal, for tests
@@ -515,7 +520,8 @@ What stays true here regardless of the macro:
   - [x] `on_cleanup`, and `spawn` for tasks aborted with their scope
   - [x] Context by type with `provide_context` / `use_context`, nearer providers shadowing
   - [x] Off-task writes deferred to the event task and flushed on the next frame
-  - [ ] A resource type for async data (the pattern is a task plus a signal)
+  - [x] No resource type: async data is a task and a signal holding "loading" or the result,
+        documented as a pattern
 - [x] View layer binding signals to engine nodes, one effect per bound property
   - [x] Dynamic blocks rebuild their content in place on a change
   - [x] Keyed lists move surviving items' nodes, keeping their runtime state
@@ -574,7 +580,7 @@ What stays true here regardless of the macro:
 - [x] Each entry in a box of its own, with a replaceable style
 - [x] Opt-in focus traps per entry, kept in step with the focus stack
 - [x] Retained leaves, hidden in their slot and shown again as they were
-- [ ] History, path matching and leave guards (patterns in the guide, not features)
+- [x] No history, path matching or leave guards: these are app code, with patterns in the guide
 
 ## Future Considerations
 
