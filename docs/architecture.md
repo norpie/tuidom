@@ -116,20 +116,33 @@ render_task   notify → layout → paint → diff → flush
 They are separate tasks for one reason: **the render task must never run user code.** A
 handler that blocks, panics, or takes a lock cannot be allowed to stall the frame. So
 listeners run on the event task, and anything the renderer wants to report — the
-post-frame event, transition-end, animation-end — is pushed back onto the runtime queue to
-be dispatched there, in order with input.
+post-frame event, transition-end, animation-end, a scroll offset that a relayout re-clamped —
+is pushed back onto the runtime queue to be dispatched there, in order with input.
+
+The event and render tasks run in parallel, but never over the same changes. The event task
+processes each runtime event, every handler it runs and every change those make, while
+holding a frame gate, and the render task holds the same gate from layout through paint. So a frame
+shows the document as it stood between two events, never partway through one: a handler
+that adds a node and then styles it never has the unstyled node drawn. The gate is released
+before the diff and flush, so a slow terminal write does not hold up input, and it is taken
+per event, so a burst of input still lets frames in between.
+
+The gate covers the event task. Calls made directly on a `Document` from another task or
+thread each land whole, but a group of them can be split across two frames.
 
 A frame, once the render task wakes:
 
 1. **Wait for a slot** if `set_max_fps` capped the rate. Uncapped by default.
-2. **Layout** — `compute_layout` runs taffy and publishes a new snapshot.
-3. **Paint** — walk the tree in paint order into a fresh `Grid` of cells, applying scroll
+2. **Take the frame gate**, waiting for the event task to finish the event it is on.
+3. **Layout** — `compute_layout` runs taffy and publishes a new snapshot.
+4. **Paint** — walk the tree in paint order into a fresh `Grid` of cells, applying scroll
    offsets as translations, clipping to scrollports, culling anything outside its clip.
-4. **Diff** — compare the new grid against the previous one, cell by cell, producing a
+   The gate is released here.
+5. **Diff** — compare the new grid against the previous one, cell by cell, producing a
    change list.
-5. **Flush** — write escape sequences for the changes. If more than a third of cells
+6. **Flush** — write escape sequences for the changes. If more than a third of cells
    changed, a full redraw is cheaper than the change list, and the renderer switches.
-6. **Record and queue** — frame metrics go to the performance API, and the post-frame
+7. **Record and queue** — frame metrics go to the performance API, and the post-frame
    event goes on the runtime queue.
 
 Then the grids swap: this frame's becomes next frame's comparison basis.

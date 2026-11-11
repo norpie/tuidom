@@ -72,7 +72,7 @@ fn render_grid(
     rgb_cache: &mut RgbCache,
     clear_grid: bool,
 ) -> RenderGridOutput {
-    // Sits here rather than on `Renderer::render_frame` so the headless runtime, which
+    // Sits here rather than on `Renderer::paint` so the headless runtime, which
     // reaches paint without going through a `Renderer`, is instrumented by the same span.
     let _span = tracing::debug_span!("render", clear_grid).entered();
 
@@ -121,9 +121,20 @@ impl Renderer {
         })
     }
 
-    /// Render a single frame: layout (already done), paint, diff, flush.
-    pub fn render_frame(&mut self, doc: &Document) -> io::Result<RenderMetrics> {
-        let output = render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache);
+    /// Paint the laid-out document into the frame being built.
+    ///
+    /// Separate from flushing so the caller can stop excluding document changes once the
+    /// frame is painted, before the terminal write.
+    pub fn paint(&mut self, doc: &Document) -> RenderGridOutput {
+        render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache)
+    }
+
+    /// Diff the painted frame against the previous one and flush the changes.
+    pub fn flush_diffed(
+        &mut self,
+        doc: &Document,
+        output: RenderGridOutput,
+    ) -> io::Result<RenderMetrics> {
         let grid_stats = output.stats;
         let cursor = output.cursor;
 
@@ -186,9 +197,12 @@ impl Renderer {
         self.old_clear_base = FrameClearBase::default();
     }
 
-    /// Render a full-screen redraw (e.g. after resize) — skips diffing.
-    pub fn render_full(&mut self, doc: &Document) -> io::Result<RenderMetrics> {
-        let output = render_into_grid(doc, &mut self.new_grid, &mut self.rgb_cache);
+    /// Flush the painted frame as a full-screen redraw (e.g. after resize), skipping the diff.
+    pub fn flush_whole(
+        &mut self,
+        doc: &Document,
+        output: RenderGridOutput,
+    ) -> io::Result<RenderMetrics> {
         let grid_stats = output.stats;
         let cursor = output.cursor;
 

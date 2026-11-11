@@ -78,7 +78,11 @@ Invariants that reading any single file will not teach:
 - Default actions run **after** listeners. That is what makes `prevent_default` possible,
   and why observing engine-driven state needs its own event rather than inference.
 - The render task never runs user code. Events it produces (post-frame, transition-end,
-  animation-end) go through the runtime queue so handlers run on the event task.
+  animation-end, scroll re-clamps) go through the runtime queue so handlers run on the event
+  task.
+- The event task holds the frame gate per runtime event, and the render task from layout
+  through paint, so no frame shows an event half applied. Anything that runs user code on the
+  event task has to go through `process_gated` in `event_loop.rs`.
 - `#![warn(missing_docs)]` is on. Public items need doc comments.
 - Tests live in-crate next to the code; `tuidom/tests/` is empty on purpose. Tests may
   `unwrap`; `src/` may not.

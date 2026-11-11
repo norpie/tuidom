@@ -215,6 +215,12 @@ pub(crate) struct DocumentInner {
     /// Coordinates multi-node tree mutations with tree readers.
     pub tree_mutation: RwLock<()>,
 
+    /// Held by the event task while it processes one runtime event, and by the render task
+    /// while it lays out and paints, so a frame never shows an event's changes half applied.
+    ///
+    /// Async and fair: neither side can starve the other, and waiting never blocks a thread.
+    pub frame_gate: tokio::sync::Mutex<()>,
+
     /// Notification signal — woken when DOM mutations require a re-render.
     pub notify: Notify,
 

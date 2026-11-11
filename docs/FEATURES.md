@@ -306,8 +306,11 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Affects cursor positioning in Input — the cursor's cell column is the display
         width of the line prefix, and it takes the width of the grapheme it sits on
   - [ ] Avoid hardcoding LTR assumptions — prepare for future bidi support
-- [ ] A frame never shows a DOM change half applied; today the render task can draw while a
-      handler is partway through mounting
+- [x] A frame never shows a DOM change half applied: the render task lays out and paints only
+      between two runtime events, never while one's handlers are partway through
+  - [x] Per event, so a burst of input still lets frames in between
+  - [x] Direct `Document` calls from other tasks each land whole, but a group of them is not
+        held together
 
 ## Event System
 

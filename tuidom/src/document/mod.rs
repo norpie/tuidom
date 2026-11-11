@@ -120,6 +120,7 @@ impl Document {
                 active_node: Mutex::new(None),
                 disabled_nodes: Mutex::new(NodeSet::default()),
                 tree_mutation: RwLock::new(()),
+                frame_gate: tokio::sync::Mutex::new(()),
                 notify: Notify::new(),
                 shutdown: RwLock::new(false),
                 event_tx,

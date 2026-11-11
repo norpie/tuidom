@@ -1,7 +1,7 @@
 //! Render + event loop — the main `Document::run()` implementation.
 
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEventKind;
 use crossterm::event::{
@@ -11,6 +11,7 @@ use crossterm::event::{
 use tokio::task::JoinSet;
 use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
+use tracing::Instrument;
 
 use crate::document::Document;
 use crate::event::{
@@ -109,8 +110,9 @@ async fn event_task(doc: Document) -> io::Result<()> {
                         "runtime event queue closed",
                     ));
                 };
+                // Gated per event rather than per batch, so a burst lets frames in between.
                 for event in batch {
-                    process_runtime_event(&doc, event, &mut event_state);
+                    process_gated(&doc, event, &mut event_state).await;
                 }
             }
         }
@@ -125,7 +127,14 @@ async fn render_task(doc: Document) -> io::Result<()> {
     let mut next_frame_at = None;
     let mut next_anim_frame_at = None;
 
-    render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at).await?;
+    render_frame_capped(
+        &doc,
+        &mut renderer,
+        (screen_w, screen_h),
+        FrameMode::Diffed,
+        &mut next_frame_at,
+    )
+    .await?;
 
     loop {
         if is_shutdown(&doc) {
@@ -148,7 +157,7 @@ async fn render_task(doc: Document) -> io::Result<()> {
                     screen_w = width;
                     screen_h = height;
                     renderer.resize(width, height);
-                    render_full_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
+                    render_frame_capped(&doc, &mut renderer, (screen_w, screen_h), FrameMode::Full, &mut next_frame_at)
                         .await?;
                 }
             }
@@ -157,7 +166,7 @@ async fn render_task(doc: Document) -> io::Result<()> {
                 if is_shutdown(&doc) {
                     break;
                 }
-                render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
+                render_frame_capped(&doc, &mut renderer, (screen_w, screen_h), FrameMode::Diffed, &mut next_frame_at)
                     .await?;
             }
 
@@ -166,14 +175,14 @@ async fn render_task(doc: Document) -> io::Result<()> {
                     break;
                 }
                 if animation_frame_needed(&doc) {
-                    render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
+                    render_frame_capped(&doc, &mut renderer, (screen_w, screen_h), FrameMode::Diffed, &mut next_frame_at)
                         .await?;
                 }
             }
 
             _ = wait_for_anim_tick(&doc, &mut next_anim_frame_at), if anim_frame_needed => {
                 cleanup_animations(&doc);
-                render_frame_timed_capped(&doc, &mut renderer, screen_w, screen_h, &mut next_frame_at)
+                render_frame_capped(&doc, &mut renderer, (screen_w, screen_h), FrameMode::Diffed, &mut next_frame_at)
                     .await?;
             }
         }
@@ -260,53 +269,80 @@ async fn recv_runtime_batch(doc: &Document) -> Option<Vec<RuntimeEvent>> {
     Some(drain_and_coalesce(first, &mut rx))
 }
 
-/// Render a diffed frame with timing for the performance API.
-fn render_frame_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
+/// Process one runtime event while holding the frame gate, so no frame is laid out or painted
+/// while its handlers are partway through their changes.
+async fn process_gated(doc: &Document, event: RuntimeEvent, state: &mut RuntimeEventState) {
+    let _gate = doc.inner.frame_gate.lock().await;
+    process_runtime_event(doc, event, state);
+}
+
+/// Whether a frame is diffed against the previous one or redrawn whole.
+#[derive(Debug, Clone, Copy)]
+enum FrameMode {
+    Diffed,
+    Full,
+}
+
+/// A frame laid out and painted, waiting to be flushed.
+struct Painted<T> {
+    output: T,
+    started: Instant,
+    layout_time: Duration,
+    /// Scroll events the layout's re-clamps owe, for the event task to dispatch.
+    events: Vec<RuntimeEvent>,
+}
+
+/// Lay out and paint one frame while holding the frame gate, so it shows the document as it
+/// stands between two runtime events, never partway through one.
+async fn lay_out_and_paint<T>(
+    doc: &Document,
+    (width, height): (u16, u16),
+    paint: impl FnOnce() -> T,
+) -> io::Result<Painted<T>> {
+    let _gate = doc.inner.frame_gate.lock().await;
+    let started = Instant::now();
+    let events = doc
+        .compute_layout_for_frame(width, height)
+        .map_err(io::Error::other)?;
+    let layout_time = started.elapsed();
+    let output = paint();
+    Ok(Painted {
+        output,
+        started,
+        layout_time,
+        events,
+    })
+}
+
+/// Render a frame with timing for the performance API.
+async fn render_frame_timed(
+    doc: &Document,
+    renderer: &mut Renderer,
+    size: (u16, u16),
+    mode: FrameMode,
+) -> io::Result<()> {
     // The frame span lives here rather than in `render/`, because a frame is layout *then*
     // paint and the renderer is only entered for the second half. This is the one place
     // both are in scope, so it is the only place that can parent them.
-    let _span = tracing::debug_span!("frame", mode = "diffed").entered();
-
-    let frame_start = Instant::now();
-
-    let layout_start = Instant::now();
-    let scroll_events = doc
-        .compute_layout_for_frame(sw, sh)
-        .map_err(io::Error::other)?;
-    let layout_time = layout_start.elapsed();
-
-    let stats = renderer.render_frame(doc)?;
-    for event in scroll_events {
-        let _ = doc.inner.event_tx.send(event);
+    let span = match mode {
+        FrameMode::Diffed => tracing::debug_span!("frame", mode = "diffed"),
+        FrameMode::Full => tracing::debug_span!("frame", mode = "full"),
+    };
+    async {
+        let painted = lay_out_and_paint(doc, size, || renderer.paint(doc)).await?;
+        for event in painted.events {
+            let _ = doc.inner.event_tx.send(event);
+        }
+        let stats = match mode {
+            FrameMode::Diffed => renderer.flush_diffed(doc, painted.output)?,
+            FrameMode::Full => renderer.flush_whole(doc, painted.output)?,
+        };
+        doc.record_frame_metrics(painted.started.elapsed(), painted.layout_time, stats);
+        queue_post_frame(doc);
+        Ok(())
     }
-
-    let frame_time = frame_start.elapsed();
-    doc.record_frame_metrics(frame_time, layout_time, stats);
-    queue_post_frame(doc);
-    Ok(())
-}
-
-/// Render a full redraw with timing for the performance API.
-fn render_full_timed(doc: &Document, renderer: &mut Renderer, sw: u16, sh: u16) -> io::Result<()> {
-    let _span = tracing::debug_span!("frame", mode = "full").entered();
-
-    let frame_start = Instant::now();
-
-    let layout_start = Instant::now();
-    let scroll_events = doc
-        .compute_layout_for_frame(sw, sh)
-        .map_err(io::Error::other)?;
-    let layout_time = layout_start.elapsed();
-
-    let stats = renderer.render_full(doc)?;
-    for event in scroll_events {
-        let _ = doc.inner.event_tx.send(event);
-    }
-
-    let frame_time = frame_start.elapsed();
-    doc.record_frame_metrics(frame_time, layout_time, stats);
-    queue_post_frame(doc);
-    Ok(())
+    .instrument(span)
+    .await
 }
 
 /// Queue the post-frame event for the frame that was just recorded.
@@ -323,11 +359,11 @@ fn queue_post_frame(doc: &Document) {
     }
 }
 
-async fn render_frame_timed_capped(
+async fn render_frame_capped(
     doc: &Document,
     renderer: &mut Renderer,
-    sw: u16,
-    sh: u16,
+    size: (u16, u16),
+    mode: FrameMode,
     next_frame_at: &mut Option<TokioInstant>,
 ) -> io::Result<()> {
     if !wait_for_frame_slot(doc, *next_frame_at).await {
@@ -335,24 +371,7 @@ async fn render_frame_timed_capped(
     }
 
     let started_at = TokioInstant::now();
-    render_frame_timed(doc, renderer, sw, sh)?;
-    advance_frame_slot(doc, next_frame_at, started_at);
-    Ok(())
-}
-
-async fn render_full_timed_capped(
-    doc: &Document,
-    renderer: &mut Renderer,
-    sw: u16,
-    sh: u16,
-    next_frame_at: &mut Option<TokioInstant>,
-) -> io::Result<()> {
-    if !wait_for_frame_slot(doc, *next_frame_at).await {
-        return Ok(());
-    }
-
-    let started_at = TokioInstant::now();
-    render_full_timed(doc, renderer, sw, sh)?;
+    render_frame_timed(doc, renderer, size, mode).await?;
     advance_frame_slot(doc, next_frame_at, started_at);
     Ok(())
 }
@@ -617,5 +636,77 @@ mod tests {
             }
             other => panic!("expected a mouse down event, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+    use crate::render::grid::Grid;
+    use crate::render::render_into_grid;
+    use crate::style::color::RgbCache;
+
+    const WORDS: [&str; 3] = ["one", "two", "three"];
+
+    fn screen_text(grid: &Grid) -> String {
+        grid.cells
+            .iter()
+            .flatten()
+            .map(|cell| cell.terminal_text())
+            .collect()
+    }
+
+    // The event appends three text nodes with pauses between them, while frames are painted as
+    // fast as they can be on another thread. Without the gate, frames land between the appends.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_frame_never_shows_an_event_partway_through() {
+        let doc = Document::new().unwrap();
+        let writer = doc.clone();
+        doc.set_runtime_flush_hook(Arc::new(move || {
+            for word in WORDS {
+                let text = writer.create_text(word).unwrap();
+                writer.append_child(writer.root(), text).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }));
+
+        let done = Arc::new(AtomicBool::new(false));
+        let events = tokio::spawn({
+            let doc = doc.clone();
+            let done = done.clone();
+            async move {
+                let mut state = RuntimeEventState::default();
+                process_gated(&doc, RuntimeEvent::Flush, &mut state).await;
+                done.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let mut grid = Grid::new(20, 3);
+        let mut rgb_cache = RgbCache::new();
+        let mut frames = Vec::new();
+        loop {
+            let finished = done.load(Ordering::SeqCst);
+            let painted = lay_out_and_paint(&doc, (20, 3), || {
+                render_into_grid(&doc, &mut grid, &mut rgb_cache);
+                screen_text(&grid)
+            })
+            .await
+            .unwrap();
+            frames.push(painted.output);
+            if finished {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        events.await.unwrap();
+
+        for frame in &frames {
+            let shown = WORDS.iter().filter(|word| frame.contains(*word)).count();
+            assert!(shown == 0 || shown == WORDS.len(), "torn frame: {frame:?}");
+        }
+        assert!(frames.last().unwrap().contains("three"));
     }
 }
