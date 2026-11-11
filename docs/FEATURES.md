@@ -301,10 +301,14 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Affects cursor positioning in Input — the cursor's cell column is the display
         width of the line prefix, and it takes the width of the grapheme it sits on
   - [ ] Avoid hardcoding LTR assumptions — prepare for future bidi support
+- [ ] A frame never shows a DOM change half applied; today the render task can draw while a
+      handler is partway through mounting
 
 ## Event System
 
 - [x] Target + bubble propagation (no capture phase)
+- [ ] A way for document-level shortcuts to skip keys an Input handles; they bubble today, so
+      a handler checks the key's target
 - [x] `stop_propagation()` to halt bubbling
 - [x] Sync handlers only — user spawns for async
 - [ ] Events:
