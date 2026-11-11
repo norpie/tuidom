@@ -1,22 +1,44 @@
 # tuidom
 
-A DOM-based terminal UI library for Rust.
+A DOM-based terminal UI library for Rust, built in layers: an engine that owns the node tree,
+a reactive framework on top of it, and a component library and a router on top of that.
 
 **[Documentation](docs/)** — [getting started](docs/getting-started.md),
 [architecture](docs/architecture.md), and thirteen other guides, plus a
-[glossary](docs/GLOSSARY.md) of every concept in the engine.
+[glossary](docs/GLOSSARY.md) of every concept in the engine and the crates above it.
 
-## What
+## Crates
 
-tuidom is the browser engine layer for terminal UIs — providing the fundamental primitives for building sophisticated TUI applications. Like a web browser's rendering engine, it handles:
+| Crate | What it is | Builds on |
+|---|---|---|
+| `tuidom` | The engine: node tree, layout, styling, events, focus, scrolling, animation, rendering | — |
+| `tuidom-macros` | `style!`, for writing a `Style` as a property list | — |
+| `tuidom-ui` | Signals, scopes, the `view!` template, components, and `App` to run them | `tuidom` |
+| `tuidom-ui-macros` | `view!` and `#[component]` | — |
+| `tuidom-components` | Themed components: buttons, inputs, menus, tables, modals, toasts, and more | `tuidom-ui` |
+| `tuidom-router` | Layout chains: frames that stay mounted while the screen inside them changes | `tuidom-ui` |
 
-- DOM tree structure with arena-allocated nodes and stable handles
-- Flexbox layout via taffy
-- Modern OKLCH color system with derived colors
-- Event system with bubbling and focus management
-- Scrolling, clipping, and paint-time culling
-- Transitions and animations
-- Text selection and cursor management
+```
+tuidom-components    tuidom-router
+          \              /
+           tuidom-ui          (+ tuidom-ui-macros)
+               |
+            tuidom            (+ tuidom-macros)
+```
+
+The engine holds every node and does all layout, painting, event dispatch and focus handling.
+`tuidom-ui` decides which engine calls happen and when: a signal read inside a view becomes a
+subscription, and a change reruns only the bindings that read it, each ending in an ordinary
+call such as `update_style` or `set_text_content`. There is no virtual DOM. It uses only the
+engine's public API, and the component library and router in turn use `tuidom-ui` and the
+engine's style types.
+
+You can stop at any layer. Drive the engine by hand, use the framework and write your own
+components, or build from the component library.
+
+## What it looks like
+
+On the engine alone, you create nodes and attach listeners yourself:
 
 ```rust
 use tuidom::{event::KeyCode, Document};
@@ -40,15 +62,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+With `tuidom-ui`, state lives in signals and the template updates itself from them:
+
+```rust
+use tuidom_ui::{App, View, component, state, view};
+
+#[component]
+fn Counter(start: i32) -> View {
+    let count = state(start.get());
+    view! {
+        box {
+            focusable: true,
+            on_click: move || count.update(|n| *n += 1),
+            text(count.get()),
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    App::new(|| view! { Counter { start: 0 } }).run().await
+}
+```
+
 ## Why
 
-Existing TUI libraries mix layout, widgets, and application logic. tuidom separates concerns by providing just the engine layer — a foundation for building higher-level component systems, reactive frameworks, or complete UI libraries.
+Existing TUI libraries mix layout, widgets, and application logic. tuidom separates those
+concerns, starting with an engine layer that is a foundation for component systems, reactive
+frameworks, or complete UI libraries.
 
-Think of it as the relationship between a browser engine (Chromium, WebKit) and frameworks built on top (React, Vue, Svelte). tuidom is the engine, you build the framework.
+Think of the relationship between a browser engine (Chromium, WebKit) and the frameworks built
+on top of it (React, Vue, Svelte). `tuidom` is the engine. `tuidom-ui` is one framework on it,
+kept in this repository but in its own crate.
 
-That boundary is deliberate, and it is why you will not find reactivity here. The engine has no signals, no subscriptions, and no component model — it exposes the primitives a framework needs and stays out of the way of how you drive them.
+That boundary is deliberate. The `tuidom` crate has no signals, no subscriptions, and no
+component model: it exposes the primitives a framework needs and stays out of the way of how
+you drive them. Because `tuidom-ui` reaches the engine only through its public API, a
+different framework could be built the same way.
 
 ## Essentials
+
+### Engine (`tuidom`)
 
 **Core Primitives:**
 - Box, Text, Input, and Frames node types
@@ -73,6 +127,37 @@ That boundary is deliberate, and it is why you will not find reactivity here. Th
 - Alpha blending at render time
 - Built-in scrollbars, plus primitives for building virtualized collections
 - Headless mode for testing with simulated input
+
+### Framework (`tuidom-ui`)
+
+- `Copy`, `Send + Sync` signals, derived values, effects, and batching
+- Scopes that own what is created in them, with cleanup and spawned tasks
+- `view!` templates with `if`, `match`, keyed `each`, and portals
+- `#[component]` functions with typed props, children, slots, and callbacks
+- Context, node refs, and virtual lists for large collections
+- `App` to run it, and `Harness` to test it headless
+
+### Components (`tuidom-components`)
+
+- One theme, a palette plus a shape, switchable at runtime and scoped per subtree
+- Controls, containers, feedback, menus, and virtualized tables, lists, and trees
+
+### Routing (`tuidom-router`)
+
+- The route is your own enum; a `match` over it builds the chain of layouts and leaf
+- Layouts kept by navigation stay mounted, and their props update in place
+- Opt-in retention, so returning to a screen finds it as it was left
+
+## Running the examples
+
+Tests are the verification path for every crate; the examples are for trying it by hand.
+
+```sh
+cargo run -p tuidom --example demo                  # most of the engine in one file
+cargo run -p tuidom-components --example showcase   # each component on its own
+cargo run -p tuidom-components --example tracker    # an app built from the components
+cargo run -p tuidom-router --example mail           # a routed app
+```
 
 ## License
 
