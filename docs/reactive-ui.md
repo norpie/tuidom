@@ -334,6 +334,26 @@ A nearer provider shadows a farther one, and an absent context is `None`. Contex
 while the runtime lock is held, so its `Clone` must not touch a signal; a `Copy` signal handle
 or an `Arc` is the usual payload.
 
+### Props built by hand
+
+`#[component]` generates a `{Name}Props` struct with a `builder()`, which is what `view!` fills.
+Code can use it directly: a signal prop's setter takes a signal, and the struct implements
+`ComponentProps`, whose `into_view` builds the component:
+
+```rust
+let props = CounterProps::builder().start(state(10)).build();
+let ui = props.clone().into_view();
+// later, while it is mounted
+props.assign(CounterProps::builder().start(state(20)).build());
+```
+
+A clone shares the props' signals, so `assign` on a clone kept from before mounting updates
+the mounted component without its body running again. It moves each of the component's own
+signal props across in one batch, skipping a value equal to the current one; callbacks, node
+refs, slots and bound signals keep what they mounted with. A component taking `children` also
+implements `WithChildren`, whose `set_children` fills that slot. This is what
+[routing](routing.md) builds its chains from.
+
 ## Reactive bodies
 
 `#[component(reactive)]` lets a body use its signals as plain values:
