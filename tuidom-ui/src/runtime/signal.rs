@@ -124,6 +124,52 @@ impl<T: PartialEq + Send + Sync + 'static> Signal<T> {
     }
 }
 
+impl<T: 'static> Signal<T> {
+    /// Move `source`'s value into this signal, leaving this signal's old value in `source`, and
+    /// rerun this signal's subscribers. Nothing moves when `unchanged` says the two values are
+    /// the same, or when either signal has been disposed. `source`'s subscribers are not rerun.
+    pub(crate) fn take_from(&self, source: Signal<T>, unchanged: impl FnOnce(&T, &T) -> bool) {
+        let subs = {
+            let mut w = rt().write();
+            let incoming = match w.nodes.get_mut(&source.id).map(|n| &mut n.kind) {
+                Some(Kind::Signal { value }) => {
+                    let placeholder: BoxAny = Box::new(());
+                    std::mem::replace(value, placeholder)
+                }
+                _ => return,
+            };
+            let (returned, subs) = match w.nodes.get_mut(&self.id) {
+                Some(node) => match &mut node.kind {
+                    Kind::Signal { value } => {
+                        let same = match (value.downcast_ref::<T>(), incoming.downcast_ref::<T>()) {
+                            (Some(current), Some(next)) => unchanged(current, next),
+                            _ => true,
+                        };
+                        if same {
+                            (incoming, None)
+                        } else {
+                            let old = std::mem::replace(value, incoming);
+                            (
+                                old,
+                                Some(node.subscribers.iter().copied().collect::<Vec<_>>()),
+                            )
+                        }
+                    }
+                    _ => (incoming, None),
+                },
+                None => (incoming, None),
+            };
+            if let Some(Kind::Signal { value }) = w.nodes.get_mut(&source.id).map(|n| &mut n.kind) {
+                *value = returned;
+            }
+            subs
+        };
+        if let Some(subs) = subs {
+            schedule(subs);
+        }
+    }
+}
+
 impl<T: Send + Sync + 'static> Signal<T> {
     /// Mutate the value in place, then rerun subscribers.
     ///

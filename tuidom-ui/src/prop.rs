@@ -1,4 +1,5 @@
-//! How `view!` turns a call-site prop expression into the prop a component stores.
+//! Component props: how `view!` turns a call-site expression into the prop a component stores,
+//! and how a mounted component's props take newer values.
 //!
 //! The call site cannot see a prop's type, so it hands every non-literal, non-closure value over as
 //! `move || expr` and lets the setter's parameter type pick the conversion: a signal prop stays
@@ -6,6 +7,66 @@
 //! takes its value once, and a bound prop takes the caller's signal itself.
 
 use crate::{Callback, Children, Derived, NodeRef, Signal, View, effect, state};
+
+/// The props struct `#[component]` generates for a component, which it implements this for.
+///
+/// Props built by hand, through the generated builder, mount with [`into_view`]. A clone shares
+/// their signals, so a clone kept from before mounting takes newer props through [`assign`], and
+/// the mounted component updates without its body running again: its nodes, and with them their
+/// scroll offsets, focus and running transitions, stay as they are.
+///
+/// [`into_view`]: ComponentProps::into_view
+/// [`assign`]: ComponentProps::assign
+pub trait ComponentProps: Clone + Send + Sync + 'static {
+    /// Move each signal prop's value from `next` into these props, in one batch.
+    ///
+    /// A value equal to the current one, for a type that implements `PartialEq`, writes nothing,
+    /// so nothing that reads it reruns. Props that are not signals of their own are left as they
+    /// are: children and other slots, callbacks, node refs, and a `Signal<T>` parameter bound to
+    /// the caller's signal. A prop kept in step with an expression stays in step with it, so the
+    /// next change on either side wins.
+    fn assign(&self, next: Self);
+
+    /// The component these props build. Its body runs when the view mounts, under the
+    /// component's own scope; the props' signals stay owned by the scope that built them.
+    fn into_view(self) -> View;
+}
+
+/// The props of a component that takes a `children` parameter.
+pub trait WithChildren: ComponentProps {
+    /// Replace the `children` prop.
+    fn set_children(&mut self, children: Children);
+}
+
+/// One signal prop's move from newer props, dispatched on whether its type can be compared.
+///
+/// `(&&Assign(current, next)).assign()` resolves to [`AssignEq`] when `T: PartialEq`, since that
+/// impl matches the receiver without a deref, and to [`AssignAny`] otherwise.
+pub struct Assign<T: 'static>(pub Signal<T>, pub Signal<T>);
+
+/// Move a comparable value, skipping an equal one.
+pub trait AssignEq {
+    /// Move the value.
+    fn assign(&self);
+}
+
+impl<T: PartialEq + 'static> AssignEq for &Assign<T> {
+    fn assign(&self) {
+        self.0.take_from(self.1, |current, next| current == next);
+    }
+}
+
+/// Move a value that cannot be compared, always rerunning its readers.
+pub trait AssignAny {
+    /// Move the value.
+    fn assign(&self);
+}
+
+impl<T: 'static> AssignAny for Assign<T> {
+    fn assign(&self) {
+        self.0.take_from(self.1, |_, _| false);
+    }
+}
 
 /// A prop type buildable from a call-site expression, given as a closure producing its value.
 pub trait FromPropExpr<F> {

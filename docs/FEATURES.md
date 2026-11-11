@@ -531,6 +531,7 @@ What stays true here regardless of the macro:
   - [x] Callback props, optionally returning a value
   - [x] Bound `Signal<T>` props for two-way binding
   - [x] `NodeRef` props
+  - [x] Props built and mounted by hand (`ComponentProps`), and assigned newer values while mounted
   - [x] Reactive bodies (`#[component(reactive)]`): signal names read and written as values
     - [x] Method calls and field access read through `with`, their arguments evaluated first
     - [x] Templates, text interpolation and the standard expression macros rewritten

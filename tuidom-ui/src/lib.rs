@@ -42,6 +42,7 @@ mod view;
 
 pub use app::{App, AppSession};
 pub use callback::Callback;
+pub use prop::{ComponentProps, WithChildren};
 pub use runtime::{
     Derived, Scope, Signal, batch, derived, effect, on_cleanup, provide_context, spawn, state,
     use_context,
@@ -49,7 +50,7 @@ pub use runtime::{
 /// Support for code `view!` and `#[component]` expand to. Not public API.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::prop::{Bound, FromPropExpr, PropValue, prop_expr};
+    pub use crate::prop::{Assign, AssignAny, AssignEq, Bound, FromPropExpr, PropValue, prop_expr};
 }
 
 // `component` names two things in two namespaces: the attribute macro (macro namespace) that

@@ -232,6 +232,21 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// // Later, from a handler: `field.focus()`.
 /// ```
 ///
+/// # Props outside a template
+///
+/// The props are a `{Name}Props` struct with a `builder()`, which `view!` fills from the call
+/// site. It implements [`ComponentProps`], and [`WithChildren`] when the component takes
+/// `children`, so code can build props by hand, mount them with `into_view`, and later
+/// `assign` newer ones from a clone kept before mounting. The mounted component then updates
+/// through its signals without its body running again.
+///
+/// ```ignore
+/// let props = LabelProps::builder().text(state("draft".to_string())).build();
+/// let ui = props.clone().into_view();
+/// // Later:
+/// props.assign(LabelProps::builder().text(state("saved".to_string())).build());
+/// ```
+///
 /// # Context and lifecycle
 ///
 /// A component body runs inside its own owner scope, so the ambient runtime functions work with
@@ -266,6 +281,8 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// [`Signal`]: ../tuidom_ui/struct.Signal.html
 /// [`Callback<A>`]: ../tuidom_ui/struct.Callback.html
 /// [`NodeRef`]: ../tuidom_ui/struct.NodeRef.html
+/// [`ComponentProps`]: ../tuidom_ui/trait.ComponentProps.html
+/// [`WithChildren`]: ../tuidom_ui/trait.WithChildren.html
 /// [`provide_context`]: ../tuidom_ui/fn.provide_context.html
 /// [`use_context`]: ../tuidom_ui/fn.use_context.html
 /// [`on_mount`]: ../tuidom_ui/fn.on_mount.html
@@ -418,10 +435,12 @@ fn expand_component(func: ItemFn, reactive: bool) -> syn::Result<TokenStream2> {
     }
 
     let props_api = expand_props_builder(vis, name, &props_name, &props);
+    let props_impls = expand_props_impls(name, &props_name, &props, saw_children);
     let binds = props.iter().map(|p| &p.name);
 
     Ok(quote! {
         #props_api
+        #props_impls
 
         #(#attrs)*
         #[allow(non_snake_case)]
@@ -430,6 +449,54 @@ fn expand_component(func: ItemFn, reactive: bool) -> syn::Result<TokenStream2> {
             #block
         }
     })
+}
+
+/// `ComponentProps` for the props struct, and `WithChildren` when the component takes `children`.
+/// Only the component's own signal props are assigned; a bound `Signal<T>` belongs to the caller.
+fn expand_props_impls(
+    component: &Ident,
+    props_name: &Ident,
+    props: &[PropSpec],
+    takes_children: bool,
+) -> TokenStream2 {
+    let assigned: Vec<&Ident> = props
+        .iter()
+        .filter(|p| p.is_signal && p.bound.is_none())
+        .map(|p| &p.name)
+        .collect();
+    let assign_body = if assigned.is_empty() {
+        quote! { let _ = next; }
+    } else {
+        quote! {
+            #[allow(unused_imports)]
+            use ::tuidom_ui::__private::{AssignAny as _, AssignEq as _};
+            ::tuidom_ui::batch(|| {
+                #((&&::tuidom_ui::__private::Assign(self.#assigned, next.#assigned)).assign();)*
+            });
+        }
+    };
+    let with_children = takes_children.then(|| {
+        quote! {
+            impl ::tuidom_ui::WithChildren for #props_name {
+                fn set_children(&mut self, children: ::tuidom_ui::Children) {
+                    self.children = children;
+                }
+            }
+        }
+    });
+    quote! {
+        impl ::tuidom_ui::ComponentProps for #props_name {
+            fn assign(&self, next: Self) {
+                #assign_body
+            }
+
+            fn into_view(self) -> ::tuidom_ui::View {
+                ::tuidom_ui::component(move || ::tuidom_ui::View::from(#component(self)))
+            }
+        }
+
+        #with_children
+    }
 }
 
 /// Classify one parameter's optionality from its `#[prop(...)]` attribute and type.
@@ -689,6 +756,7 @@ fn expand_props_builder(
 
     quote! {
         #[doc = #props_doc]
+        #[derive(Clone)]
         #vis struct #props_name {
             #(#struct_fields),*
         }
