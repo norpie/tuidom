@@ -565,6 +565,17 @@ What stays true here regardless of the macro:
   - [ ] `Table` windows its columns as well as its rows
 - [x] Showcase and tracker examples
 
+## Routing (`tuidom-router`)
+
+- [x] Chains of layouts and a leaf, built from the app's own route enum
+- [x] `routed` follows a chain closure, keeping the entries two chains share
+  - [x] Kept entries take new props through `ComponentProps::assign`; their bodies never rerun
+  - [x] The changed suffix disposes innermost first and remounts in the last kept slot
+- [x] Each entry in a box of its own, with a replaceable style
+- [x] Opt-in focus traps per entry, kept in step with the focus stack
+- [x] Retained leaves, hidden in their slot and shown again as they were
+- [ ] History, path matching and leave guards (patterns in the guide, not features)
+
 ## Future Considerations
 
 - RTL / bidirectional text support (text rendering, layout direction, Input cursor/selection)

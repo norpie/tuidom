@@ -300,6 +300,22 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Toaster** — The wrapper that shows the toasts components send through `use_toaster`, stacked over the screen's bottom-right corner. See [feedback](components.md#feedback).
 
+## Routing
+
+*Explained in [routing](routing.md). These belong to `tuidom-router`.*
+
+**Route** — An app's own enum of screens, held in a signal. A `match` over it builds the chain; the router has no route type, path matcher or history of its own. See [the route is your enum](routing.md#the-route-is-your-enum).
+
+**Chain** — The layouts a route shows, outermost first, and the leaf inside the innermost one, each given as a closure building its props. See [chains](routing.md#chains).
+
+**Layout** — A chain entry whose component takes `children`, which the chain fills with the next entry. Stays mounted while navigation keeps it. See [what navigation keeps](routing.md#what-navigation-keeps).
+
+**Leaf** — The last entry of a chain: the screen inside the layouts. See [chains](routing.md#chains).
+
+**Entry Box** — The box the router mounts each chain entry in. It fills the slot, takes the entry's style and focus trap, and hides a retained leaf. See [chains](routing.md#chains).
+
+**Retention** — Keeping a leaf mounted but hidden when navigation leaves it, so returning to it finds its nodes and their runtime state as they were. See [retention](routing.md#retention).
+
 ---
 
 *Additional terms will be added as new concepts are introduced during development.*

@@ -163,8 +163,8 @@ impl Chain {
     }
 
     /// Keep the leaf mounted but hidden when navigation leaves it, and show it again, with its
-    /// nodes and their scroll offsets, focus and selection as they were, when navigation comes
-    /// back to the same component in the same slot. Its props are assigned from the returning
+    /// nodes and their scroll offsets and focus memory as they were, when navigation comes back
+    /// to the same component in the same slot. Its props are assigned from the returning
     /// chain.
     ///
     /// A retained leaf lives in the slot of the layout that held it and is disposed with that

@@ -3,7 +3,7 @@
 A DOM-based terminal UI library for Rust.
 
 **[Documentation](docs/)** — [getting started](docs/getting-started.md),
-[architecture](docs/architecture.md), and eleven other guides, plus a
+[architecture](docs/architecture.md), and thirteen other guides, plus a
 [glossary](docs/GLOSSARY.md) of every concept in the engine.
 
 ## What

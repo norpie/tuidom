@@ -70,19 +70,21 @@ until a given guide exists.
   components, reaching nodes, virtual lists, and testing with `Harness`
 - [**Components**](components.md) — `tuidom-components`: themes, the conventions the
   components share, and a tour of the catalogue
+- [**Routing**](routing.md) — `tuidom-router`: the route enum, layout chains, what
+  navigation keeps, retention, and back
 
 ## Reading order
 
 If you are new to tuidom, `README.md` in the repo root says what it is and why it exists.
 From there the glossary is unusually readable front-to-back — it is organized by area
 (core concepts, layout, styling, colors, events, focus, animation, rendering, then the
-reactive UI and components), not alphabetically, so reading a section is a decent tour of
+reactive UI, components and routing), not alphabetically, so reading a section is a decent tour of
 that part of the code.
 
 For how the pieces fit together at runtime rather than what they are called,
 `examples/demo.rs` exercises most of the surface in one file. For the framework layer,
 `tuidom-components/examples/showcase.rs` shows each component and `tracker.rs` an app
-built from them.
+built from them, and `tuidom-router/examples/mail.rs` is a routed app.
 
 ## A note on code in these docs
 
