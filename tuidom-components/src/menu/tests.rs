@@ -1,6 +1,6 @@
 use tuidom::NodeId;
 use tuidom::event::KeyCode;
-use tuidom::style::{AlignItems, Style};
+use tuidom::style::{AlignItems, Color, Style};
 use tuidom_ui::testing::Harness;
 use tuidom_ui::{Signal, state, view};
 
@@ -218,4 +218,24 @@ fn hovering_a_row_focuses_and_highlights_it_and_skips_a_disabled_one() {
     h.press(KeyCode::Down);
     h.press(KeyCode::Enter);
     assert_eq!(picks.get(), vec![2]);
+}
+
+#[test]
+fn the_style_prop_merges_over_the_buttons_own() {
+    let mut h = Harness::new(24, 12, || {
+        install_theme(Theme::dark());
+        let mut filled = Style::new();
+        filled.background(Color::var("--destructive"));
+        view! {
+            box {
+                test_id: "host",
+                Menu { label: "File".to_string(), items: items(), style: filled.clone() },
+            }
+        }
+    });
+    let trigger = trigger(&mut h);
+    assert_eq!(
+        h.document().resolved_style(trigger).unwrap().background,
+        Some(literal(&Palette::dark().destructive))
+    );
 }

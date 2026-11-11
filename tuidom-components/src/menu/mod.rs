@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use tuidom::style::Style;
 use tuidom_ui::{Callback, View, component, node_ref, state, view};
 
 use crate::button::{Button, ButtonProps, ButtonVariant};
@@ -56,7 +57,7 @@ impl MenuItem {
 /// closes the list and calls `on_select` with the item's index in `items`. Escape or a press
 /// anywhere outside closes it without selecting. Focus goes back to the button either way.
 /// `variant` is the button's, [`Ghost`](ButtonVariant::Ghost) unless given; `disabled` keeps the
-/// menu closed and mutes the button.
+/// menu closed and mutes the button. `style` is merged over the button's own style.
 #[component]
 pub fn Menu(
     label: String,
@@ -64,6 +65,7 @@ pub fn Menu(
     #[prop(default)] on_select: Callback<usize>,
     #[prop(default = ButtonVariant::Ghost)] variant: ButtonVariant,
     #[prop(default)] disabled: bool,
+    #[prop(default)] style: Style,
 ) -> View {
     let open = state(false);
     let trigger = node_ref();
@@ -76,6 +78,7 @@ pub fn Menu(
                 label: format!("{} ▾", label.get()),
                 variant: variant.get(),
                 disabled: disabled.get(),
+                style: style.get(),
                 on_press: move |_| {
                     if !items.get().is_empty() {
                         open.set(true);
