@@ -242,8 +242,9 @@ fn insert(kind: Kind) -> SlotId {
     id
 }
 
-/// Run `f` with no observer, so the signals it reads subscribe nothing.
-pub(crate) fn untracked<R>(f: impl FnOnce() -> R) -> R {
+/// Run `f` so the signals and deriveds it reads subscribe nothing: a read inside an effect,
+/// derived or dynamic block that should not rerun it when the value changes.
+pub fn untracked<R>(f: impl FnOnce() -> R) -> R {
     let prev = OBSERVER.with(|o| o.replace(None));
     let result = f();
     OBSERVER.with(|o| o.set(prev));

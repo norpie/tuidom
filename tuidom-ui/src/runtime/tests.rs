@@ -12,7 +12,7 @@ use std::thread;
 
 use super::{
     Scope, SessionId, batch, derived, effect, flush_session, provide_context, register_session,
-    remove_session, spawn, state, use_context,
+    remove_session, spawn, state, untracked, use_context,
 };
 
 /// A shared counter an effect or compute closure can bump, so a test can assert how many
@@ -118,6 +118,26 @@ fn dependencies_are_dropped_when_a_branch_stops_reading_them() {
 
     b.set(200); // b is now a dependency
     assert_eq!(count(&runs), 3);
+}
+
+#[test]
+fn an_untracked_read_does_not_subscribe_the_effect() {
+    let tracked = state(0);
+    let ignored = state(0);
+    let runs = counter();
+    let r = runs.clone();
+    effect(move || {
+        tracked.get();
+        untracked(|| ignored.get());
+        r.fetch_add(1, Ordering::SeqCst);
+    });
+    assert_eq!(count(&runs), 1);
+
+    ignored.set(1);
+    assert_eq!(count(&runs), 1);
+
+    tracked.set(1);
+    assert_eq!(count(&runs), 2);
 }
 
 // ---- Derived ----------------------------------------------------------------------------

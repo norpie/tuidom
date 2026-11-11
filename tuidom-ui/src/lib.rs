@@ -45,7 +45,7 @@ pub use callback::Callback;
 pub use prop::{ComponentProps, WithChildren};
 pub use runtime::{
     Derived, Scope, Signal, batch, derived, effect, on_cleanup, provide_context, spawn, state,
-    use_context,
+    untracked, use_context,
 };
 /// Support for code `view!` and `#[component]` expand to. Not public API.
 #[doc(hidden)]

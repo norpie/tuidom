@@ -507,6 +507,7 @@ What stays true here regardless of the macro:
   - [x] `Copy`, `Send + Sync` signal handles; `set` skips equal values, `update` mutates in place
   - [x] Lazy, memoized deriveds; dependencies found by reading and re-collected each run
   - [x] Effects, and `batch` for one flush over a group of writes
+  - [x] `untracked` reads that subscribe nothing
   - [x] A runaway effect loop is stopped and logged rather than hanging
   - [x] Handles to disposed slots are inert, never dangling
 - [x] Scopes own signals, effects, cleanups and tasks, and free them on dispose
