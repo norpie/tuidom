@@ -1,19 +1,35 @@
-//! Chains, and the view that mounts them.
+//! Chains: the entries a route shows, each a closure building a component's props.
 
+use std::any::{Any, TypeId};
 use std::sync::Arc;
 
 use tuidom::style::{FlexDirection, Style};
-use tuidom_ui::{
-    Children, ComponentProps, View, WithChildren, boxed, component, dynamic, fragment,
-};
+use tuidom_ui::{Children, ComponentProps, Scope, View, WithChildren, untracked};
 
-type Build = Arc<dyn Fn(Option<Children>) -> View + Send + Sync>;
+/// A mounted entry's props, kept so newer props can be assigned into them.
+pub(crate) type Kept = Arc<dyn Any + Send + Sync>;
+type Mount = Arc<dyn Fn(Option<Children>) -> (View, Kept) + Send + Sync>;
+type Reassign = Arc<dyn Fn(&Kept) + Send + Sync>;
+
+/// What the chain diff compares at each position. A leaf mounts with no slot to fill, so the
+/// same component as a layout and as a leaf are different entries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Identity {
+    props: TypeId,
+    pub(crate) layout: bool,
+}
 
 /// One component in a chain, with the box it mounts in.
-struct Entry {
-    build: Build,
+#[derive(Clone)]
+pub(crate) struct Entry {
+    pub(crate) identity: Identity,
+    /// Build the props, fill the slot when there is one, and return the view with a clone of
+    /// the props.
+    pub(crate) mount: Mount,
+    /// Build the props again and assign them into a mounted entry's kept props.
+    pub(crate) reassign: Reassign,
     style: Option<Style>,
-    trap_focus: bool,
+    pub(crate) trap_focus: bool,
 }
 
 impl Entry {
@@ -22,13 +38,9 @@ impl Entry {
         P: WithChildren,
         F: Fn() -> P + Send + Sync + 'static,
     {
-        Entry::new(Arc::new(move |children| {
-            let mut props = props();
-            if let Some(children) = children {
-                props.set_children(children);
-            }
-            props.into_view()
-        }))
+        Entry::new(props, true, |props: &mut P, children| {
+            props.set_children(children)
+        })
     }
 
     fn leaf<P, F>(props: F) -> Entry
@@ -36,18 +48,46 @@ impl Entry {
         P: ComponentProps,
         F: Fn() -> P + Send + Sync + 'static,
     {
-        Entry::new(Arc::new(move |_| props().into_view()))
+        Entry::new(props, false, |_: &mut P, _| {})
     }
 
-    fn new(build: Build) -> Entry {
+    fn new<P, F>(props: F, layout: bool, fill: fn(&mut P, Children)) -> Entry
+    where
+        P: ComponentProps,
+        F: Fn() -> P + Send + Sync + 'static,
+    {
+        let props = Arc::new(props);
+        let build = Arc::clone(&props);
+        let mount: Mount = Arc::new(move |children| {
+            let mut props = build();
+            if let Some(children) = children {
+                fill(&mut props, children);
+            }
+            let kept: Kept = Arc::new(props.clone());
+            (props.into_view(), kept)
+        });
+        let reassign: Reassign = Arc::new(move |kept| {
+            let Some(current) = kept.downcast_ref::<P>() else {
+                return;
+            };
+            let scope = Scope::new();
+            let next = untracked(|| scope.run(|| props()));
+            current.assign(next);
+            scope.dispose();
+        });
         Entry {
-            build,
+            identity: Identity {
+                props: TypeId::of::<P>(),
+                layout,
+            },
+            mount,
+            reassign,
             style: None,
             trap_focus: false,
         }
     }
 
-    fn box_style(&self) -> Style {
+    pub(crate) fn box_style(&self) -> Style {
         let mut style = self.style.clone().unwrap_or_else(|| {
             let mut fill = Style::new();
             fill.flex_grow(1.0);
@@ -74,7 +114,7 @@ impl Entry {
 ///     .leaf(|| ProfileProps::builder().user(state(id)).build());
 /// ```
 pub struct Chain {
-    entries: Vec<Entry>,
+    pub(crate) entries: Vec<Entry>,
 }
 
 /// A chain's layouts, before its leaf is given.
@@ -165,42 +205,4 @@ fn set_trap_focus(entries: &mut [Entry]) {
     if let Some(entry) = entries.last_mut() {
         entry.trap_focus = true;
     }
-}
-
-/// Mount the chain `chain` produces, and mount it again whenever a signal it read changes.
-///
-/// `chain` is where the route is matched: `move || match route.get() { .. }`.
-pub fn routed<F>(chain: F) -> View
-where
-    F: Fn() -> Chain + Send + Sync + 'static,
-{
-    dynamic(move || {
-        let entries: Arc<[Entry]> = chain().entries.into();
-        level(entries, 0)
-    })
-}
-
-/// The entry at `index` in its box, with the entries after it as its children.
-fn level(entries: Arc<[Entry]>, index: usize) -> View {
-    let Some(entry) = entries.get(index) else {
-        return fragment(Vec::<View>::new());
-    };
-    let build = Arc::clone(&entry.build);
-    let style = entry.box_style();
-    let trap_focus = entry.trap_focus;
-    let has_next = index + 1 < entries.len();
-    // Deferred to mount, so the props closure runs untracked and under the entry's own scope,
-    // which then owns the props and the children slot.
-    let content = component(move || {
-        let children = has_next.then(|| {
-            let entries = Arc::clone(&entries);
-            Children::new(move || level(Arc::clone(&entries), index + 1))
-        });
-        build(children)
-    });
-    boxed()
-        .style(style)
-        .trap_focus(trap_focus)
-        .child(content)
-        .into()
 }
