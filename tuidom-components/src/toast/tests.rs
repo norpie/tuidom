@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use tuidom::NodeId;
-use tuidom::style::{Color, ResolvedColor};
+use tuidom::style::{Color, EdgeInsets, ResolvedColor, Style};
 use tuidom_ui::testing::Harness;
 use tuidom_ui::{Signal, View, component, state, view};
 
@@ -194,4 +194,25 @@ fn there_is_no_toaster_outside_one() {
     let mut h = Harness::new(4, 1, move || view! { Grab { into: grabbed } });
     h.screen();
     assert!(grabbed.get().is_none());
+}
+
+#[test]
+fn the_style_prop_merges_over_the_stack() {
+    let grabbed = state(None);
+    let mut h = Harness::new(30, 10, move || {
+        install_theme(Theme::dark());
+        let mut inset = Style::new();
+        inset.padding(EdgeInsets::new(0, 2, 1, 0));
+        view! { Toaster { style: inset.clone(), Grab { into: grabbed } } }
+    });
+    h.screen();
+    let toaster = grabbed.get().unwrap();
+    toaster.show(Toast {
+        title: "Second".to_string(),
+        ..Toast::default()
+    });
+    assert_eq!(h.row(6), "                  ▄▄▄▄▄▄▄▄▄▄");
+    assert_eq!(h.row(7), "                    Second");
+    assert_eq!(h.row(8), "                  ▀▀▀▀▀▀▀▀▀▀");
+    assert_eq!(h.row(9), "");
 }

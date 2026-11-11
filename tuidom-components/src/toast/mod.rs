@@ -71,8 +71,10 @@ pub fn use_toaster() -> Option<ToasterHandle> {
 /// Wrap the app in it once. The toasts stack in the bottom-right corner of the screen, newest at
 /// the bottom, over everything else, in `--popover`. Only the toasts themselves take presses, so
 /// the app around them stays usable. `Toaster` adds no box of its own around `children`.
+///
+/// `style` is merged over the stack's own style.
 #[component]
-pub fn Toaster(children: Children) -> View {
+pub fn Toaster(#[prop(default)] style: Style, children: Children) -> View {
     let toaster = ToasterHandle {
         shown: state(Vec::new()),
         next: state(0),
@@ -80,7 +82,11 @@ pub fn Toaster(children: Children) -> View {
     provide_context(toaster);
     let theme = use_theme();
     let root = use_document().map(|doc| doc.root());
-    let stack = derived(move || stack_style(root, theme));
+    let stack = derived(move || {
+        let mut stack = stack_style(root, theme);
+        stack.merge(&style.get());
+        stack
+    });
 
     fragment(vec![
         View::from(children),
