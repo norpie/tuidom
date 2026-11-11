@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use tuidom::Document;
+use tuidom::event::KeyCode;
 use tuidom::headless::HeadlessRuntime;
 
 use super::{NodeRef, View, mount};
@@ -114,10 +115,9 @@ fn a_binding_of_the_same_name_hides_a_signal_for_its_scope() {
 
 #[crate::component(reactive)]
 fn FormA(n: i32) -> View {
-    let mut base = state(0);
+    let base = state(0);
     base.set(n.get());
     base.update(|b| *b += 1);
-    base += 1;
     let read = (
         base.get(),
         n.with(|v| *v),
@@ -134,7 +134,99 @@ fn form_a_lines_are_left_alone() {
 
     let mut rt = HeadlessRuntime::new(doc, 40, 1);
     rt.render().unwrap();
-    assert_eq!(row0(&rt), "(7, 5, Some(7), Some(14))");
+    assert_eq!(row0(&rt), "(6, 5, Some(6), Some(12))");
+}
+
+#[derive(Clone, Default, PartialEq, Debug)]
+struct User {
+    name: String,
+    age: u32,
+}
+
+#[crate::component(reactive)]
+fn Chains(items: Vec<i32>, index: usize, user: User) -> View {
+    let len = derived(move || items.len());
+    let picked = derived(move || items.get(index).copied().unwrap_or(-1));
+    let doubled_sum = derived(move || items.iter().map(|i| i * 2).sum::<i32>());
+    let first = derived(move || items[0]);
+    let name = derived(move || user.name.clone());
+    let age = derived(move || user.age);
+    let summary = derived(move || (len, picked, doubled_sum, first, name, age));
+    crate::view! { text(format!("{:?}", summary.get())) }
+}
+
+#[test]
+fn a_method_chain_reads_through_with_and_tracks_its_arguments() {
+    let doc = Document::new().unwrap();
+    let items = state(vec![1, 2, 3]);
+    let index = state(1usize);
+    let _mounted = mount(
+        &doc,
+        doc.root(),
+        crate::view! {
+            Chains {
+                items: items,
+                index: index,
+                user: User { name: "ann".to_string(), age: 30 },
+            }
+        },
+    )
+    .unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 40, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt), "(3, 2, 12, 1, \"ann\", 30)");
+
+    index.set(2);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt), "(3, 3, 12, 1, \"ann\", 30)");
+
+    items.set(vec![5]);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt), "(1, -1, 10, 5, \"ann\", 30)");
+}
+
+#[derive(Clone, Default, PartialEq, Debug)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[crate::component(reactive)]
+fn Writes(start: i32) -> View {
+    let count = state(0);
+    let point = state(Point::default());
+    let list = state(vec![0, 0]);
+    let bump = move || {
+        count = start * 10;
+        count += start;
+        point.x = count;
+        point.y += 2;
+        list[1] = count + 1;
+        list[0] += 3;
+    };
+    crate::view! {
+        box {
+            focusable: true,
+            on_key_press: move |_| bump(),
+            text(format!("{} {:?} {:?}", count.get(), point.get(), list.get())),
+        }
+    }
+}
+
+#[test]
+fn writes_to_a_signal_and_its_fields_reach_the_screen() {
+    let doc = Document::new().unwrap();
+    let mounted = mount(&doc, doc.root(), crate::view! { Writes { start: 4 } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc.clone(), 40, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt), "0 Point { x: 0, y: 0 } [0, 0]");
+
+    doc.focus(mounted.roots()[0]).unwrap();
+    rt.simulate_key(KeyCode::Char('x'));
+    rt.render().unwrap();
+    assert_eq!(row0(&rt), "44 Point { x: 44, y: 2 } [3, 45]");
 }
 
 #[crate::component(reactive)]

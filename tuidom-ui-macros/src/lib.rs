@@ -391,7 +391,7 @@ fn expand_component(func: ItemFn, reactive: bool) -> syn::Result<TokenStream2> {
     let mut block = func.block.clone();
     if reactive {
         let signals = props.iter().filter(|p| p.is_signal).map(|p| p.name.clone());
-        reactive::rewrite_body(&mut block, signals);
+        reactive::rewrite_body(&mut block, signals)?;
     }
 
     let props_api = expand_props_builder(vis, name, &props_name, &props);

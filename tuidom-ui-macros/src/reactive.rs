@@ -3,10 +3,16 @@
 //! Names are resolved lexically, the way the compiler would: a binding of the same name in an
 //! inner scope hides a signal until that scope ends. Macro calls and nested items are skipped,
 //! so `signal!(x)` passes its argument through untouched.
+//!
+//! A `with` or `update` closure runs under the runtime lock, where reading another signal can
+//! deadlock. So everything a rewritten chain or write evaluates is moved into a local ahead of
+//! it, and a closure passed along a chain may not read a signal at all.
 
 use std::collections::HashMap;
+use std::mem;
 
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream};
+use quote::{format_ident, quote_spanned};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
@@ -16,18 +22,30 @@ use syn::{
 };
 
 /// Rewrite `block`, the body of a component whose props named `signals` are signals.
-pub(crate) fn rewrite_body(block: &mut Block, signals: impl IntoIterator<Item = Ident>) {
+pub(crate) fn rewrite_body(
+    block: &mut Block,
+    signals: impl IntoIterator<Item = Ident>,
+) -> syn::Result<()> {
     let props = signals.into_iter().map(|i| (i.to_string(), true)).collect();
     let mut rewriter = Rewriter {
         scopes: vec![props],
+        uses: Vec::new(),
+        error: None,
     };
     rewriter.visit_block_mut(block);
+    rewriter.error.map_or(Ok(()), Err)
 }
 
 struct Rewriter {
     /// Innermost last. Each maps a bound name to whether it is a signal.
     scopes: Vec<HashMap<String, bool>>,
+    /// Every use of a signal name met so far, in order.
+    uses: Vec<Ident>,
+    error: Option<syn::Error>,
 }
+
+/// Locals evaluated ahead of a rewritten read or write, in evaluation order.
+type Hoisted = Vec<(Ident, Expr)>;
 
 impl Rewriter {
     fn is_signal(&self, ident: &Ident) -> bool {
@@ -45,8 +63,169 @@ impl Rewriter {
         self.is_signal(ident).then_some(ident)
     }
 
-    fn names_signal(&self, expr: &Expr) -> bool {
-        matches!(expr, Expr::Path(path) if self.signal_ident(path).is_some())
+    /// The signal at the root of a chain of method calls, field accesses and indexing.
+    fn chain_root(&self, expr: &Expr) -> Option<Ident> {
+        match expr {
+            Expr::MethodCall(call) => self.chain_root(&call.receiver),
+            Expr::Field(field) => self.chain_root(&field.base),
+            Expr::Index(index) => self.chain_root(&index.expr),
+            Expr::Path(path) => self.signal_ident(path).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The signal a write targets: a bare signal name, or field accesses and indexing on one.
+    fn write_root(&self, left: &Expr) -> Option<Ident> {
+        match left {
+            Expr::Field(field) => self.write_root(&field.base),
+            Expr::Index(index) => self.write_root(&index.expr),
+            Expr::Path(path) => self.signal_ident(path).cloned(),
+            _ => None,
+        }
+    }
+
+    fn fail(&mut self, error: syn::Error) {
+        match &mut self.error {
+            Some(existing) => existing.combine(error),
+            None => self.error = Some(error),
+        }
+    }
+
+    fn replace(&mut self, expr: &mut Expr, tokens: TokenStream) {
+        match syn::parse2(tokens) {
+            Ok(rewritten) => *expr = rewritten,
+            Err(error) => self.fail(error),
+        }
+    }
+
+    /// A chain whose first step is one of Signal's own methods, as in `x.get().len()`: the
+    /// signal is left alone and only the arguments are visited.
+    fn visit_own_method_chain(&mut self, expr: &mut Expr) {
+        match expr {
+            Expr::MethodCall(call) => {
+                if let Expr::Path(path) = call.receiver.as_ref()
+                    && let Some(ident) = self.signal_ident(path).cloned()
+                {
+                    self.uses.push(ident);
+                } else {
+                    self.visit_own_method_chain(&mut call.receiver);
+                }
+                for arg in &mut call.args {
+                    self.visit_expr_mut(arg);
+                }
+            }
+            Expr::Field(field) => self.visit_own_method_chain(&mut field.base),
+            Expr::Index(index) => {
+                self.visit_own_method_chain(&mut index.expr);
+                self.visit_expr_mut(&mut index.index);
+            }
+            _ => {}
+        }
+    }
+
+    /// `root.with(|root| chain)`, with the chain's arguments evaluated ahead of it.
+    fn read_chain(&mut self, expr: &mut Expr, root: Ident) {
+        self.uses.push(root.clone());
+        let mut hoisted = Vec::new();
+        self.hoist_chain(expr, &root, &mut hoisted);
+        let read = quote_spanned! {root.span()=> #root.with(|#root| #expr) };
+        let tokens = if hoisted.is_empty() {
+            read
+        } else {
+            let lets = hoisted_lets(&hoisted, &root);
+            quote_spanned! {root.span()=> ({ #lets #read }) }
+        };
+        self.replace(expr, tokens);
+    }
+
+    /// Move the arguments and indices along a chain into locals.
+    fn hoist_chain(&mut self, expr: &mut Expr, root: &Ident, hoisted: &mut Hoisted) {
+        match expr {
+            Expr::MethodCall(call) => {
+                self.hoist_chain(&mut call.receiver, root, hoisted);
+                for arg in &mut call.args {
+                    self.hoist(arg, root, hoisted);
+                }
+            }
+            Expr::Field(field) => self.hoist_chain(&mut field.base, root, hoisted),
+            Expr::Index(index) => {
+                self.hoist_chain(&mut index.expr, root, hoisted);
+                self.hoist(&mut index.index, root, hoisted);
+            }
+            _ => {}
+        }
+    }
+
+    /// Rewrite `arg` and move it into a local. Literals stay in place, and so do closures,
+    /// which would lose their parameter types as locals and so must not read signals.
+    fn hoist(&mut self, arg: &mut Expr, root: &Ident, hoisted: &mut Hoisted) {
+        let before = self.uses.len();
+        self.visit_expr_mut(arg);
+        if matches!(arg, Expr::Closure(_)) {
+            if let Some(used) = self.uses.get(before) {
+                let message = format!(
+                    "this closure runs inside the read of `{root}`, where reading `{used}` can \
+                     deadlock; read `{used}` into a local before this line"
+                );
+                self.fail(syn::Error::new(used.span(), message));
+            }
+            return;
+        }
+        if matches!(arg, Expr::Lit(_)) {
+            return;
+        }
+        let local = format_ident!("arg{}", hoisted.len(), span = Span::mixed_site());
+        let value = mem::replace(arg, Expr::Path(path_of(local.clone())));
+        hoisted.push((local, value));
+    }
+
+    /// `root.set(v)`, or `root.update(|root| ..)` holding the assignment, with the value and
+    /// any indices evaluated ahead of it.
+    fn write(&mut self, expr: &mut Expr, root: Ident) {
+        self.uses.push(root.clone());
+        let plain = matches!(expr, Expr::Assign(_));
+        let (left, op, right) = match expr {
+            Expr::Assign(assign) => (
+                assign.left.as_mut(),
+                quote_spanned! {assign.eq_token.span=> = },
+                assign.right.as_mut(),
+            ),
+            Expr::Binary(binary) => {
+                let op = &binary.op;
+                (
+                    binary.left.as_mut(),
+                    quote_spanned! {op.span()=> #op },
+                    binary.right.as_mut(),
+                )
+            }
+            _ => return,
+        };
+        self.visit_expr_mut(right);
+        let bare = matches!(left, Expr::Path(_));
+        let tokens = if bare && plain {
+            quote_spanned! {root.span()=> #root.set(#right) }
+        } else {
+            let mut hoisted = Vec::new();
+            if !matches!(right, Expr::Lit(_)) {
+                let local = format_ident!("arg{}", hoisted.len(), span = Span::mixed_site());
+                let value = mem::replace(right, Expr::Path(path_of(local.clone())));
+                hoisted.push((local, value));
+            }
+            self.hoist_chain(left, &root, &mut hoisted);
+            let target = if bare {
+                quote_spanned! {root.span()=> *#root }
+            } else {
+                quote_spanned! {root.span()=> #left }
+            };
+            let update = quote_spanned! {root.span()=> #root.update(|#root| #target #op #right) };
+            if hoisted.is_empty() {
+                update
+            } else {
+                let lets = hoisted_lets(&hoisted, &root);
+                quote_spanned! {root.span()=> { #lets #update } }
+            }
+        };
+        self.replace(expr, tokens);
     }
 
     fn bind(&mut self, pat: &Pat, is_signal: bool) {
@@ -118,22 +297,25 @@ impl VisitMut for Rewriter {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
         match expr {
             Expr::Path(path) => {
-                if let Some(span) = self.signal_ident(path).map(Ident::span) {
-                    *expr = read(path.clone(), span);
+                if let Some(ident) = self.signal_ident(path).cloned() {
+                    *expr = read(path.clone(), ident.span());
+                    self.uses.push(ident);
                 }
             }
-            // Calls and field access on a signal are left as written.
-            Expr::MethodCall(call) if self.names_signal(&call.receiver) => {
-                for arg in &mut call.args {
-                    self.visit_expr_mut(arg);
+            Expr::MethodCall(_) | Expr::Field(_) | Expr::Index(_) => match self.chain_root(expr) {
+                Some(_) if starts_with_own_method(expr) => self.visit_own_method_chain(expr),
+                Some(root) => self.read_chain(expr, root),
+                None => visit_mut::visit_expr_mut(self, expr),
+            },
+            Expr::Assign(assign) => match self.write_root(&assign.left) {
+                Some(root) => self.write(expr, root),
+                None => visit_mut::visit_expr_mut(self, expr),
+            },
+            Expr::Binary(binary) if is_assign_op(&binary.op) => {
+                match self.write_root(&binary.left) {
+                    Some(root) => self.write(expr, root),
+                    None => visit_mut::visit_expr_mut(self, expr),
                 }
-            }
-            Expr::Field(field) if self.names_signal(&field.base) => {}
-            Expr::Assign(assign) if self.names_signal(&assign.left) => {
-                self.visit_expr_mut(&mut assign.right);
-            }
-            Expr::Binary(binary) if is_assign_op(&binary.op) && self.names_signal(&binary.left) => {
-                self.visit_expr_mut(&mut binary.right);
             }
             Expr::Closure(closure) => self.in_scope(|this| {
                 for input in &closure.inputs {
@@ -193,6 +375,38 @@ impl VisitMut for Rewriter {
     fn visit_type_mut(&mut self, _: &mut Type) {}
 
     fn visit_item_mut(&mut self, _: &mut Item) {}
+}
+
+/// Whether the first step of a chain is one of Signal's own methods with its own argument
+/// count, so the chain is already Form A.
+fn starts_with_own_method(expr: &Expr) -> bool {
+    match expr {
+        Expr::MethodCall(call) if matches!(call.receiver.as_ref(), Expr::Path(_)) => {
+            let arity = match call.method.to_string().as_str() {
+                "get" | "try_get" => 0,
+                "set" | "update" | "with" | "try_with" => 1,
+                _ => return false,
+            };
+            call.args.len() == arity
+        }
+        Expr::MethodCall(call) => starts_with_own_method(&call.receiver),
+        Expr::Field(field) => starts_with_own_method(&field.base),
+        Expr::Index(index) => starts_with_own_method(&index.expr),
+        _ => false,
+    }
+}
+
+fn hoisted_lets(hoisted: &Hoisted, root: &Ident) -> TokenStream {
+    let (locals, values): (Vec<_>, Vec<_>) = hoisted.iter().cloned().unzip();
+    quote_spanned! {root.span()=> #(let #locals = #values;)* }
+}
+
+fn path_of(ident: Ident) -> ExprPath {
+    ExprPath {
+        attrs: Vec::new(),
+        qself: None,
+        path: ident.into(),
+    }
 }
 
 /// `path.get()`, spanned at the name it reads.
