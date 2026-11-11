@@ -8,7 +8,7 @@ mod tmux;
 #[cfg(unix)]
 mod tty;
 
-pub(crate) use probe::probe;
+pub(crate) use probe::{pixel_size, probe};
 
 use crate::style::ResolvedColor;
 
@@ -137,5 +137,43 @@ impl TerminalInfo {
     /// a guess: the terminal is never asked.
     pub fn from_env() -> Self {
         env::detect(|name| std::env::var(name).ok())
+    }
+
+    /// This info with `pixel_size` in place, or `None` when that changes nothing.
+    pub(crate) fn with_pixel_size(&self, pixel_size: Option<PixelSize>) -> Option<Self> {
+        (self.pixel_size != pixel_size).then(|| Self {
+            pixel_size,
+            ..self.clone()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIZE: PixelSize = PixelSize {
+        width: 800,
+        height: 600,
+        cell_width: 10,
+        cell_height: 20,
+    };
+
+    #[test]
+    fn a_pixel_size_change_gives_new_info() {
+        let info = TerminalInfo::default();
+        let resized = info.with_pixel_size(Some(SIZE)).unwrap();
+        assert_eq!(resized.pixel_size, Some(SIZE));
+        assert_eq!(resized.with_pixel_size(None), Some(TerminalInfo::default()));
+    }
+
+    #[test]
+    fn an_unchanged_pixel_size_gives_nothing() {
+        assert_eq!(TerminalInfo::default().with_pixel_size(None), None);
+        let info = TerminalInfo {
+            pixel_size: Some(SIZE),
+            ..TerminalInfo::default()
+        };
+        assert_eq!(info.with_pixel_size(Some(SIZE)), None);
     }
 }

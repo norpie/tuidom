@@ -23,18 +23,19 @@ use crate::render::{Renderer, Terminal};
 use crate::runtime_event::{
     RuntimeEvent, RuntimeEventState, drain_and_coalesce, process_runtime_event, take_pending_resize,
 };
-use crate::terminal;
+use crate::terminal::{self, TerminalInfo};
 
 /// Run the runtime tasks until [`Document::quit`] is called or a critical task errors.
 pub(crate) async fn run(doc: Document) -> io::Result<()> {
     let terminal = Terminal::new()?;
     // Before any task starts: the probe reads the terminal's replies itself, and crossterm's
     // reader would take them for input.
-    *lock::mutex(&doc.inner.terminal_info) = Some(terminal::probe().await);
+    let info = terminal::probe().await;
+    enqueue_runtime_event(&doc, RuntimeEvent::TerminalInfo(Box::new(info.clone())))?;
 
     let mut tasks = JoinSet::new();
 
-    tasks.spawn(input_task(doc.clone()));
+    tasks.spawn(input_task(doc.clone(), info));
     tasks.spawn(event_task(doc.clone()));
     tasks.spawn(render_task(doc.clone(), terminal));
 
@@ -61,7 +62,7 @@ pub(crate) async fn run(doc: Document) -> io::Result<()> {
     Ok(())
 }
 
-async fn input_task(doc: Document) -> io::Result<()> {
+async fn input_task(doc: Document, mut info: TerminalInfo) -> io::Result<()> {
     let mut event_stream = EventStream::new();
 
     loop {
@@ -74,8 +75,15 @@ async fn input_task(doc: Document) -> io::Result<()> {
             maybe_event = event_stream.next() => {
                 match maybe_event {
                     Some(Ok(crossterm_event)) => {
+                        let resized = matches!(crossterm_event, CrosstermEvent::Resize(..));
                         if let Some(runtime_event) = convert_terminal_event(crossterm_event) {
                             enqueue_runtime_event(&doc, runtime_event)?;
+                        }
+                        if let Some(updated) =
+                            resized.then(|| info.with_pixel_size(terminal::pixel_size())).flatten()
+                        {
+                            info = updated.clone();
+                            enqueue_runtime_event(&doc, RuntimeEvent::TerminalInfo(Box::new(updated)))?;
                         }
                     }
                     Some(Err(err)) => return Err(err),

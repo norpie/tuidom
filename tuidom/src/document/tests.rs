@@ -22,6 +22,7 @@ use crate::style::{
     CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position,
     ResolvedColor, ScrollbarShow, Sides, Style, StyleValue,
 };
+use crate::terminal::TerminalInfo;
 use crate::virtualize::Virtualizer;
 
 #[test]
@@ -6778,6 +6779,56 @@ fn window_focus_changes_leave_dom_focus_untouched() {
         depth_before,
         "the focus stack must survive a window focus cycle"
     );
+}
+
+fn kitty_terminal() -> TerminalInfo {
+    TerminalInfo {
+        name: Some("kitty".to_string()),
+        probed: true,
+        ..TerminalInfo::default()
+    }
+}
+
+#[test]
+fn terminal_info_is_stored_before_its_listeners_run() {
+    let doc = Document::new().unwrap();
+    assert_eq!(doc.terminal(), None);
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let d = doc.clone();
+    doc.on_terminal_info(move |event| {
+        log.lock().unwrap().push((event.info.clone(), d.terminal()));
+    });
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    assert_eq!(doc.terminal(), None, "headless never probes");
+    runtime.set_terminal_info(kitty_terminal());
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [(kitty_terminal(), Some(kitty_terminal()))]
+    );
+    assert_eq!(doc.terminal(), Some(kitty_terminal()));
+}
+
+#[test]
+fn terminal_info_listeners_can_be_removed() {
+    let doc = Document::new().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let hits = calls.clone();
+    let handle = doc.on_terminal_info(move |_| {
+        hits.fetch_add(1, Ordering::Relaxed);
+    });
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.set_terminal_info(kitty_terminal());
+    assert!(doc.remove_listener(handle));
+    runtime.set_terminal_info(TerminalInfo::default());
+
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(doc.terminal(), Some(TerminalInfo::default()));
 }
 
 #[test]

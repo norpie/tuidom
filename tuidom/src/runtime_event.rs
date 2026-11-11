@@ -11,6 +11,7 @@ use crate::id::NodeId;
 use crate::lock;
 use crate::node::{LayoutRect, ScrollOffset};
 use crate::paint_order::{PaintEntry, entry_at, offset_for_thumb, scrollbar_strip_of};
+use crate::terminal::TerminalInfo;
 
 /// Internal runtime event used by runtime event queues and simulated input.
 ///
@@ -39,6 +40,9 @@ pub(crate) enum RuntimeEvent {
     WindowFocus,
     /// The terminal window lost OS focus.
     WindowBlur,
+    /// The terminal was probed, or its pixel size changed. Boxed for the same reason as
+    /// `PostFrame`.
+    TerminalInfo(Box<TerminalInfo>),
     /// A rendered frame, queued by the render task for post-frame dispatch.
     /// Boxed so the frame's metrics don't dominate the size of every queued event.
     PostFrame(Box<PostFrameEvent>),
@@ -322,6 +326,9 @@ pub(crate) fn process_runtime_event(
         }
         RuntimeEvent::WindowBlur => {
             doc.dispatch_window_blur();
+        }
+        RuntimeEvent::TerminalInfo(info) => {
+            doc.apply_terminal_info(*info);
         }
         // Not input: a frame between a mouse down and up must not suppress the click.
         RuntimeEvent::PostFrame(mut event) => {

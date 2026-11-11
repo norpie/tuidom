@@ -7,12 +7,13 @@ use crate::error::{Result, TuidomError};
 use crate::event::{
     AnimationEndEvent, AnimationIterationEvent, DragEvent, EventPhase, FocusEvent, InputEvent,
     KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent,
-    ScrollEvent, SelectionChangeEvent, TargetedEvent, TargetedEventKind, TransitionEndEvent,
-    WheelEvent, WindowBlurEvent, WindowFocusEvent,
+    ScrollEvent, SelectionChangeEvent, TargetedEvent, TargetedEventKind, TerminalInfoEvent,
+    TransitionEndEvent, WheelEvent, WindowBlurEvent, WindowFocusEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
 use crate::panic::catch_handler_panic;
+use crate::terminal::TerminalInfo;
 
 impl Document {
     /// Register a key press listener on a node.
@@ -357,6 +358,40 @@ impl Document {
         )
     }
 
+    /// Register a listener for what the engine finds out about the terminal.
+    ///
+    /// Fires once when [`run`](Self::run) has probed the terminal, and again when a resize
+    /// changes its pixel size. Document-level like resize: no target, no bubbling.
+    ///
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_terminal_info<F>(&self, handler: F) -> ListenerHandle
+    where
+        F: Fn(&mut TerminalInfoEvent) + Send + Sync + 'static,
+    {
+        self.register_document_listener(
+            &self.inner.terminal_info_listeners,
+            ListenerKind::TerminalInfo(Arc::new(handler)),
+        )
+    }
+
+    /// Store `info` as the terminal's and tell the listeners.
+    pub(crate) fn apply_terminal_info(&self, info: TerminalInfo) {
+        *lock::mutex(&self.inner.terminal_info) = Some(info.clone());
+        let listeners = lock::mutex(&self.inner.terminal_info_listeners).clone();
+        let mut event = TerminalInfoEvent { info };
+        for listener in listeners {
+            let panicked = catch_handler_panic(|| {
+                if let ListenerKind::TerminalInfo(handler) = &listener.kind {
+                    handler(&mut event);
+                }
+            });
+
+            if panicked {
+                tracing::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
     pub(crate) fn dispatch_window_focus(&self) {
         let listeners = lock::mutex(&self.inner.window_focus_listeners).clone();
         let mut event = WindowFocusEvent;
@@ -455,6 +490,7 @@ impl Document {
             &self.inner.selection_listeners,
             &self.inner.window_focus_listeners,
             &self.inner.window_blur_listeners,
+            &self.inner.terminal_info_listeners,
         ] {
             let mut listeners = lock::mutex(store);
             let old_len = listeners.len();

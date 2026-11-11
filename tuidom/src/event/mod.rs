@@ -13,6 +13,7 @@ use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::SelectionPoint;
 use crate::id::NodeId;
 use crate::performance::FrameMetrics;
+use crate::terminal::TerminalInfo;
 
 /// Keyboard bindings used by document-level focus default actions.
 ///
@@ -806,6 +807,17 @@ pub struct WindowFocusEvent;
 #[derive(Debug, Clone)]
 pub struct WindowBlurEvent;
 
+/// What the engine found out about the terminal.
+///
+/// Fired once when [`Document::run`](crate::Document::run) has probed the terminal, and again
+/// whenever a resize changes the pixel size. Document-level like resize: no target, no
+/// bubbling. [`Document::terminal`](crate::Document::terminal) returns the same value afterwards.
+#[derive(Debug, Clone)]
+pub struct TerminalInfoEvent {
+    /// The terminal as now known.
+    pub info: TerminalInfo,
+}
+
 /// A completed frame, dispatched after it was flushed to the screen.
 ///
 /// Post-frame is document-level like resize: a frame has no target node, so the
@@ -967,6 +979,8 @@ pub(crate) type PostFrameEventHandler = Arc<dyn Fn(&mut PostFrameEvent) + Send +
 pub(crate) type WindowFocusEventHandler =
     Arc<dyn Fn(&mut WindowFocusEvent) + Send + Sync + 'static>;
 pub(crate) type WindowBlurEventHandler = Arc<dyn Fn(&mut WindowBlurEvent) + Send + Sync + 'static>;
+pub(crate) type TerminalInfoEventHandler =
+    Arc<dyn Fn(&mut TerminalInfoEvent) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TargetedEventKind {
@@ -1027,6 +1041,8 @@ pub(crate) enum ListenerKind {
     WindowFocus(WindowFocusEventHandler),
     /// Terminal window blur listener.
     WindowBlur(WindowBlurEventHandler),
+    /// Terminal info listener.
+    TerminalInfo(TerminalInfoEventHandler),
 }
 
 /// Registered event listener.

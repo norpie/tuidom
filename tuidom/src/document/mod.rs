@@ -23,6 +23,7 @@ use crate::performance::{
     PerformanceDetail, PerformanceSnapshot, PerformanceState, RenderMetrics, StyleCounters,
 };
 use crate::style::Color;
+use crate::terminal::TerminalInfo;
 
 mod animation;
 mod attrs;
@@ -147,6 +148,7 @@ impl Document {
                 resize_listeners: Mutex::new(Vec::new()),
                 post_frame_listeners: Mutex::new(Vec::new()),
                 window_focus_listeners: Mutex::new(Vec::new()),
+                terminal_info_listeners: Mutex::new(Vec::new()),
                 window_blur_listeners: Mutex::new(Vec::new()),
                 color_vars: Mutex::new(HashMap::new()),
                 terminal_background: Mutex::new(Color::black()),
@@ -378,6 +380,16 @@ impl Document {
     pub fn bell(&self) {
         self.inner.pending_bell.store(true, Ordering::SeqCst);
         self.inner.notify.notify_one();
+    }
+
+    /// What is known about the terminal.
+    ///
+    /// `None` until [`run`](Self::run) has probed it, which happens after any code that
+    /// builds the document before calling `run`; listen with
+    /// [`on_terminal_info`](Self::on_terminal_info) to learn when it arrives.
+    /// [`TerminalInfo::from_env`] is available earlier, as a guess.
+    pub fn terminal(&self) -> Option<TerminalInfo> {
+        lock::mutex(&self.inner.terminal_info).clone()
     }
 
     /// Claim a pending bell for the frame being flushed.

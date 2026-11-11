@@ -20,6 +20,7 @@ use crate::runtime_event::{
 };
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
+use crate::terminal::TerminalInfo;
 
 /// A terminal-free runtime harness for deterministic layout, paint, and input tests.
 pub struct HeadlessRuntime {
@@ -369,6 +370,18 @@ impl HeadlessRuntime {
         process_runtime_event(
             &self.doc,
             RuntimeEvent::KeyPress(KeyEvent::with_modifiers(code, modifiers)),
+            &mut self.event_state,
+        );
+    }
+
+    /// Declare what the terminal is, as the probe in [`Document::run`] would have found it.
+    ///
+    /// Stores it for [`Document::terminal`] and fires `on_terminal_info`. A headless runtime
+    /// never probes, so until this is called `terminal()` is `None`.
+    pub fn set_terminal_info(&mut self, info: TerminalInfo) {
+        process_runtime_event(
+            &self.doc,
+            RuntimeEvent::TerminalInfo(Box::new(info)),
             &mut self.event_state,
         );
     }
