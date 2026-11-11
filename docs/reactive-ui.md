@@ -70,6 +70,7 @@ Dependencies are found by reading, not declared, and collected again on every ru
 derived that stops reading a signal behind a branch stops depending on it. It is lazy: a
 change marks it stale, and it recomputes on the next read. Anything reading it depends on the
 derived itself, so when its inputs change but its value does not, nothing downstream reruns.
+It is read like a signal, with `get` and `with`, but has no setter.
 
 An **Effect** is a side effect with tracked dependencies. It runs once immediately and again
 whenever something it read changes:

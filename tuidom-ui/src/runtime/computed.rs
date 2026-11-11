@@ -119,16 +119,34 @@ impl<T: 'static> Derived<T> {
     }
 }
 
+impl<T: Default + 'static> Derived<T> {
+    /// Recompute if stale, then read via a projection without cloning the whole value,
+    /// subscribing the running computation to this derived.
+    ///
+    /// If the derived has been disposed the closure sees `T::default()` and a warning is
+    /// logged. The same lock discipline as [`try_with`](Self::try_with) applies: the closure
+    /// must not touch any signal.
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        track(self.id);
+        ensure_fresh(self.id);
+        let guard = rt().read();
+        if let Some(Kind::Derived {
+            value: Some(value), ..
+        }) = guard.nodes.get(&self.id).map(|n| &n.kind)
+            && let Some(v) = value.downcast_ref::<T>()
+        {
+            return f(v);
+        }
+        drop(guard);
+        tracing::warn!("read of a disposed derived; falling back to Default");
+        f(&T::default())
+    }
+}
+
 impl<T: Clone + Default + 'static> Derived<T> {
     /// Recompute if stale, then clone the value, subscribing the running computation to this
     /// derived. Falls back to `T::default()` (and logs) if it has been disposed.
     pub fn get(&self) -> T {
-        match self.try_with(T::clone) {
-            Some(v) => v,
-            None => {
-                tracing::warn!("read of a disposed derived; falling back to Default");
-                T::default()
-            }
-        }
+        self.with(T::clone)
     }
 }

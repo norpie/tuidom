@@ -153,6 +153,18 @@ fn an_effect_reruns_through_a_derived() {
     assert_eq!(seen.get(), 20);
 }
 
+#[test]
+fn an_effect_reruns_through_a_derived_read_by_projection() {
+    let s = state(String::from("ab"));
+    let upper = derived(move || s.get().to_uppercase());
+    let seen = state(0);
+    effect(move || seen.set(upper.with(|v| v.len())));
+
+    assert_eq!(seen.get(), 2);
+    s.set(String::from("abcd"));
+    assert_eq!(seen.get(), 4);
+}
+
 // ---- Flush, diamond, batching, operators ------------------------------------------------
 
 #[test]
