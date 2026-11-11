@@ -172,6 +172,62 @@ them ever claims responsibility. See
 There is **one `Terminal` per process, enforced** — a second `run()` is refused rather than
 left to corrupt the screen. Which is also why [headless](testing.md) exists.
 
+## What the terminal is
+
+`run()` asks the terminal what it is before anything else happens, and reports the answer as a
+`TerminalInfo`:
+
+```rust
+doc.on_terminal_info(|event| {
+    if event.info.graphics.kitty {
+        // the kitty graphics protocol will work
+    }
+});
+```
+
+`doc.terminal()` returns the same value afterwards. It is `None` until `run()` has probed, so
+code that builds the document before calling `run()` has to listen for the event.
+`TerminalInfo::from_env()` gives the environment's guess at any time, without asking the
+terminal. Headless never probes; a test declares the info with
+`HeadlessRuntime::set_terminal_info`.
+
+**The environment is a first guess.** `TERM`, `TERM_PROGRAM`, `COLORTERM` and a few
+terminal-specific variables name the terminal and its color depth. They are often wrong: over
+SSH most of them never arrive, and inside a multiplexer they describe whichever terminal
+started it. Inside one, the environment's terminal name is not used at all.
+
+**Replies are the answer.** Raw mode goes on, then the probe writes its queries and reads the
+replies itself, before crossterm's reader starts and would take them for key presses:
+
+- XTVERSION for the name and version
+- OSC 10 and 11 for the default foreground and background
+- the kitty graphics query
+- XTGETTCAP `RGB` and `Tc` for 24-bit color
+- DA1 last. Every terminal answers it, so its reply means everything else that will be
+  answered has been, and it carries the sixel flag.
+
+A terminal that ignores DA1 costs up to 300 ms of startup before the probe gives up. Keys
+typed while the probe runs are lost. Queries need a Unix terminal; elsewhere the info comes
+from the environment alone.
+
+**Inside tmux**, tmux answers the queries itself: XTVERSION gives tmux's version, and the
+colors are the pane's. One `tmux display-message` names the terminal tmux is attached to
+and says whether `allow-passthrough` is on. Only when it is does a second batch go out,
+wrapped so tmux forwards it, to find out whether that terminal has kitty graphics. With
+passthrough off nothing waits on it, and no image protocol is reported as usable except sixel,
+which tmux can draw itself.
+
+How far each field goes:
+
+- `color_depth` is a floor. A terminal that says nothing is assumed to show 16 colors.
+- `no_color` is the user's `NO_COLOR` preference, not something the terminal lacks.
+- `graphics.iterm2` has no query, so it comes from the terminal's name alone.
+- `pixel_size` is re-read on every resize, and the event fires again when it changes.
+
+All of it is reported, and none of it changes how the engine draws. Colors still go out as
+24-bit RGB, and the background color math still uses the
+[declared terminal background](colors.md#terminal-background-is-an-assumption).
+
 ## Performance metrics
 
 Every frame records timings, available without instrumenting anything:

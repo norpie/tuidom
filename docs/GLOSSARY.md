@@ -128,7 +128,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Effective Background** — The background a node visually sits on; what `CurrentBg` resolves to, and never absent. See [effective background](colors.md#effective-background).
 
-**Terminal Background** — The terminal background the document *assumes*, since the real one is unknowable. Never painted. See [terminal background is an assumption](colors.md#terminal-background-is-an-assumption).
+**Terminal Background** — The terminal background the document *assumes*: declared, since not every terminal reports its own, and the engine never substitutes the one it does report. Never painted. See [terminal background is an assumption](colors.md#terminal-background-is-an-assumption).
 
 **Default Foreground** — The color of every node whose `color` is unset, set with `doc.set_default_color`. An expression evaluated at each node, so a default of `Color::var(..)` follows the nearest declaration. See [the default foreground](colors.md#the-default-foreground).
 
@@ -229,6 +229,10 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 **Scrollbar** — Overlay strips on a scroll container's last viewport column and row, occupying no layout. See [scrollbars](scrolling.md#scrollbars).
 
 **WhenScrolling** — The auto-hiding scrollbar show mode: appears on offset change, holds, then fades. Scheduled rather than polled. See [`WhenScrolling`](scrolling.md#whenscrolling).
+
+**Terminal Info** — What is known about the terminal: name, multiplexer, color depth, image protocols, default colors, pixel size. Reported only; the engine draws the same whatever it says. See [what the terminal is](rendering.md#what-the-terminal-is).
+
+**Terminal Probe** — The queries `run()` sends once raw mode is on and before any task reads input, ending with DA1, whose reply means the terminal has answered everything it will. See [what the terminal is](rendering.md#what-the-terminal-is).
 
 **Render Cursor** — Cursor metadata produced alongside a frame — position, shape, color, clipped visibility — without mutating cell content. See [the cursor](rendering.md#the-cursor).
 

@@ -116,6 +116,7 @@ different framework could be built the same way.
 - Completely passive when idle, active during animations
 - Crossterm backend
 - Wide-character (CJK, emoji) aware text measurement and rendering
+- Terminal detection: name, multiplexer, color depth, image protocols, default colors, pixel size
 
 **Stacking & Focus:**
 - Every subtree paints as an isolated unit, so `z_index` cannot bleed across siblings

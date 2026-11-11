@@ -67,7 +67,11 @@ impl Document {
 
     /// Declare the terminal's background color.
     ///
-    /// The real one is unknowable without querying the terminal, so tuidom asks you to state it.
+    /// Not every terminal reports its own, and one that does reports it only once
+    /// [`run`](Self::run) has probed it, as
+    /// [`TerminalInfo::background`](crate::terminal::TerminalInfo::background). So tuidom asks
+    /// you to state it, and never substitutes the reported one.
+    ///
     /// It is what [`Color::CurrentBg`] resolves to on a node with no background anywhere in its
     /// ancestry, and what a translucent color blends toward over an unpainted cell. It defaults to
     /// black.

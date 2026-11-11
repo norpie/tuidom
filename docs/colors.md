@@ -185,10 +185,24 @@ ancestor rather than resolving to nothing.
 
 `set_terminal_background` does not paint anything, and it does not detect anything.
 
-The real terminal background is unknowable without querying the terminal, which not all
-terminals answer. So tuidom has you **declare** it, and uses that declaration for two
+Not every terminal says what its background is, and the one that does says it only after
+`run()` has started. So tuidom has you **declare** it, and uses that declaration for two
 things: the bottom of the effective-background chain, and the base a translucent color
 blends toward over an unpainted cell.
+
+When the terminal does answer, its background is `TerminalInfo::background`. The engine
+does not swap it in. To use it, declare it yourself once it arrives:
+
+```rust
+let d = doc.clone();
+doc.on_terminal_info(move |event| {
+    if let Some(background) = event.info.background {
+        d.set_terminal_background(background.into());
+    }
+});
+```
+
+See [what the terminal is](rendering.md#what-the-terminal-is).
 
 It is never itself painted. An unpainted cell emits the terminal's default, so an app that
 styles nothing keeps showing the user's real background — including their transparency and

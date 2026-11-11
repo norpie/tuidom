@@ -420,6 +420,14 @@ returns the user to exactly the node they left.
 Terminals that do not support focus reporting simply never send it. There is no capability
 check to write; the events just stay silent.
 
+## Terminal info
+
+`on_terminal_info` fires once `run()` has asked the terminal what it is, and again when a
+resize changes the terminal's pixel size. It carries the whole `TerminalInfo`, which
+`doc.terminal()` returns from then on. Like resize it is document-level, and it goes through
+the runtime queue, so the handler runs on the event task, ordered with input. See
+[what the terminal is](rendering.md#what-the-terminal-is).
+
 ## Input coalescing
 
 The event queue is unbounded and never applies backpressure. There is nobody to push back

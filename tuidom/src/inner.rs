@@ -327,9 +327,9 @@ pub(crate) struct DocumentInner {
 
     /// The terminal background color the document assumes.
     ///
-    /// The real one is unknowable without querying the terminal, so it is declared rather than
-    /// detected. It is an assumption used for resolving colors and blending translucent ones —
-    /// never a color that gets painted.
+    /// Declared rather than taken from the probe, since not every terminal reports its own. It
+    /// is an assumption used for resolving colors and blending translucent ones — never a color
+    /// that gets painted.
     pub terminal_background: Mutex<Color>,
 
     /// What the probe in [`Document::run`](crate::Document::run) found out about the terminal.

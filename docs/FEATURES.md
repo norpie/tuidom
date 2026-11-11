@@ -241,7 +241,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Resolution order: variables, then `background`, then `color`, then every other color property
   - [x] In `background` and in a variable declaration, `CurrentBg`/`CurrentFg` mean the *parent's* values — self-reference is otherwise circular
   - [x] `CurrentBg` on a transparent node sees through to the nearest painted ancestor
-- [x] Declared terminal background (`doc.set_terminal_background`) — the real one is unknowable, so it is assumed
+- [x] Declared terminal background (`doc.set_terminal_background`) — not every terminal reports its own, so it is assumed
 - [x] Default foreground (`doc.set_default_color`) for nodes with an unset `color`, evaluated per node so a
       variable default follows the nearest declaration
   - [x] The bottom of the `CurrentBg` chain, and the base a translucent color blends toward over an unpainted cell
@@ -312,6 +312,16 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Per event, so a burst of input still lets frames in between
   - [x] Direct `Document` calls from other tasks each land whole, but a group of them is not
         held together
+- [x] Terminal info (`doc.terminal()`, `on_terminal_info`), reported and never acted on:
+  - [x] Environment guess (`TerminalInfo::from_env`): terminal, multiplexer, color depth,
+        `NO_COLOR`, SSH
+  - [x] Probe in `run()` before input is read: XTVERSION, OSC 10/11, kitty graphics, XTGETTCAP,
+        DA1 as the end marker and sixel flag, with a deadline for terminals that ignore DA1
+  - [x] Inside tmux: the attached terminal and `allow-passthrough` from `tmux display-message`,
+        and a passthrough batch for kitty graphics only when passthrough is on
+  - [x] Pixel size, re-read on resize
+  - [x] Declared in headless with `HeadlessRuntime::set_terminal_info`
+  - [ ] Queries outside Unix
 
 ## Event System
 
