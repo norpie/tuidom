@@ -12,7 +12,8 @@
 use std::collections::HashMap;
 use std::mem;
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Delimiter, Group, Span, TokenStream, TokenTree};
+use quote::ToTokens;
 use quote::{format_ident, quote_spanned};
 use syn::parse::{ParseStream, Parser};
 use syn::punctuated::Punctuated;
@@ -381,7 +382,14 @@ impl Rewriter {
         self.uses.push(root.clone());
         let mut hoisted = Vec::new();
         self.hoist_chain(expr, &root, &mut hoisted);
-        let read = quote_spanned! {root.span()=> #root.with(|#root| #expr) };
+        // The closing parenthesis takes the chain's end, so rustc sees the read as spanning the
+        // whole chain and a type error underlines all of it rather than the signal's name.
+        let mut call = Group::new(
+            Delimiter::Parenthesis,
+            quote_spanned! {root.span()=> |#root| #expr },
+        );
+        call.set_span(last_span(expr).unwrap_or(root.span()));
+        let read = quote_spanned! {root.span()=> #root.with #call };
         let tokens = if hoisted.is_empty() {
             read
         } else {
@@ -710,6 +718,14 @@ fn parse_derived(input: ParseStream) -> syn::Result<Expr> {
         input.parse::<Token![,]>()?;
     }
     Ok(expr)
+}
+
+/// The span of an expression's last token, or of its closing delimiter.
+fn last_span(expr: &Expr) -> Option<Span> {
+    match expr.to_token_stream().into_iter().last()? {
+        TokenTree::Group(group) => Some(group.span_close()),
+        token => Some(token.span()),
+    }
 }
 
 fn hoisted_lets(hoisted: &Hoisted, root: &Ident) -> TokenStream {
