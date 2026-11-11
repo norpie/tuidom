@@ -1178,6 +1178,7 @@ dependencies = [
 name = "tuidom-router"
 version = "0.1.0"
 dependencies = [
+ "tokio",
  "tuidom",
  "tuidom-ui",
 ]

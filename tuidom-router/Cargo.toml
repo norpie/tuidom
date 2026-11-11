@@ -17,3 +17,8 @@ tuidom-ui = { path = "../tuidom-ui" }
 
 [dev-dependencies]
 tuidom-ui = { path = "../tuidom-ui", features = ["testing"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+
+[[example]]
+name = "mail"
+test = true
