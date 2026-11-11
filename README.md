@@ -155,6 +155,7 @@ Tests are the verification path for every crate; the examples are for trying it 
 
 ```sh
 cargo run -p tuidom --example demo                  # most of the engine in one file
+cargo run -p tuidom --example term_info             # what was detected about your terminal
 cargo run -p tuidom-components --example showcase   # each component on its own
 cargo run -p tuidom-components --example tracker    # an app built from the components
 cargo run -p tuidom-router --example mail           # a routed app
