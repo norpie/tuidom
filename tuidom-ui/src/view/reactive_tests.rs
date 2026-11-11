@@ -379,3 +379,31 @@ fn bind_value_takes_the_handle_in_a_reactive_template() {
     h.type_text("hey");
     assert_eq!(h.row(1), "hey");
 }
+
+#[crate::component(reactive)]
+fn Interpolated(count: i32) -> View {
+    let width = 4usize;
+    let ratio = crate::derived!(count as f64 / 4.0);
+    crate::view! {
+        box {
+            style: column(),
+            text("{count} left"),
+            "{ratio:.2}|{count:>width$}|{{x}}",
+            "{{static}}",
+        }
+    }
+}
+
+#[test]
+fn a_text_literal_with_holes_updates_with_the_signals_it_names() {
+    let count = state(3);
+    let mut h = Harness::new(
+        20,
+        3,
+        move || crate::view! { Interpolated { count: count } },
+    );
+    assert_eq!(h.screen(), "3 left\n0.75|   3|{x}\n{static}");
+
+    count.set(6);
+    assert_eq!(h.screen(), "6 left\n1.50|   6|{x}\n{static}");
+}

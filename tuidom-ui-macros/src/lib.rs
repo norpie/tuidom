@@ -11,6 +11,7 @@
 
 #![warn(missing_docs)]
 
+mod format_string;
 mod reactive;
 
 use proc_macro::TokenStream;

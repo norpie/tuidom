@@ -19,9 +19,11 @@ use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    BinOp, Block, Expr, ExprMethodCall, ExprPath, FieldValue, Ident, Item, Local, Macro, Pat, Stmt,
-    Token, Type, token,
+    BinOp, Block, Expr, ExprLit, ExprMethodCall, ExprPath, FieldValue, Ident, Item, Lit, LitStr,
+    Local, Macro, Pat, Stmt, Token, Type, token,
 };
+
+use crate::format_string;
 
 use crate::{ElseBranch, IfNode, Node};
 
@@ -128,7 +130,16 @@ impl Rewriter {
     fn visit_node(&mut self, node: &mut Node) {
         match node {
             Node::Text { content, style } => {
-                self.visit_expr_mut(content);
+                if let Expr::Lit(ExprLit {
+                    lit: Lit::Str(lit), ..
+                }) = content
+                {
+                    if let Some(interpolated) = self.interpolate(lit) {
+                        *content = interpolated;
+                    }
+                } else {
+                    self.visit_expr_mut(content);
+                }
                 if let Some(style) = style {
                     self.visit_expr_mut(style);
                 }
@@ -191,6 +202,33 @@ impl Rewriter {
                 self.visit_nodes(children);
             }
         }
+    }
+
+    /// A text literal's holes as a `format!` with a named argument per name, each read through
+    /// the rewrite. A literal without holes stays a literal, its escapes resolved.
+    fn interpolate(&mut self, lit: &LitStr) -> Option<Expr> {
+        let scanned = match format_string::scan(&lit.value()) {
+            Ok(scanned) => scanned,
+            Err(message) => {
+                self.fail(syn::Error::new(lit.span(), message));
+                return None;
+            }
+        };
+        if scanned.names.is_empty() {
+            let text = LitStr::new(&scanned.unescaped, lit.span());
+            return Some(Expr::Lit(ExprLit {
+                attrs: Vec::new(),
+                lit: Lit::Str(text),
+            }));
+        }
+        let args = scanned.names.iter().map(|name| {
+            let ident = Ident::new(name, lit.span());
+            let mut value = Expr::Path(path_of(ident.clone()));
+            self.visit_expr_mut(&mut value);
+            quote_spanned! {lit.span()=> #ident = #value }
+        });
+        let tokens = quote_spanned! {lit.span()=> ::std::format!(#lit, #(#args),*) };
+        self.parse(syn::parse2(tokens))
     }
 
     fn visit_nodes(&mut self, nodes: &mut [Node]) {
