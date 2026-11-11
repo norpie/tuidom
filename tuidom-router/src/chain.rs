@@ -168,7 +168,12 @@ impl Chain {
     /// chain.
     ///
     /// A retained leaf lives in the slot of the layout that held it and is disposed with that
-    /// layout. While hidden, any focus context in it traps nothing.
+    /// layout. While hidden, any focus context in it traps nothing, and its effects and spawned
+    /// tasks keep running.
+    ///
+    /// The flag is read when navigation leaves the leaf. A leaf already hidden is not affected
+    /// if the chain for its route would now be built without `retain`: it stays hidden until
+    /// the route returns to it, or its layout goes.
     pub fn retain(mut self) -> Self {
         if let Some(entry) = self.entries.last_mut() {
             entry.retain = true;

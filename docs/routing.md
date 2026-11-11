@@ -120,7 +120,15 @@ own or a dialog's left open, [traps nothing while hidden](focus-and-selection.md
 and a virtual list in it keeps its window rather than collapsing to an empty viewport.
 
 Retention is opt-in because every retained screen stays in memory and in the tree for as long
-as its layout does.
+as its layout does, and stays live: its effects keep running and its spawned tasks keep
+going while it is hidden. A screen that polls or streams should pause on a signal it reads,
+or not be retained.
+
+Whether a leaf is retained is read from the chain when navigation leaves it, and the router
+only ever builds the chain for the current route. So make retention a fixed property of a
+route. If it depends on state, such as a setting that turns it off, a leaf already hidden
+when the state changes stays hidden until the route returns to it, after which it is
+disposed the next time it is left, or until its layout goes.
 
 ## Back
 
