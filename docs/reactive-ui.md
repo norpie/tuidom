@@ -337,8 +337,9 @@ or an `Arc` is the usual payload.
 ### Props built by hand
 
 `#[component]` generates a `{Name}Props` struct with a `builder()`, which is what `view!` fills.
-Code can use it directly: a signal prop's setter takes a signal, and the struct implements
-`ComponentProps`, whose `into_view` builds the component:
+Code can use it directly: a signal prop's setter takes a signal, a bound `Signal<T>`
+parameter's setter takes the caller's signal as a `Bound` (`.on(dark.into())`), and the struct
+implements `ComponentProps`, whose `into_view` builds the component:
 
 ```rust
 let props = CounterProps::builder().start(state(10)).build();

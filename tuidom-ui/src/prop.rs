@@ -119,11 +119,21 @@ impl<T: Clone + Default + 'static> PropValue<T> for Derived<T> {
     }
 }
 
-/// What the setter of a `Signal<T>` parameter takes: the caller's own signal, passed through.
+/// What the builder setter of a `Signal<T>` parameter takes: the caller's own signal, passed
+/// through, so the component writes back into it.
 ///
-/// A separate type because `Signal<T>` already converts from a closure producing `T`, and a second
-/// conversion from a closure producing `Signal<T>` would overlap it.
+/// `view!` builds one from a signal named at the call site. Props built by hand pass
+/// `Bound(signal)`, or `signal.into()`.
+///
+/// A separate type because a signal prop's `Signal<T>` already converts from a closure producing
+/// `T`, and a second conversion from a closure producing `Signal<T>` would overlap it.
 pub struct Bound<T: 'static>(pub Signal<T>);
+
+impl<T: 'static> From<Signal<T>> for Bound<T> {
+    fn from(signal: Signal<T>) -> Self {
+        Bound(signal)
+    }
+}
 
 impl<T: 'static, F: FnOnce() -> Signal<T>> FromPropExpr<F> for Bound<T> {
     fn from_prop_expr(f: F) -> Self {

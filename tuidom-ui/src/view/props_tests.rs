@@ -150,17 +150,13 @@ fn Editor(value: Signal<i32>) -> View {
 fn a_bound_signal_prop_stays_bound_to_the_caller_it_mounted_with() {
     let doc = Document::new().unwrap();
     let original = state(1);
-    let props = EditorProps::builder()
-        .value(crate::__private::Bound(original))
-        .build();
+    let props = EditorProps::builder().value(crate::Bound(original)).build();
     let _mounted = mount(&doc, doc.root(), props.clone().into_view()).unwrap();
     let mut rt = HeadlessRuntime::new(doc, 40, 1);
 
     let other = state(9);
     assign_built(&props, || {
-        EditorProps::builder()
-            .value(crate::__private::Bound(other))
-            .build()
+        EditorProps::builder().value(other.into()).build()
     });
     rt.render().unwrap();
     assert_eq!(row0(&rt), "1");

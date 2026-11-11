@@ -235,7 +235,8 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// # Props outside a template
 ///
 /// The props are a `{Name}Props` struct with a `builder()`, which `view!` fills from the call
-/// site. It implements [`ComponentProps`], and [`WithChildren`] when the component takes
+/// site. A signal prop's setter takes a signal, and a bound `Signal<T>` parameter's setter takes
+/// the caller's signal as a [`Bound`]. It implements [`ComponentProps`], and [`WithChildren`] when the component takes
 /// `children`, so code can build props by hand, mount them with `into_view`, and later
 /// `assign` newer ones from a clone kept before mounting. The mounted component then updates
 /// through its signals without its body running again.
@@ -282,6 +283,7 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// [`Callback<A>`]: ../tuidom_ui/struct.Callback.html
 /// [`NodeRef`]: ../tuidom_ui/struct.NodeRef.html
 /// [`ComponentProps`]: ../tuidom_ui/trait.ComponentProps.html
+/// [`Bound`]: ../tuidom_ui/struct.Bound.html
 /// [`WithChildren`]: ../tuidom_ui/trait.WithChildren.html
 /// [`provide_context`]: ../tuidom_ui/fn.provide_context.html
 /// [`use_context`]: ../tuidom_ui/fn.use_context.html
@@ -402,8 +404,7 @@ fn expand_component(func: ItemFn, reactive: bool) -> syn::Result<TokenStream2> {
         // The last four are detected syntactically by the type's last path segment (like
         // `Option`), so an alias of any would slip through — accepted.
         // Every other parameter is a signal prop, wrapped so the body reads it as `Signal<T>`.
-        let bound =
-            signal_value_type(ty).map(|inner| quote! { ::tuidom_ui::__private::Bound<#inner> });
+        let bound = signal_value_type(ty).map(|inner| quote! { ::tuidom_ui::Bound<#inner> });
         let is_signal = !is_children && !is_raw_prop_type(ty);
         let (field_ty, default) = if is_children {
             (
