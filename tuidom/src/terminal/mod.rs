@@ -1,6 +1,8 @@
 //! Every field here is a report. The engine draws the same way whatever it says.
 
 mod env;
+#[cfg_attr(not(test), expect(dead_code))]
+mod reply;
 
 use crate::style::ResolvedColor;
 

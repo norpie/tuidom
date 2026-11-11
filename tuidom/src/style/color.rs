@@ -108,7 +108,7 @@ impl ResolvedColor {
     }
 
     /// Create a [`ResolvedColor`] from sRGB components.
-    fn from_srgb(r: u8, g: u8, b: u8) -> Self {
+    pub(crate) fn from_srgb(r: u8, g: u8, b: u8) -> Self {
         let srgb: Srgb = Srgb::new(r, g, b).into_format();
         let oklch: Oklch = srgb.into_color();
         Self::new(oklch.l, oklch.chroma, oklch.hue.into_degrees(), 1.0)
