@@ -2,6 +2,7 @@
 //! a name rewritten when it should not be, or left alone when it should be read, is a type
 //! error. The screen then confirms the values read.
 
+use std::fmt::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -38,7 +39,7 @@ fn EveryName(n: i32) -> View {
     let annotated: Signal<i32> = same(crate::signal!(n));
     let total: Derived<(i32, i32, i32, i32, i32, Pair)> =
         derived(move || (n, base, doubled, tripled, annotated, Pair { n }));
-    crate::view! { text(format!("{:?}", total.get())) }
+    crate::view! { text(format!("{total:?}")) }
 }
 
 #[test]
@@ -154,7 +155,7 @@ fn Chains(items: Vec<i32>, index: usize, user: User) -> View {
     let name = derived(move || user.name.clone());
     let age = derived(move || user.age);
     let summary = derived(move || (len, picked, doubled_sum, first, name, age));
-    crate::view! { text(format!("{:?}", summary.get())) }
+    crate::view! { text(format!("{summary:?}")) }
 }
 
 #[test]
@@ -211,7 +212,7 @@ fn Writes(start: i32) -> View {
         box {
             focusable: true,
             on_key_press: move |_| bump(),
-            text(format!("{} {:?} {:?}", count.get(), point.get(), list.get())),
+            text(format!("{count} {point:?} {list:?}")),
         }
     }
 }
@@ -406,4 +407,33 @@ fn a_text_literal_with_holes_updates_with_the_signals_it_names() {
 
     count.set(6);
     assert_eq!(h.screen(), "6 left\n1.50|   6|{x}\n{static}");
+}
+
+#[crate::component(reactive)]
+fn Macros(n: i32) -> View {
+    let list = vec![n, n * 2];
+    let filled = vec![n; 2];
+    let is_small = matches!(n, n if n < 5);
+    let shown = derived(move || format!("{n} {} {label}", n + 1, label = n * 10));
+    if n < 0 {
+        panic!("negative {n}");
+    }
+    assert!(n > 0, "n was {n}");
+    assert_eq!(n, n, "{n} differs from {}", n);
+    debug_assert_ne!(n, -1);
+    let mut out = String::new();
+    write!(out, "{n}").unwrap();
+    writeln!(out, "|{:>width$}", n, width = 3).unwrap();
+    let echoed = dbg!(n);
+    crate::view! { text(format!("{shown} {list:?} {filled:?} {is_small} {out:?} {echoed}")) }
+}
+
+#[test]
+fn standard_macros_read_signals_in_their_arguments_and_captures() {
+    let n = state(3);
+    let mut h = Harness::new(60, 1, move || crate::view! { Macros { n: n } });
+    assert_eq!(h.row(0), r#"3 4 30 [3, 6] [3, 3] true "3|  3\n" 3"#);
+
+    n.set(4);
+    assert_eq!(h.row(0), r#"4 5 40 [3, 6] [3, 3] true "3|  3\n" 3"#);
 }

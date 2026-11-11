@@ -19,8 +19,8 @@ use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    BinOp, Block, Expr, ExprLit, ExprMethodCall, ExprPath, FieldValue, Ident, Item, Lit, LitStr,
-    Local, Macro, Pat, Stmt, Token, Type, token,
+    BinOp, Block, Expr, ExprLit, ExprMacro, ExprMethodCall, ExprPath, FieldValue, Ident, Item, Lit,
+    LitStr, Local, Macro, Pat, Stmt, Token, Type, token,
 };
 
 use crate::format_string;
@@ -104,23 +104,114 @@ impl Rewriter {
         }
     }
 
-    /// A rewritten and lowered `view!` or `derived!` call, or `None` to leave the macro as is.
+    /// A rewritten and lowered `view!` or `derived!` call, a standard expression macro with its
+    /// arguments rewritten, or `None` to leave the macro as is.
     fn lower_macro(&mut self, mac: &Macro) -> Option<Expr> {
         let name = mac.path.segments.last()?.ident.to_string();
         let lowered = match name.as_str() {
             "view" => {
                 let mut node: Node = self.parse(mac.parse_body())?;
                 self.visit_node(&mut node);
-                node.lower()
+                return self.parse(syn::parse2(node.lower()));
             }
             "derived" => {
                 let mut expr = self.parse(parse_derived.parse2(mac.tokens.clone()))?;
                 self.visit_expr_mut(&mut expr);
-                quote_spanned! {mac.path.span()=> ::tuidom_ui::derived(move || #expr) }
+                let lowered =
+                    quote_spanned! {mac.path.span()=> ::tuidom_ui::derived(move || #expr) };
+                return self.parse(syn::parse2(lowered));
+            }
+            "format" | "print" | "println" | "eprint" | "eprintln" | "panic" => {
+                return self.rewrite_format_macro(mac, Some(0));
+            }
+            "write" | "writeln" | "assert" | "debug_assert" => {
+                return self.rewrite_format_macro(mac, Some(1));
+            }
+            "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => {
+                return self.rewrite_format_macro(mac, Some(2));
+            }
+            "dbg" => return self.rewrite_format_macro(mac, None),
+            "vec" => {
+                let mut args = self.parse(mac.parse_body_with(parse_vec_args))?;
+                match &mut args {
+                    VecArgs::Repeat(value, len) => {
+                        self.visit_expr_mut(value);
+                        self.visit_expr_mut(len);
+                        quote_spanned! {mac.path.span()=> #value; #len }
+                    }
+                    VecArgs::List(items) => {
+                        items.iter_mut().for_each(|item| self.visit_expr_mut(item));
+                        quote_spanned! {mac.path.span()=> #items }
+                    }
+                }
+            }
+            "matches" => {
+                let mut args = self.parse(mac.parse_body_with(parse_matches_args))?;
+                self.visit_expr_mut(&mut args.expr);
+                let pat = &args.pat;
+                let guard = args.guard.as_mut().map(|guard| {
+                    self.in_scope(|this| {
+                        this.bind(pat, false);
+                        this.visit_expr_mut(guard);
+                    });
+                    quote_spanned! {mac.path.span()=> if #guard }
+                });
+                let expr = &args.expr;
+                quote_spanned! {mac.path.span()=> #expr, #pat #guard }
             }
             _ => return None,
         };
-        self.parse(syn::parse2(lowered))
+        let mut rewritten = mac.clone();
+        rewritten.tokens = lowered;
+        Some(Expr::Macro(ExprMacro {
+            attrs: Vec::new(),
+            mac: rewritten,
+        }))
+    }
+
+    /// A macro taking expressions, with a format string at `format_at` if it takes one. Inline
+    /// captures of signal names become named arguments holding the read, and a named argument
+    /// the caller wrote has only its value rewritten, since `name = value` is not a write.
+    fn rewrite_format_macro(&mut self, mac: &Macro, format_at: Option<usize>) -> Option<Expr> {
+        let mut args =
+            self.parse(mac.parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated))?;
+        let mut named = Vec::new();
+        for arg in args.iter_mut() {
+            match arg {
+                Expr::Assign(assign) if format_at.is_some() => {
+                    if let Expr::Path(path) = assign.left.as_ref()
+                        && let Some(ident) = path.path.get_ident()
+                    {
+                        named.push(ident.to_string());
+                    }
+                    self.visit_expr_mut(&mut assign.right);
+                }
+                arg => self.visit_expr_mut(arg),
+            }
+        }
+        if let Some(Expr::Lit(ExprLit {
+            lit: Lit::Str(lit), ..
+        })) = format_at.and_then(|at| args.iter().nth(at))
+        {
+            let lit = lit.clone();
+            for name in format_string::captures(&lit.value()) {
+                let ident = Ident::new(&name, lit.span());
+                if named.contains(&name) || !self.is_signal(&ident) {
+                    continue;
+                }
+                let mut value = Expr::Path(path_of(ident.clone()));
+                self.visit_expr_mut(&mut value);
+                let arg =
+                    self.parse(syn::parse2(quote_spanned! {lit.span()=> #ident = #value }))?;
+                args.push(arg);
+            }
+        }
+        let mut rewritten = mac.clone();
+        rewritten.tokens = quote_spanned! {mac.path.span()=> #args };
+        Some(Expr::Macro(ExprMacro {
+            attrs: Vec::new(),
+            mac: rewritten,
+        }))
     }
 
     fn parse<T>(&mut self, parsed: syn::Result<T>) -> Option<T> {
@@ -565,6 +656,51 @@ fn starts_with_own_method(expr: &Expr) -> bool {
         Expr::Index(index) => starts_with_own_method(&index.expr),
         _ => false,
     }
+}
+
+enum VecArgs {
+    Repeat(Box<Expr>, Box<Expr>),
+    List(Punctuated<Expr, Token![,]>),
+}
+
+fn parse_vec_args(input: ParseStream) -> syn::Result<VecArgs> {
+    if input.is_empty() {
+        return Ok(VecArgs::List(Punctuated::new()));
+    }
+    let first: Expr = input.parse()?;
+    if input.peek(Token![;]) {
+        input.parse::<Token![;]>()?;
+        return Ok(VecArgs::Repeat(Box::new(first), input.parse()?));
+    }
+    let mut items = Punctuated::new();
+    items.push_value(first);
+    if input.peek(Token![,]) {
+        items.push_punct(input.parse()?);
+        items.extend(Punctuated::<Expr, Token![,]>::parse_terminated(input)?.into_pairs());
+    }
+    Ok(VecArgs::List(items))
+}
+
+struct MatchesArgs {
+    expr: Expr,
+    pat: Pat,
+    guard: Option<Expr>,
+}
+
+fn parse_matches_args(input: ParseStream) -> syn::Result<MatchesArgs> {
+    let expr = input.parse()?;
+    input.parse::<Token![,]>()?;
+    let pat = Pat::parse_multi_with_leading_vert(input)?;
+    let guard = if input.peek(Token![if]) {
+        input.parse::<Token![if]>()?;
+        Some(input.parse()?)
+    } else {
+        None
+    };
+    if input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+    }
+    Ok(MatchesArgs { expr, pat, guard })
 }
 
 /// `derived!`'s argument: one expression and an optional trailing comma.
