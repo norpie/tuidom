@@ -333,11 +333,9 @@ impl Document {
                         value_changed = delete_selection_or_next_grapheme(state);
                         true
                     }
-                    KeyCode::Enter => {
-                        if state.multiline {
-                            replace_selection_or_insert(state, "\n");
-                            value_changed = true;
-                        }
+                    KeyCode::Enter if state.multiline => {
+                        replace_selection_or_insert(state, "\n");
+                        value_changed = true;
                         true
                     }
                     _ => false,

@@ -296,6 +296,8 @@ through a shorter line and onward returns to the column you started in instead o
 leftward. And a *single-line* Input has no row to move to, so it declines Up and Down and
 they reach focus navigation — which is what makes arrow keys move between the fields of a
 form. A multiline Input keeps them: Up on its first line stays put rather than jumping out.
+Enter follows the same rule: a multiline Input inserts a line break, and a single-line one
+declines it, so a form can bind Enter to submit.
 
 ### Extending a selection from the keyboard
 

@@ -1717,6 +1717,29 @@ fn input_default_action_handles_enter_by_multiline_flag() {
 }
 
 #[test]
+fn a_single_line_input_leaves_enter_to_the_other_defaults() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("ab").unwrap();
+    let next = doc.create_box().unwrap();
+    doc.set_focusable(next, true).unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.append_child(doc.root(), next).unwrap();
+    let mut keys = FocusKeys::default();
+    keys.next.push((KeyCode::Enter, KeyModifiers::empty()));
+    doc.set_focus_keys(keys);
+    doc.focus(input).unwrap();
+
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Enter));
+    assert_eq!(doc.focused(), Some(next));
+
+    doc.set_input_multiline(input, true).unwrap();
+    doc.focus(input).unwrap();
+    doc.dispatch_key_press(KeyEvent::new(KeyCode::Enter));
+    assert_eq!(doc.focused(), Some(input));
+    assert_eq!(doc.input_value(input).unwrap(), "ab\n");
+}
+
+#[test]
 fn prevent_default_skips_input_default_action() {
     let doc = Document::new().unwrap();
     let input = doc.create_input("").unwrap();

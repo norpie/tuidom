@@ -41,6 +41,7 @@
           walk the cursor leftward
     - [x] A single-line input declines up/down so they reach focus navigation; a
           multiline one keeps them and stays put at its first and last line
+    - [x] A single-line input declines Enter; a multiline one inserts a line break
   - [x] `multiline: bool` (default false) — single-line vs textarea
   - [x] `mask: Option<char>` (default None) — for password fields
   - [ ] `show_cursor: Always | WhenFocused | Never` (default WhenFocused)
