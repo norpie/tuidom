@@ -317,8 +317,8 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
         `NO_COLOR`, SSH
   - [x] Probe in `run()` before input is read: XTVERSION, OSC 10/11, kitty graphics, XTGETTCAP,
         DA1 as the end marker and sixel flag, with a deadline for terminals that ignore DA1
-  - [x] Inside tmux: the attached terminal and `allow-passthrough` from `tmux display-message`,
-        and a passthrough batch for kitty graphics only when passthrough is on
+  - [x] Inside tmux: the attached terminal and `allow-passthrough` from `tmux display-message`;
+        image protocols by that terminal's name, never by a passthrough query
   - [x] Pixel size, re-read on resize
   - [x] Declared in headless with `HeadlessRuntime::set_terminal_info`
   - [ ] Queries outside Unix

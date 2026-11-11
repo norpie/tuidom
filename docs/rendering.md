@@ -212,16 +212,19 @@ from the environment alone.
 
 **Inside tmux**, tmux answers the queries itself: XTVERSION gives tmux's version, and the
 colors are the pane's. One `tmux display-message` names the terminal tmux is attached to
-and says whether `allow-passthrough` is on. Only when it is does a second batch go out,
-wrapped so tmux forwards it, to find out whether that terminal has kitty graphics. With
-passthrough off nothing waits on it, and no image protocol is reported as usable except sixel,
-which tmux can draw itself.
+and says whether `allow-passthrough` is on. Nothing is asked of that terminal directly. A query
+wrapped for passthrough does reach it, but its reply comes back to tmux, which keeps it, and a
+device attributes reply tmux did not ask for makes it briefly resize the window. So inside
+tmux, kitty graphics and iTerm2 images go by the attached terminal's name, and only count while
+passthrough is on. Sixel is the exception: tmux draws it itself and says so in its own DA1
+reply.
 
 How far each field goes:
 
 - `color_depth` is a floor. A terminal that says nothing is assumed to show 16 colors.
 - `no_color` is the user's `NO_COLOR` preference, not something the terminal lacks.
-- `graphics.iterm2` has no query, so it comes from the terminal's name alone.
+- `graphics.iterm2` has no query, so it comes from the terminal's name alone. Inside tmux,
+  `graphics.kitty` does too.
 - `pixel_size` is re-read on every resize, and the event fires again when it changes.
 
 All of it is reported, and none of it changes how the engine draws. Colors still go out as
