@@ -582,10 +582,15 @@ fn help_modal(app: Tracker) -> View {
     }
 }
 
-fn status_bar(app: Tracker) -> View {
-    let share = derived(move || match app.progress.get() {
-        (_, 0) => 0.0,
-        (done, total) => done as f64 / total as f64,
+/// The key hints, and the share of tasks in scope that are done.
+#[component(reactive)]
+fn StatusLine(progress: (usize, usize)) -> View {
+    let done = derived!(progress.0);
+    let total = derived!(progress.1);
+    let share = derived!(if total == 0 {
+        0.0
+    } else {
+        done as f64 / total as f64
     });
     view! {
         StatusBar {
@@ -597,8 +602,8 @@ fn status_bar(app: Tracker) -> View {
                 view! { KeyHint { key: "q".to_string(), label: "quit".to_string() } },
             ]),
             right: fragment([
-                view! { ProgressBar { value: share.get(), tone: Tone::Success, style: sized(20) } },
-                view! { text(format!("{}/{} done", app.progress.get().0, app.progress.get().1)) },
+                view! { ProgressBar { value: share, tone: Tone::Success, style: sized(20) } },
+                view! { text("{done}/{total} done") },
             ]),
         }
     }
@@ -690,7 +695,7 @@ fn Screen() -> View {
                     },
                 },
             },
-            { status_bar(app) },
+            StatusLine { progress: app.progress },
             { new_task_modal(app) },
             { help_modal(app) },
         }
@@ -709,4 +714,39 @@ async fn main() -> std::io::Result<()> {
     })
     .run()
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use tuidom_ui::testing::Harness;
+
+    use super::*;
+
+    /// The row's text and how many cells the progress fill covers, told apart from the bar by
+    /// its background.
+    fn status(h: &mut Harness) -> (String, usize) {
+        let bar = h.cell(0, 0).map(|c| c.bg);
+        let filled = (0..100)
+            .filter(|&x| h.cell(x, 0).map(|c| c.bg) != bar)
+            .count();
+        (h.row(0), filled)
+    }
+
+    #[test]
+    fn the_status_line_follows_the_progress_it_is_given() {
+        let progress = state((1, 4));
+        let mut h = Harness::new(100, 1, move || {
+            install_theme(Theme::default());
+            view! { StatusLine { progress: progress } }
+        });
+        let hints = "  tab focus  enter open  n new  ? keys  q quit";
+        let gap = " ".repeat(44);
+        assert_eq!(status(&mut h), (format!("{hints}{gap}1/4 done"), 5));
+
+        progress.set((3, 4));
+        assert_eq!(status(&mut h), (format!("{hints}{gap}3/4 done"), 15));
+
+        progress.set((0, 0));
+        assert_eq!(status(&mut h), (format!("{hints}{gap}0/0 done"), 0));
+    }
 }

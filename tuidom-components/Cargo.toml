@@ -11,6 +11,10 @@ description = "Opinionated, themed components for tuidom"
 # Per docs/STYLE.md the crate carries no doc tests. Tests live in-crate next to the code.
 doctest = false
 
+[[example]]
+name = "tracker"
+test = true
+
 [dependencies]
 tuidom = { path = "../tuidom" }
 tuidom-ui = { path = "../tuidom-ui" }
