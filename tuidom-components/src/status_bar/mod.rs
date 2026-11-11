@@ -49,11 +49,13 @@ pub fn StatusBar(
 
 /// A shortcut hint for a [`StatusBar`]: `key` in bold `--primary`, then `label`.
 ///
-/// It only draws the hint; binding the key is up to the caller.
+/// It only draws the hint; binding the key is up to the caller. `style` is merged over its
+/// box, which has no style of its own.
 #[component]
-pub fn KeyHint(key: String, label: String) -> View {
+pub fn KeyHint(key: String, label: String, #[prop(default)] style: Style) -> View {
     view! {
         box {
+            style: style.get(),
             text(key.get()) { style: key_style() },
             text(format!(" {}", label.get())),
         }

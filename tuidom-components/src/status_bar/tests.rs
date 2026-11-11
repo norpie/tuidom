@@ -1,5 +1,5 @@
 use tuidom::NodeId;
-use tuidom::style::{FlexDirection, Length, Style};
+use tuidom::style::{EdgeInsets, FlexDirection, Length, Style};
 use tuidom_ui::testing::Harness;
 use tuidom_ui::{fragment, text, view};
 
@@ -90,4 +90,19 @@ fn either_side_can_be_left_out() {
         view! { box { style: full.clone(), StatusBar { right: view! { text("Ln 4") } } } }
     });
     assert_eq!(h.row(0), "      Ln 4");
+}
+
+#[test]
+fn a_key_hint_takes_a_style() {
+    let mut h = Harness::new(12, 1, || {
+        install_theme(Theme::dark());
+        let mut padded = Style::new();
+        padded.padding(EdgeInsets::symmetric(2, 0));
+        view! {
+            box {
+                KeyHint { key: "q".to_string(), label: "quit".to_string(), style: padded.clone() },
+            }
+        }
+    });
+    assert_eq!(h.row(0).trim_end(), "  q quit");
 }
