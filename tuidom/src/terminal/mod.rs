@@ -2,6 +2,8 @@
 
 mod env;
 #[cfg_attr(not(test), expect(dead_code))]
+mod merge;
+#[cfg_attr(not(test), expect(dead_code))]
 mod reply;
 
 use crate::style::ResolvedColor;
@@ -99,6 +101,29 @@ pub struct PixelSize {
     pub cell_width: u16,
     /// Cell height in pixels.
     pub cell_height: u16,
+}
+
+/// Terminals whose name, from `TERM`, `TERM_PROGRAM` or XTVERSION, is enough to know they show
+/// 24-bit color.
+const TRUECOLOR_TERMINALS: &[&str] = &[
+    "alacritty",
+    "foot",
+    "ghostty",
+    "iTerm.app",
+    "iTerm2",
+    "kitty",
+    "vscode",
+    "WezTerm",
+    "xterm-ghostty",
+    "xterm-kitty",
+];
+
+fn is_truecolor_terminal(name: &str) -> bool {
+    TRUECOLOR_TERMINALS.contains(&name)
+}
+
+fn speaks_iterm2(name: &str) -> bool {
+    matches!(name, "iTerm.app" | "iTerm2" | "WezTerm")
 }
 
 impl TerminalInfo {

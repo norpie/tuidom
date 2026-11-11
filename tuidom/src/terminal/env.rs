@@ -1,17 +1,7 @@
-use super::{ColorDepth, Graphics, Multiplexer, MultiplexerKind, TerminalInfo};
-
-/// Terminals whose `TERM` or `TERM_PROGRAM` value is enough to know they show 24-bit color.
-const TRUECOLOR_TERMINALS: &[&str] = &[
-    "alacritty",
-    "foot",
-    "ghostty",
-    "iTerm.app",
-    "kitty",
-    "vscode",
-    "WezTerm",
-    "xterm-ghostty",
-    "xterm-kitty",
-];
+use super::{
+    ColorDepth, Graphics, Multiplexer, MultiplexerKind, TerminalInfo, is_truecolor_terminal,
+    speaks_iterm2,
+};
 
 pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
     let var = |name: &str| var(name).filter(|value| !value.is_empty());
@@ -38,7 +28,7 @@ pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
         graphics: Graphics {
             kitty: name.as_deref() == Some("kitty"),
             sixel: false,
-            iterm2: matches!(name.as_deref(), Some("iTerm.app" | "WezTerm")),
+            iterm2: name.as_deref().is_some_and(speaks_iterm2),
         },
         name,
         version,
@@ -76,10 +66,10 @@ fn detect_multiplexer(var: impl Fn(&str) -> Option<String>) -> Option<Multiplexe
 
 fn color_depth(colorterm: Option<&str>, term: Option<&str>, name: Option<&str>) -> ColorDepth {
     let truecolor_term =
-        term.is_some_and(|term| term.ends_with("-direct") || TRUECOLOR_TERMINALS.contains(&term));
+        term.is_some_and(|term| term.ends_with("-direct") || is_truecolor_terminal(term));
     if matches!(colorterm, Some("truecolor" | "24bit"))
         || truecolor_term
-        || name.is_some_and(|name| TRUECOLOR_TERMINALS.contains(&name))
+        || name.is_some_and(is_truecolor_terminal)
     {
         ColorDepth::TrueColor
     } else if term.is_some_and(|term| term.contains("256color")) {
