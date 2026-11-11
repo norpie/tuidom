@@ -49,7 +49,7 @@ pub use runtime::{
 /// Support for code `view!` and `#[component]` expand to. Not public API.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::prop::{Bound, FromPropExpr, prop_expr};
+    pub use crate::prop::{Bound, FromPropExpr, PropValue, prop_expr};
 }
 
 // `component` names two things in two namespaces: the attribute macro (macro namespace) that

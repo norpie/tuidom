@@ -1182,6 +1182,37 @@ fn component_reactive_prop_does_not_rerun_the_body() {
     assert_eq!(row0(&rt, 1), "9");
 }
 
+#[test]
+fn a_prop_given_a_signal_tracks_it() {
+    let doc = Document::new().unwrap();
+    let source = state(3i32);
+    let _mounted = mount(&doc, doc.root(), crate::view! { Labelled { n: source } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "3");
+
+    source.set(8);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "8");
+}
+
+#[test]
+fn a_prop_given_a_derived_tracks_it() {
+    let doc = Document::new().unwrap();
+    let source = state(3i32);
+    let doubled = crate::derived(move || source.get() * 2);
+    let _mounted = mount(&doc, doc.root(), crate::view! { Labelled { n: doubled } }).unwrap();
+
+    let mut rt = HeadlessRuntime::new(doc, 10, 1);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "6");
+
+    source.set(4);
+    rt.render().unwrap();
+    assert_eq!(row0(&rt, 1), "8");
+}
+
 // ---- Optional props & defaults ----------------------------------------------------------
 
 /// All props optional: `#[prop(default)]` (→ `Default::default()`), `#[prop(default = expr)]`,

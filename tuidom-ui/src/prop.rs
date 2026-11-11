@@ -2,10 +2,10 @@
 //!
 //! The call site cannot see a prop's type, so it hands every non-literal, non-closure value over as
 //! `move || expr` and lets the setter's parameter type pick the conversion: a signal prop stays
-//! synced to the expression, a raw prop takes its value once, and a bound prop takes the caller's
-//! signal itself.
+//! synced to the expression, whether it produces a value or a signal holding one, a raw prop
+//! takes its value once, and a bound prop takes the caller's signal itself.
 
-use crate::{Callback, Children, NodeRef, Signal, View, effect, state};
+use crate::{Callback, Children, Derived, NodeRef, Signal, View, effect, state};
 
 /// A prop type buildable from a call-site expression, given as a closure producing its value.
 pub trait FromPropExpr<F> {
@@ -18,16 +18,43 @@ pub fn prop_expr<P: FromPropExpr<F>, F>(f: F) -> P {
     P::from_prop_expr(f)
 }
 
-/// Seeded once, then kept in step with the expression by an effect owned by the caller.
-impl<T, F> FromPropExpr<F> for Signal<T>
+/// Seeded once, then kept in step with the expression by an effect owned by the caller. The
+/// expression may produce the value or a signal or derived holding it.
+impl<T, V, F> FromPropExpr<F> for Signal<T>
 where
     T: PartialEq + Send + Sync + 'static,
-    F: Fn() -> T + Send + Sync + 'static,
+    V: PropValue<T>,
+    F: Fn() -> V + Send + Sync + 'static,
 {
     fn from_prop_expr(f: F) -> Self {
-        let prop = state(f());
-        effect(move || prop.set(f()));
+        let prop = state(f().read());
+        effect(move || prop.set(f().read()));
         prop
+    }
+}
+
+/// What a signal prop's expression may produce: the value itself, or a reactive handle read on
+/// each run of the effect keeping the prop in step.
+pub trait PropValue<T> {
+    /// The value, subscribing the running computation when it comes from a handle.
+    fn read(self) -> T;
+}
+
+impl<T> PropValue<T> for T {
+    fn read(self) -> T {
+        self
+    }
+}
+
+impl<T: Clone + Default + 'static> PropValue<T> for Signal<T> {
+    fn read(self) -> T {
+        self.get()
+    }
+}
+
+impl<T: Clone + Default + 'static> PropValue<T> for Derived<T> {
+    fn read(self) -> T {
+        self.get()
     }
 }
 

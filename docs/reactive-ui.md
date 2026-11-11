@@ -246,7 +246,8 @@ The call site decides how a prop is fed. A literal (`start: 10`) seeds it once; 
 expression (`start: base.get()`) keeps it synced to the caller's signals, which requires the
 type to be `PartialEq`. Such an expression is evaluated again on every change, so it cannot move
 a captured value out; build the value in the expression, often with a function call
-(`style: frame()`), or clone it. A prop is required unless `#[prop(default)]`, `#[prop(default = expr)]`
+(`style: frame()`), or clone it. The expression may also be a signal or derived holding the
+prop's type (`start: base`), which the prop follows the same way. A prop is required unless `#[prop(default)]`, `#[prop(default = expr)]`
 or an `Option<T>` type makes it optional, and leaving out a required prop is a compile error.
 
 ### Children and slots
