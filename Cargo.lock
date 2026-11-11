@@ -1175,6 +1175,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuidom-router"
+version = "0.1.0"
+dependencies = [
+ "tuidom",
+ "tuidom-ui",
+]
+
+[[package]]
 name = "tuidom-ui"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,19 @@
+[package]
+name = "tuidom-router"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Layout chains for tuidom-ui: shells that stay mounted across navigation"
+
+[lib]
+# Per docs/STYLE.md the crate carries no doc tests. Tests live in-crate next to the code.
+doctest = false
+
+[dependencies]
+tuidom = { path = "../tuidom" }
+tuidom-ui = { path = "../tuidom-ui" }
+
+[dev-dependencies]
+tuidom-ui = { path = "../tuidom-ui", features = ["testing"] }
