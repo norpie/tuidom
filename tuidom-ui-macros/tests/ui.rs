@@ -1,9 +1,11 @@
-//! Compile-fail tests for the diagnostics `view!` emits itself.
+//! Compile-fail tests for the diagnostics `view!` and `#[component]` emit themselves.
 //!
-//! Scoped to malformed *syntax* the macro rejects during parsing — a misspelled event, a
-//! missing `in`, an attribute with no element, a stray clause. These abort expansion before any
-//! `::tuidom_ui::…` code is emitted, so the fixtures need only this proc-macro crate to compile
-//! and their stderr is the macro's own wording spanned at the user's token.
+//! Scoped to what the macros reject before emitting code — a misspelled event, a missing `in`,
+//! an attribute with no element, a stray clause, an unknown `#[component]` option, and a
+//! reactive body's closure reading a signal inside a read or its text hole that is not a name.
+//! These abort expansion before any `::tuidom_ui::…` code is emitted, so the fixtures need only
+//! this proc-macro crate to compile and their stderr is the macro's own wording spanned at the
+//! user's token.
 //!
 //! Errors rustc raises about a *well-formed* expansion — a bool attribute given an integer, a
 //! handler of the wrong arity — are spanned at the user's interpolated tokens by construction,

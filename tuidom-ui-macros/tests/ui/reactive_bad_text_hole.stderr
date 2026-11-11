@@ -1,0 +1,5 @@
+error: `{items.len()}` is not a name; a hole takes a name and an optional format spec, like `{count}` or `{ratio:.2}`
+ --> tests/ui/reactive_bad_text_hole.rs:5:18
+  |
+5 |     view! { text("{items.len()} items") }
+  |                  ^^^^^^^^^^^^^^^^^^^^^

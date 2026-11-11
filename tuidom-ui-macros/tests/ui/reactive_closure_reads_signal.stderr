@@ -1,0 +1,5 @@
+error: this closure runs inside the read of `items`, where reading `offset` can deadlock; read `offset` into a local before this line
+ --> tests/ui/reactive_closure_reads_signal.rs:5:51
+  |
+5 |     let total = derived!(items.iter().map(|i| i + offset).sum::<i32>());
+  |                                                   ^^^^^^

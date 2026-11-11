@@ -1,0 +1,5 @@
+error: unknown `component` option; expected `reactive`
+ --> tests/ui/component_unknown_option.rs:3:13
+  |
+3 | #[component(svelte)]
+  |             ^^^^^^

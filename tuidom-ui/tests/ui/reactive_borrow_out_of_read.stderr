@@ -1,0 +1,9 @@
+error: lifetime may not live long enough
+ --> tests/ui/reactive_borrow_out_of_read.rs:6:17
+  |
+6 |     let first = items.first();
+  |                 -----^^^^^^^^
+  |                 |   |
+  |                 |   return type of closure is Option<&'2 i32>
+  |                 has type `&'1 Vec<i32>`
+  |                 returning this value requires that `'1` must outlive `'2`

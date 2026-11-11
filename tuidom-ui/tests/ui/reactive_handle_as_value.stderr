@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/ui/reactive_handle_as_value.rs:10:11
+   |
+10 |     reset(count);
+   |     ----- ^^^^^ expected `Signal<i32>`, found integer
+   |     |
+   |     arguments to this function are incorrect
+   |
+   = note: expected struct `Signal<i32>`
+                found type `{integer}`
+note: function defined here
+  --> tests/ui/reactive_handle_as_value.rs:3:4
+   |
+ 3 | fn reset(count: Signal<i32>) {
+   |    ^^^^^ ------------------

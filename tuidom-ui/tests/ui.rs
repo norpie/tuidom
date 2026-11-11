@@ -1,6 +1,8 @@
 //! Compile-fail tests for the `#[component]` misuse that only surfaces once an expansion is
 //! type-checked — an unknown prop, a missing required prop, stray children on a component that
-//! takes none, and a PascalCase name that is not a component.
+//! takes none, a PascalCase name that is not a component, and in a reactive body a mutating
+//! method on a signal, a borrow returned out of a read, and a signal read where its handle is
+//! wanted.
 //!
 //! Unlike the parse-time cases in `tuidom-ui-macros` (which abort before emitting any
 //! `::tuidom_ui::…` code), these expand to a real props struct and typestate builder, so they

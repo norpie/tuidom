@@ -1,0 +1,5 @@
+error[E0596]: cannot borrow `*items` as mutable, as it is behind a `&` reference
+ --> tests/ui/reactive_mutating_method.rs:6:23
+  |
+6 |     let add = move || items.push(4);
+  |                       ^^^^^ `items` is a `&` reference, so it cannot be borrowed as mutable
