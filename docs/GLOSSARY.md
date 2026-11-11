@@ -254,6 +254,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Component** — A `#[component]` function building a subtree. Its body runs once per mount and updates only through the signals it reads. See [components](reactive-ui.md#components).
 
+**Reactive Body** — A `#[component(reactive)]` body, rewritten before compiling so its signal names read and write as plain values. See [reactive bodies](reactive-ui.md#reactive-bodies).
+
 **Prop** — A component parameter. It arrives in the body as a signal, seeded once from a literal or kept synced from any other expression. See [components](reactive-ui.md#components).
 
 **Children** — A `Copy` thunk of caller content, built where the component body places it. A component taking several is said to have slots. See [children and slots](reactive-ui.md#children-and-slots).

@@ -72,8 +72,8 @@ macro_rules! derived {
 
 /// `handle` itself, unchanged: a [`Signal`] or [`Derived`] passed along rather than read.
 ///
-/// It does nothing to its argument. It marks a handle in code where a signal's name would
-/// otherwise stand for its value.
+/// It does nothing to its argument. In a `#[component(reactive)]` body, where a signal's name
+/// stands for its value, it keeps the handle.
 #[macro_export]
 macro_rules! signal {
     ($handle:expr $(,)?) => {

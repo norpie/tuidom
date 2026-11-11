@@ -334,6 +334,82 @@ A nearer provider shadows a farther one, and an absent context is `None`. Contex
 while the runtime lock is held, so its `Clone` must not touch a signal; a `Copy` signal handle
 or an `Arc` is the usual payload.
 
+## Reactive bodies
+
+`#[component(reactive)]` lets a body use its signals as plain values:
+
+```rust
+#[component(reactive)]
+fn Counter(start: i32) -> View {
+    let count = state(start);
+    let doubled = derived!(count * 2);
+    view! {
+        box {
+            focusable: true,
+            on_click: move || count += 1,
+            text("{count}, doubled {doubled}"),
+        }
+    }
+}
+```
+
+The macro rewrites the body into the explicit form before the compiler sees it. Nothing
+changes at runtime, and a line written the explicit way, `count.get()` or
+`count.update(..)`, means the same in a reactive body. Plain `#[component]` rewrites nothing.
+
+The macro works from syntax, not types, so it has to be told which names are signals:
+
+- every prop except `children`, callbacks and refs;
+- a `let` initialized with `state(..)`, `derived(..)` or `derived!(..)`;
+- a `let` with a written `Signal<T>` or `Derived<T>` type, for a signal from anywhere else:
+  `let shape: Signal<Shape> = use_shape();`.
+
+Names resolve the way the compiler resolves them. A `let`, a closure parameter, a `match` arm,
+an `if let`, a `for` pattern or a nested `fn` that binds the same name hides the signal until
+its scope ends. A signal reached through something else, like `app.tab` on a struct of
+signals, is not a name, and is read as before with `app.tab.get()`.
+
+A signal name used as a value is read. Inside a closure the read happens when the closure
+runs, so `derived(move || count * 2)` tracks `count`, and a handler sees the current value.
+A method call or field access reads through `with`: `items.len()` becomes
+`items.with(|items| items.len())`, so nothing is cloned. Two things follow from that:
+
+- A mutating method does not compile. `items.push(4)` fails with "cannot borrow `*items` as
+  mutable, as it is behind a `&` reference". Mutate with `items.update(|i| i.push(4))`.
+- A method returning a borrow does not compile either. `items.first()` fails with "lifetime
+  may not live long enough". Copy the value out (`items.first().copied()`) or take a clone
+  first (`items.get().iter()`).
+
+The signal's own methods pass through when called with their own number of arguments: `get()`,
+`set(v)`, `update(f)`, `with(f)`, `try_get()` and `try_with(f)`. So `items.get(i)` on a
+`Signal<Vec<_>>` is `Vec::get`, but a value's own one-argument `set` or `update` is shadowed by
+the signal's and is reached through `with` or `update`: `x.update(|x| x.set(v))`.
+
+Writes become `set` and `update`. `count = 5` is `count.set(5)`, and `count += 1`,
+`point.x = 3` and `list[0] += 1` each become an `update`.
+
+A `with` or `update` closure runs under the runtime lock, where a second read can deadlock
+([signals](#signals)). The macro therefore evaluates a chain's arguments and indices, and a
+write's value, into locals ahead of the lock. A closure passed along a chain, as in
+`items.iter().map(|i| i + offset)`, runs inside it, so one that reads a signal is a compile
+error asking you to read `offset` into a local first.
+
+Sometimes the handle itself is wanted. A bare signal name passes the handle as a component
+prop (`Toggle { on: dark }`) and to an input's `bind_value:`. Anywhere else, `signal!(count)`
+passes it: `reset(signal!(count))`. Without that, `reset(count)` reads, and fails with
+"expected `Signal<i32>`, found integer".
+
+Templates are rewritten too: attribute values, text, conditions, `each` collections and keys,
+and handler closures. A text literal with holes is a reactive format. `"{count} left"`
+updates when `count` changes. A hole takes a name and an optional format spec
+(`{ratio:.2}`, `{n:>width$}`), `{{` and `}}` are literal braces, and a literal with no holes
+stays static.
+
+The standard macros that take expressions have their arguments rewritten: the `format!`
+family, `write!`, `writeln!`, the `assert!` family, `dbg!`, `vec!` and `matches!`. An inline
+capture of a signal, `format!("{count}")`, reads it. Any other macro, your own included, is
+left alone, which is how `signal!` keeps its argument a handle.
+
 ## Reaching the document
 
 A component body never sees the `NodeId`s its view creates. Operations that are imperative in

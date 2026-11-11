@@ -531,6 +531,10 @@ What stays true here regardless of the macro:
   - [x] Callback props, optionally returning a value
   - [x] Bound `Signal<T>` props for two-way binding
   - [x] `NodeRef` props
+  - [x] Reactive bodies (`#[component(reactive)]`): signal names read and written as values
+    - [x] Method calls and field access read through `with`, their arguments evaluated first
+    - [x] Templates, text interpolation and the standard expression macros rewritten
+    - [x] `derived!` shorthand, and `signal!` to pass a handle
 - [x] `NodeRef` for focus, scrolling, animation, cursor and selection, and reactive layout reads
 - [x] `on_mount` and `use_document`
 - [x] `App` with `on_quit`, and `mount_on` / `AppSession` for wiring without a terminal

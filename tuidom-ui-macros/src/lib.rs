@@ -7,7 +7,9 @@
 //!
 //! `view!` is a *non-rewriting* template macro (framework form A): it lowers a Rust-like
 //! template to `tuidom-ui` builder calls without analyzing whether expressions read signals.
-//! Reads stay explicit. The only thing it dispatches on is syntax.
+//! Reads stay explicit. The only thing it dispatches on is syntax. `#[component(reactive)]` is
+//! the one rewriting form: it turns a body's signal names into reads and writes, templates
+//! included, and the result is form A.
 
 #![warn(missing_docs)]
 
@@ -238,6 +240,27 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// unmount. Context resolves up the scope chain from where content is mounted, so it reaches
 /// content inside `if`, `match`, and `each`, and `{ children }` content sees the context of the
 /// component that places it.
+///
+/// # Reactive bodies
+///
+/// `#[component(reactive)]` rewrites the body so its signals read and write as plain values.
+/// The signals are the props other than children, callbacks and refs, and the `let`s
+/// initialized with `state`, `derived` or `derived!` or written with a `Signal<T>` or
+/// `Derived<T>` type; a binding of the same name hides one for its scope. A name used as a
+/// value becomes `get()`, a method call or field access on it reads through `with`, and an
+/// assignment becomes `set` or `update`. The signal's own methods pass through, so explicit
+/// code stays valid. Templates are rewritten as well, where a text literal's `{name}` holes
+/// update with the signals they name, and so are the standard expression macros. A bare name
+/// passed as a component prop or to `bind_value:` stays a handle, and `signal!(name)` keeps
+/// one anywhere else.
+///
+/// ```ignore
+/// #[component(reactive)]
+/// fn Counter(start: i32) -> View {
+///     let count = state(start);
+///     view! { box { on_click: move || count += 1, text("{count}") } }
+/// }
+/// ```
 ///
 /// [`view!`]: macro.view.html
 /// [`Signal`]: ../tuidom_ui/struct.Signal.html
