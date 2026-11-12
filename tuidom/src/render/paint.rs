@@ -94,7 +94,7 @@ pub(crate) fn paint(
     let grid_time = grid_start.elapsed();
 
     let drawing = doc.image_drawing();
-    if drawing != ImageDrawing::HalfBlock {
+    if drawing == ImageDrawing::Placeholders {
         doc.clear_half_block_images();
     }
     let cell_pixels = doc.cell_pixels();
@@ -113,7 +113,7 @@ pub(crate) fn paint(
                 let content = entry.layout.content_rect(&entry.resolved);
                 let content = (content.width, content.height);
                 match drawing {
-                    ImageDrawing::HalfBlock => doc
+                    ImageDrawing::HalfBlock | ImageDrawing::Sixel | ImageDrawing::ITerm2 => doc
                         .half_block_image(entry.id, data, *fit, content, cell_pixels)
                         .map(|(fitting, cells)| ImagePaint::HalfBlock(fitting, cells)),
                     ImageDrawing::Placeholders => {

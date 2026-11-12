@@ -109,6 +109,8 @@ fn apply(
             }
         }
         ImageProtocol::Kitty => "kitty",
+        ImageProtocol::Sixel => "sixel",
+        ImageProtocol::ITerm2 => "iterm2",
         ImageProtocol::HalfBlock => "half-block",
     };
     let cell = info.and_then(|info| info.pixel_size).map_or_else(

@@ -8156,6 +8156,61 @@ fn the_kitty_protocol_draws_placeholders_whatever_the_terminal_says() {
     assert_eq!(doc.image_drawing(), ImageDrawing::Placeholders);
 }
 
+#[test]
+fn auto_prefers_placeholders_then_iterm2_then_sixel() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    let mut info = kitty_terminal();
+    info.graphics.kitty = true;
+    info.graphics.placeholders = true;
+    info.graphics.iterm2 = true;
+    info.graphics.sixel = true;
+    runtime.set_terminal_info(info.clone());
+    assert_eq!(doc.image_drawing(), ImageDrawing::Placeholders);
+
+    info.graphics.placeholders = false;
+    runtime.set_terminal_info(info.clone());
+    assert_eq!(doc.image_drawing(), ImageDrawing::ITerm2);
+
+    info.graphics.iterm2 = false;
+    runtime.set_terminal_info(info.clone());
+    assert_eq!(doc.image_drawing(), ImageDrawing::Sixel);
+
+    info.graphics.sixel = false;
+    runtime.set_terminal_info(info);
+    assert_eq!(doc.image_drawing(), ImageDrawing::HalfBlock);
+}
+
+#[test]
+fn auto_never_picks_iterm2_inside_a_multiplexer() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    let mut info = kitty_terminal();
+    info.multiplexer = Some(Multiplexer {
+        kind: MultiplexerKind::Tmux,
+        version: None,
+        passthrough: true,
+    });
+    info.graphics.iterm2 = true;
+    runtime.set_terminal_info(info.clone());
+    assert_eq!(doc.image_drawing(), ImageDrawing::HalfBlock);
+
+    info.graphics.sixel = true;
+    runtime.set_terminal_info(info);
+    assert_eq!(doc.image_drawing(), ImageDrawing::Sixel);
+}
+
+#[test]
+fn sixel_and_iterm2_are_drawn_whatever_the_terminal_says_when_forced() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.set_terminal_info(TerminalInfo::default());
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    assert_eq!(doc.image_drawing(), ImageDrawing::Sixel);
+    doc.set_image_protocol(ImageProtocol::ITerm2);
+    assert_eq!(doc.image_drawing(), ImageDrawing::ITerm2);
+}
+
 #[tokio::test]
 async fn changing_the_image_protocol_notifies_render() {
     let doc = Document::new().unwrap();

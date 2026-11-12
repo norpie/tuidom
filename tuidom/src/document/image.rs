@@ -104,17 +104,19 @@ impl Document {
     pub(crate) fn image_drawing(&self) -> ImageDrawing {
         match self.image_protocol() {
             ImageProtocol::Kitty => ImageDrawing::Placeholders,
+            ImageProtocol::Sixel => ImageDrawing::Sixel,
+            ImageProtocol::ITerm2 => ImageDrawing::ITerm2,
             ImageProtocol::HalfBlock => ImageDrawing::HalfBlock,
-            ImageProtocol::Auto => {
-                let placeholders = lock::mutex(&self.inner.terminal_info)
-                    .as_ref()
-                    .is_some_and(|info| info.graphics.placeholders);
-                if placeholders {
-                    ImageDrawing::Placeholders
-                } else {
-                    ImageDrawing::HalfBlock
+            ImageProtocol::Auto => match lock::mutex(&self.inner.terminal_info).as_ref() {
+                Some(info) if info.graphics.placeholders => ImageDrawing::Placeholders,
+                // A multiplexer does not know an inline image is on screen, so it is lost
+                // whenever the multiplexer redraws the pane.
+                Some(info) if info.graphics.iterm2 && info.multiplexer.is_none() => {
+                    ImageDrawing::ITerm2
                 }
-            }
+                Some(info) if info.graphics.sixel => ImageDrawing::Sixel,
+                _ => ImageDrawing::HalfBlock,
+            },
         }
     }
 

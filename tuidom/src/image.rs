@@ -14,14 +14,19 @@ use crate::{Result, TuidomError};
 /// [`Document::set_image_protocol`](crate::Document::set_image_protocol).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ImageProtocol {
-    /// Kitty placeholders where [`Graphics::placeholders`](crate::terminal::Graphics::placeholders)
-    /// says the terminal supports them, half-blocks everywhere else, including before the
-    /// terminal has been probed.
+    /// The best the terminal is detected to support, in this order: kitty placeholders,
+    /// iTerm2 images outside a multiplexer, sixel, then half-blocks, which are also used before
+    /// the terminal has been probed.
     #[default]
     Auto,
     /// Kitty placeholders whatever the terminal is detected as, for one known to support them
     /// that detection misses.
     Kitty,
+    /// Sixel graphics whatever the terminal is detected as.
+    Sixel,
+    /// iTerm2 inline images whatever the terminal is detected as, sent through passthrough
+    /// inside tmux.
+    ITerm2,
     /// Half-block characters colored from the pixels, which any color terminal can show.
     HalfBlock,
 }
@@ -30,6 +35,8 @@ pub enum ImageProtocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImageDrawing {
     Placeholders,
+    Sixel,
+    ITerm2,
     HalfBlock,
 }
 
