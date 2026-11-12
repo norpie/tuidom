@@ -165,7 +165,7 @@ buffer is no minimum, a canvas drawn for a larger box can still shrink and be to
 **Theme colors.** A buffer holds resolved colors, so a canvas does not follow variables the way
 a style does. Resolve the colors at the canvas node with
 [`resolve_color`](colors.md#evaluating-a-color-from-code) when drawing, and draw again when the
-variables they come from change.
+variables they come from change. [Charts](charts.md) draw this way.
 
 ## Images
 

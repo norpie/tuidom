@@ -1,10 +1,10 @@
 # tuidom
 
 A DOM-based terminal UI library for Rust, built in layers: an engine that owns the node tree,
-a reactive framework on top of it, and a component library and a router on top of that.
+a reactive framework on top of it, and a component library, a router and charts on top of that.
 
 **[Documentation](docs/)** — [getting started](docs/getting-started.md),
-[architecture](docs/architecture.md), and thirteen other guides, plus a
+[architecture](docs/architecture.md), and fourteen other guides, plus a
 [glossary](docs/GLOSSARY.md) of every concept in the engine and the crates above it.
 
 ## Crates
@@ -17,8 +17,11 @@ a reactive framework on top of it, and a component library and a router on top o
 | `tuidom-ui-macros` | `view!` and `#[component]` | — |
 | `tuidom-components` | Themed components: buttons, inputs, menus, tables, modals, toasts, and more | `tuidom-ui` |
 | `tuidom-router` | Layout chains: frames that stay mounted while the screen inside them changes | `tuidom-ui` |
+| `tuidom-charts` | Line, scatter and bar charts and sparklines drawn into a canvas, and themed chart components | `tuidom`; `tuidom-components` for the components |
 
 ```
+  tuidom-charts
+        |
 tuidom-components    tuidom-router
           \              /
            tuidom-ui          (+ tuidom-ui-macros)
@@ -31,7 +34,8 @@ The engine holds every node and does all layout, painting, event dispatch and fo
 subscription, and a change reruns only the bindings that read it, each ending in an ordinary
 call such as `update_style` or `set_text_content`. There is no virtual DOM. It uses only the
 engine's public API, and the component library and router in turn use `tuidom-ui` and the
-engine's style types.
+engine's style types. `tuidom-charts` draws its charts with the engine alone; the components
+built on them come with its default `components` feature.
 
 You can stop at any layer. Drive the engine by hand, use the framework and write your own
 components, or build from the component library.
@@ -152,6 +156,12 @@ different framework could be built the same way.
 - Layouts kept by navigation stay mounted, and their props update in place
 - Opt-in retention, so returning to a screen finds it as it was left
 
+### Charts (`tuidom-charts`)
+
+- Line and scatter charts in braille, bar charts and sparklines in eighth blocks
+- Round ticks, compact labels, and axes laid out to fit the space they get
+- Chart components colored from the theme, redrawn when their data, size or theme changes
+
 ## Running the examples
 
 Tests are the verification path for every crate; the examples are for trying it by hand.
@@ -164,6 +174,7 @@ cargo run -p tuidom --example image                 # an image in each fit and p
 cargo run -p tuidom-components --example showcase   # each component on its own
 cargo run -p tuidom-components --example tracker    # an app built from the components
 cargo run -p tuidom-router --example mail           # a routed app
+cargo run -p tuidom-charts --release --example dashboard   # charts over live data
 ```
 
 ## License

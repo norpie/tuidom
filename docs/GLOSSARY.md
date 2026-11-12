@@ -338,6 +338,28 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Retention** — Keeping a leaf mounted but hidden when navigation leaves it, so returning to it finds its nodes and their runtime state as they were. See [retention](routing.md#retention).
 
+## Charts
+
+*Explained in [charts](charts.md). These belong to `tuidom-charts`.*
+
+**Linear Scale** — A linear mapping from a domain of `f64` values onto an axis. Its domain always has a finite, non-zero span. See [scales and ticks](charts.md#scales-and-ticks).
+
+**Domain** — The values a chart's axis covers: set, or taken from the data by a rule each kind of chart states. See [scales and ticks](charts.md#scales-and-ticks).
+
+**Ticks** — Round values along a scale, 1, 2 or 5 times a power of ten apart, where an axis draws its marks and labels. See [scales and ticks](charts.md#scales-and-ticks).
+
+**Dot Grid** — Dots over a block of cells, several to a cell, that lines and points are plotted on. See [lines and points](charts.md#lines-and-points).
+
+**Marker** — How a dot grid draws its dots: braille, 2 by 4 a cell; half blocks, 1 by 2; or a `•` per cell. See [lines and points](charts.md#lines-and-points).
+
+**Plot Area** — The cells a chart's axes leave for its data, and the only cells its scales map onto. See [axes](charts.md#axes).
+
+**Band** — The cells one bar takes along a bar chart's category axis. Every band is as wide. See [bars and sparklines](charts.md#bars-and-sparklines).
+
+**Sparkline** — A column of blocks per value with no axes, the newest at the right. See [bars and sparklines](charts.md#bars-and-sparklines).
+
+**TickLabels** — A chart component's labels for a numeric axis: compact, or from a closure. See [chart components](charts.md#chart-components).
+
 ---
 
 *Additional terms will be added as new concepts are introduced during development.*

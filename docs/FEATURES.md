@@ -557,6 +557,7 @@ What stays true here regardless of the macro:
   - [x] `Copy`, `Send + Sync` signal handles; `set` skips equal values, `update` mutates in place
   - [x] Lazy, memoized deriveds; dependencies found by reading and re-collected each run
   - [x] Effects, and `batch` for one flush over a group of writes
+  - [x] Effects a write reruns run in the order they were created
   - [x] `untracked` reads that subscribe nothing
   - [x] A runaway effect loop is stopped and logged rather than hanging
   - [x] Handles to disposed slots are inert, never dangling
@@ -605,6 +606,7 @@ What stays true here regardless of the macro:
   - [x] `install_theme`, switched in place through its signal
   - [x] `ThemeScope` for re-theming a subtree
   - [x] Popups declare the palette themselves, so scoped themes reach them
+  - [x] `--chart-1` to `--chart-5`, and `use_palette` for colors evaluated in code
 - [x] Every component takes a `style` merged over its own
 - [x] Primitives: `Button` (five variants), `Label`, `Divider`
 - [x] Inputs: `TextInput`, `Checkbox`, `RadioGroup`, `Select`, `Slider`
@@ -627,6 +629,22 @@ What stays true here regardless of the macro:
 - [x] Opt-in focus traps per entry, kept in step with the focus stack
 - [x] Retained leaves, hidden in their slot and shown again as they were
 - [x] No history, path matching or leave guards: these are app code, with patterns in the guide
+
+## Charts (`tuidom-charts`)
+
+- [x] Draw functions on the engine alone; components behind the default `components` feature
+- [x] Linear scales, set or spanning the data, with round ticks and compact labels
+- [x] Line and scatter charts on braille, half-block or dot markers
+  - [x] Gaps where a value is not finite, and lines cut at a set domain's edge
+- [x] Bar charts, vertical and horizontal, with negative values
+- [x] Sparklines
+- [x] Axes with tick marks and labels, a capped gutter, and crowded labels cut or dropped
+- [x] `LineChart`, `ScatterChart`, `BarChart` and `Sparkline` components
+  - [x] Colored from `--chart-1` to `--chart-5`, or per series or bar
+  - [x] Redrawn when their data, size or theme changes
+  - [x] Title and legend as nodes
+- [ ] Area charts, histograms and stacked bars
+- [x] Dashboard example
 
 ## Future Considerations
 
