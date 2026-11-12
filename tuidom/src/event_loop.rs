@@ -1,6 +1,7 @@
 //! Render + event loop — the main `Document::run()` implementation.
 
 use std::io;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEventKind;
@@ -8,6 +9,7 @@ use crossterm::event::{
     Event as CrosstermEvent, EventStream, KeyModifiers, MouseButton as CrosstermMouseButton,
     MouseEvent as CrosstermMouseEvent, MouseEventKind,
 };
+use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tokio::time::{Instant as TokioInstant, sleep_until};
 use tokio_stream::StreamExt;
@@ -21,7 +23,8 @@ use crate::event::{
 use crate::lock;
 use crate::render::{Renderer, Terminal};
 use crate::runtime_event::{
-    RuntimeEvent, RuntimeEventState, drain_and_coalesce, process_runtime_event, take_pending_resize,
+    RuntimeEvent, RuntimeEventState, SIZE_CHANGE_ROUNDS, drain_and_coalesce, process_runtime_event,
+    take_pending_resize, take_size_changes,
 };
 use crate::terminal::{self, TerminalInfo};
 
@@ -297,35 +300,72 @@ enum FrameMode {
     Full,
 }
 
+/// How long a frame waits for the event task to handle the size changes it handed over. A
+/// listener slower than this has its result shown a frame later instead of holding up the
+/// screen.
+const SIZE_CHANGE_WAIT: Duration = Duration::from_millis(50);
+
 /// A frame laid out and painted, waiting to be flushed.
 struct Painted<T> {
     output: T,
     started: Instant,
+    /// Every layout pass the frame made, without the waits between them.
     layout_time: Duration,
-    /// Scroll events the layout's re-clamps owe, for the event task to dispatch.
+    /// Events the layout owes but the frame did not wait for, for the event task to dispatch.
     events: Vec<RuntimeEvent>,
 }
 
 /// Lay out and paint one frame while holding the frame gate, so it shows the document as it
 /// stands between two runtime events, never partway through one.
+///
+/// Size changes are handled before painting: the gate is released, the event task runs their
+/// listeners, and layout runs again, so a node that redraws for its new size shows the redraw
+/// in this frame. That repeats at most [`SIZE_CHANGE_ROUNDS`] times.
 async fn lay_out_and_paint<T>(
     doc: &Document,
     (width, height): (u16, u16),
     paint: impl FnOnce() -> T,
 ) -> io::Result<Painted<T>> {
-    let _gate = doc.inner.frame_gate.lock().await;
     let started = Instant::now();
-    let events = doc
-        .compute_layout_for_frame(width, height)
-        .map_err(io::Error::other)?;
-    let layout_time = started.elapsed();
-    let output = paint();
-    Ok(Painted {
-        output,
-        started,
-        layout_time,
-        events,
-    })
+    let mut layout_time = Duration::ZERO;
+    let mut deferred = Vec::new();
+    let mut rounds = 0;
+    loop {
+        let gate = doc.inner.frame_gate.lock().await;
+        let layout_started = Instant::now();
+        let mut events = doc
+            .compute_layout_for_frame(width, height)
+            .map_err(io::Error::other)?;
+        layout_time += layout_started.elapsed();
+        let size_changes = take_size_changes(&mut events);
+        deferred.extend(events);
+
+        if size_changes.is_empty() || rounds == SIZE_CHANGE_ROUNDS {
+            deferred.extend(size_changes);
+            let output = paint();
+            drop(gate);
+            return Ok(Painted {
+                output,
+                started,
+                layout_time,
+                events: deferred,
+            });
+        }
+        rounds += 1;
+        drop(gate);
+
+        let reached = Arc::new(Notify::new());
+        for event in size_changes {
+            let _ = doc.inner.event_tx.send(event);
+        }
+        let _ = doc
+            .inner
+            .event_tx
+            .send(RuntimeEvent::FrameBarrier(reached.clone()));
+        // On a timeout the listeners still run when the event task reaches them; this frame
+        // lays out once more and paints without them.
+        let _ = tokio::time::timeout(SIZE_CHANGE_WAIT, reached.notified()).await;
+    }
 }
 
 /// Render a frame with timing for the performance API.
@@ -659,8 +699,10 @@ mod gate_tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+    use crate::canvas::{CanvasBuffer, CanvasStyle};
     use crate::render::grid::Grid;
     use crate::render::render_into_grid;
+    use crate::style::Style;
     use crate::style::color::RgbCache;
 
     const WORDS: [&str; 3] = ["one", "two", "three"];
@@ -722,5 +764,69 @@ mod gate_tests {
             assert!(shown == 0 || shown == WORDS.len(), "torn frame: {frame:?}");
         }
         assert!(frames.last().unwrap().contains("three"));
+    }
+
+    /// A canvas filling the screen that redraws itself full of `#` at every size it reports.
+    fn self_sizing_canvas() -> Document {
+        let doc = Document::new().unwrap();
+        let canvas = doc.create_canvas().unwrap();
+        let mut style = Style::new();
+        style.flex_grow(1.0);
+        doc.set_style(canvas, &style).unwrap();
+        doc.append_child(doc.root(), canvas).unwrap();
+        let d = doc.clone();
+        doc.on_size_change(canvas, move |event| {
+            let mut buffer = CanvasBuffer::new(event.width, event.height);
+            for y in 0..event.height {
+                buffer.text(
+                    0,
+                    y,
+                    &"#".repeat(usize::from(event.width)),
+                    CanvasStyle::default(),
+                );
+            }
+            d.set_canvas(canvas, buffer).unwrap();
+        })
+        .unwrap();
+        doc
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn size_changes_are_handled_before_the_frame_paints() {
+        let doc = self_sizing_canvas();
+        let events = tokio::spawn(event_task(doc.clone()));
+
+        let mut grid = Grid::new(6, 2);
+        let mut rgb_cache = RgbCache::new();
+        let painted = lay_out_and_paint(&doc, (6, 2), || {
+            render_into_grid(&doc, &mut grid, &mut rgb_cache);
+            screen_text(&grid)
+        })
+        .await
+        .unwrap();
+        assert_eq!(painted.output, "#".repeat(12));
+        assert!(painted.events.is_empty());
+
+        doc.quit();
+        events.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_frame_stops_waiting_for_size_changes_nobody_handles() {
+        let doc = self_sizing_canvas();
+        let started = Instant::now();
+        let mut grid = Grid::new(6, 2);
+        let mut rgb_cache = RgbCache::new();
+        let painted = lay_out_and_paint(&doc, (6, 2), || {
+            render_into_grid(&doc, &mut grid, &mut rgb_cache);
+            screen_text(&grid)
+        })
+        .await
+        .unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(painted.output, " ".repeat(12));
+        // The size change went to the queue before the wait, so the frame owes nothing more.
+        assert!(painted.events.is_empty());
     }
 }

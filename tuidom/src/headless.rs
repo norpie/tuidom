@@ -16,7 +16,8 @@ use crate::render::{
     RenderCursor, flush_changes_into, flush_full_into, render_into_grid, should_flush_full,
 };
 use crate::runtime_event::{
-    RuntimeEvent, RuntimeEventState, drain_and_coalesce, process_runtime_event,
+    RuntimeEvent, RuntimeEventState, SIZE_CHANGE_ROUNDS, drain_and_coalesce, process_runtime_event,
+    take_size_changes,
 };
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
@@ -149,7 +150,7 @@ impl HeadlessRuntime {
         let frame_start = Instant::now();
 
         let layout_start = Instant::now();
-        let scroll_events = self.doc.compute_layout_for_frame(self.width, self.height)?;
+        let events = self.lay_out()?;
         let layout_time = layout_start.elapsed();
 
         // Painted into the frame the last render left behind, which the paint pass
@@ -173,7 +174,7 @@ impl HeadlessRuntime {
         };
         self.doc
             .record_frame_metrics(frame_start.elapsed(), layout_time, stats);
-        self.dispatch_after_frame(scroll_events);
+        self.dispatch_after_frame(events);
         Ok(())
     }
 
@@ -194,10 +195,7 @@ impl HeadlessRuntime {
         let frame_start = Instant::now();
 
         let layout_start = Instant::now();
-        let scroll_events = self
-            .doc
-            .compute_layout_for_frame(self.width, self.height)
-            .map_err(io::Error::other)?;
+        let events = self.lay_out().map_err(io::Error::other)?;
         let layout_time = layout_start.elapsed();
 
         // Two grids alternating, like the renderer's: the frame being painted
@@ -283,14 +281,34 @@ impl HeadlessRuntime {
 
         self.doc
             .record_frame_metrics(frame_start.elapsed(), layout_time, metrics);
-        self.dispatch_after_frame(scroll_events);
+        self.dispatch_after_frame(events);
         Ok(())
     }
 
     /// Dispatch what the live loop queues once a frame is painted: the scroll events the
     /// layout's re-clamps owe, then post-frame.
-    fn dispatch_after_frame(&mut self, scroll_events: Vec<RuntimeEvent>) {
-        for event in scroll_events {
+    /// Lay out for a frame as the terminal runtime does: size changes reach their listeners and
+    /// layout runs again before the frame paints, up to the same number of rounds. Returns the
+    /// events left for after the frame.
+    fn lay_out(&mut self) -> Result<Vec<RuntimeEvent>> {
+        let mut deferred = Vec::new();
+        for round in 0..=SIZE_CHANGE_ROUNDS {
+            let mut events = self.doc.compute_layout_for_frame(self.width, self.height)?;
+            let size_changes = take_size_changes(&mut events);
+            deferred.extend(events);
+            if size_changes.is_empty() || round == SIZE_CHANGE_ROUNDS {
+                deferred.extend(size_changes);
+                break;
+            }
+            for event in size_changes {
+                process_runtime_event(&self.doc, event, &mut self.event_state);
+            }
+        }
+        Ok(deferred)
+    }
+
+    fn dispatch_after_frame(&mut self, events: Vec<RuntimeEvent>) {
+        for event in events {
             process_runtime_event(&self.doc, event, &mut self.event_state);
         }
         if let Some(event) = self.doc.pending_post_frame_event() {

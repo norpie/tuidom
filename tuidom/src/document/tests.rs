@@ -168,6 +168,76 @@ fn a_canvas_can_shrink_below_its_buffer() {
     assert_eq!(width(&doc), 6);
 }
 
+/// A canvas filling the screen that redraws itself full of `#` at every size it reports.
+fn self_sizing_canvas() -> Document {
+    let doc = Document::new().unwrap();
+    let canvas = doc.create_canvas().unwrap();
+    let mut style = Style::new();
+    style.flex_grow(1.0);
+    doc.set_style(canvas, &style).unwrap();
+    doc.append_child(doc.root(), canvas).unwrap();
+    let d = doc.clone();
+    doc.on_size_change(canvas, move |event| {
+        let mut buffer = CanvasBuffer::new(event.width, event.height);
+        for y in 0..event.height {
+            buffer.text(
+                0,
+                y,
+                &"#".repeat(usize::from(event.width)),
+                CanvasStyle::default(),
+            );
+        }
+        d.set_canvas(canvas, buffer).unwrap();
+    })
+    .unwrap();
+    doc
+}
+
+#[test]
+fn a_redraw_for_a_new_size_shows_in_the_same_frame() {
+    let doc = self_sizing_canvas();
+    let frames = Arc::new(AtomicUsize::new(0));
+    let count = frames.clone();
+    doc.on_post_frame(move |_| {
+        count.fetch_add(1, Ordering::Relaxed);
+    });
+    let mut runtime = HeadlessRuntime::new(doc, 4, 2);
+
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 1, 4), "####");
+
+    runtime.resize(6, 3);
+    runtime.render().unwrap();
+    for y in 0..3 {
+        assert_eq!(row_text(&runtime, y, 6), "######");
+    }
+    assert_eq!(frames.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn a_listener_that_keeps_resizing_its_node_is_cut_off_after_the_round_limit() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let d = doc.clone();
+    doc.on_size_change(node, move |event| {
+        count.fetch_add(1, Ordering::Relaxed);
+        d.update_style(node, |style| style.width(Length::Cells(event.width + 1)))
+            .unwrap();
+    })
+    .unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 20, 1);
+    runtime.render().unwrap();
+    // One call per round before painting, and the last change delivered after the frame.
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        crate::runtime_event::SIZE_CHANGE_ROUNDS + 1
+    );
+}
+
 #[test]
 fn a_canvas_takes_no_children() {
     let doc = Document::new().unwrap();

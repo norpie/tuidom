@@ -1,4 +1,6 @@
-use tokio::sync::mpsc;
+use std::sync::Arc;
+
+use tokio::sync::{Notify, mpsc};
 
 use crate::animation::{AnimationHandle, TransitionProperty};
 use crate::document::Document;
@@ -70,12 +72,27 @@ pub(crate) enum RuntimeEvent {
         width: u16,
         height: u16,
     },
+    /// Queued by the render task behind the size changes it hands over before painting. Reached
+    /// once every event ahead of it has been handled, which the render task waits for.
+    FrameBarrier(Arc<Notify>),
     /// A request to run the registered flush hook on the event task.
     ///
     /// Enqueued from any thread by [`Document::request_runtime_flush`](crate::Document::request_runtime_flush)
     /// so a reactive write made off the event task reaches the DOM on the next drain. The
     /// framework layer coalesces to at most one in flight, so this needs no collapsing here.
     Flush,
+}
+
+/// How many times one frame hands size changes to their listeners and lays out again before
+/// it paints regardless. Bounds a listener that keeps resizing what it listens to; whatever is
+/// left over is delivered after the frame.
+pub(crate) const SIZE_CHANGE_ROUNDS: usize = 4;
+
+/// Remove the size changes from a layout's events, returning them.
+pub(crate) fn take_size_changes(events: &mut Vec<RuntimeEvent>) -> Vec<RuntimeEvent> {
+    events
+        .extract_if(.., |event| matches!(event, RuntimeEvent::SizeChange { .. }))
+        .collect()
 }
 
 /// Collapse redundant runs in a drained batch, leaving order otherwise intact.
@@ -368,6 +385,7 @@ pub(crate) fn process_runtime_event(
         } => {
             doc.dispatch_size_change_to(node, width, height);
         }
+        RuntimeEvent::FrameBarrier(reached) => reached.notify_one(),
         RuntimeEvent::TransitionEnd { node, property } => {
             doc.dispatch_transition_end_to(node, property);
         }

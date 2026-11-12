@@ -511,9 +511,12 @@ impl ScrollEvent {
 /// The content box is what is left inside the border and padding, the area a node draws its
 /// own content into. Fires on the node once it is first laid out after a listener is added,
 /// then whenever that size changes. A node out of layout, hidden or not yet attached,
-/// reports zero by zero. A move alone fires nothing. It does not bubble, and it is delivered after
-/// the frame that changed the size, so whatever a listener changes in response shows from the
-/// next frame.
+/// reports zero by zero. A move alone fires nothing, and it does not bubble.
+///
+/// It is delivered before the frame that changed the size paints: the frame waits for its
+/// listeners, lays out again, and shows what they changed. That repeats a few times at most, and
+/// a frame stops waiting on listeners that take too long, so a change past either limit shows a
+/// frame later.
 #[derive(Debug, Clone)]
 pub struct SizeChangeEvent {
     /// The content box's new width in terminal cells.
