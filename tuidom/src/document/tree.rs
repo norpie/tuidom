@@ -4,6 +4,7 @@ use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::lock;
+use crate::node::NodeKind;
 
 impl Document {
     /// Append a child to the end of `parent`'s children list.
@@ -146,6 +147,17 @@ impl Document {
 
         if parent == child || self.is_descendant_of_unlocked(parent, child) {
             return Err(TuidomError::TreeCycle { parent, child });
+        }
+
+        // A canvas is sized by its buffer through taffy's measure function, which taffy only
+        // calls for nodes without children.
+        if self
+            .inner
+            .nodes
+            .get(&parent)
+            .is_some_and(|data| matches!(data.kind, NodeKind::Canvas { .. }))
+        {
+            return Err(TuidomError::NodeCannotHaveChildren { id: parent });
         }
 
         Ok(())

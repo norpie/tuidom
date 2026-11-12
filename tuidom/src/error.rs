@@ -84,6 +84,20 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node exists but is not a canvas node.
+    #[error("node {id:?} is not a canvas")]
+    NodeNotCanvas {
+        /// The node that is not a canvas.
+        id: NodeId,
+    },
+
+    /// A node that takes no children was given one.
+    #[error("node {id:?} cannot have children")]
+    NodeCannotHaveChildren {
+        /// The node that takes no children.
+        id: NodeId,
+    },
+
     /// An attribute key is invalid.
     #[error("attribute key cannot be empty")]
     InvalidAttributeKey,

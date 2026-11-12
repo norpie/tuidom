@@ -9,6 +9,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{Mutex as TokioMutex, Notify};
 
 use crate::animation::driver::AnimationDriver;
+use crate::canvas::CanvasBuffer;
 use crate::error::{Result, TuidomError};
 use crate::event::{FocusKeys, ScrollKeys};
 use crate::event_loop;
@@ -347,6 +348,53 @@ impl Document {
         }
         lock::mutex(&self.inner.focusable_nodes).insert(id);
         Ok(id)
+    }
+
+    /// Create a new canvas node: cells the app draws with [`set_canvas`](Self::set_canvas).
+    ///
+    /// A canvas lays out like a box, except that an axis its style leaves unset takes the
+    /// buffer's size, and it takes no children. It starts with an empty zero-by-zero buffer.
+    ///
+    /// Returns the [`NodeId`] of the created node.
+    pub fn create_canvas(&self) -> Result<NodeId> {
+        let id = self.inner.alloc(NodeData::canvas());
+        if let Err(err) = self.register_layout_node(id) {
+            self.inner.nodes.remove(&id);
+            return Err(err);
+        }
+        Ok(id)
+    }
+
+    /// Replace a canvas node's buffer.
+    ///
+    /// The buffer is drawn from the node's content origin, cropped to its content box. A
+    /// buffer equal to the one the node has is a no-op, so redrawing from a size change or
+    /// post-frame handler does not schedule frames on its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not a canvas node.
+    pub fn set_canvas(&self, node: NodeId, buffer: CanvasBuffer) -> Result<()> {
+        let resized = {
+            let Some(mut data) = self.inner.nodes.get_mut(&node) else {
+                return Err(TuidomError::NodeNotFound { id: node });
+            };
+            let NodeKind::Canvas { buffer: current } = &mut data.kind else {
+                return Err(TuidomError::NodeNotCanvas { id: node });
+            };
+            if **current == buffer {
+                return Ok(());
+            }
+            let resized = (current.width(), current.height()) != (buffer.width(), buffer.height());
+            *current = Arc::new(buffer);
+            resized
+        };
+
+        if resized {
+            self.register_layout_node(node)?;
+        }
+        self.inner.notify.notify_one();
+        Ok(())
     }
 
     /// Get the permanent document root node.

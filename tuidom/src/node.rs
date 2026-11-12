@@ -9,6 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::animation::TransitionConfig;
 use crate::animation::TransitionProperty;
+use crate::canvas::CanvasBuffer;
 use crate::id::NodeId;
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{EdgeInsets, Style};
@@ -266,7 +267,9 @@ pub(crate) enum NodeKind {
         /// time, so cycling needs no per-flip mutation.
         started: Instant,
     },
-    // Future: Canvas
+    /// Cells the app draws itself. Shared so cloning the kind, which layout and paint do,
+    /// never copies the cells.
+    Canvas { buffer: Arc<CanvasBuffer> },
 }
 
 /// The frame index a frames node shows at `now`.
@@ -356,6 +359,21 @@ impl NodeData {
         }
     }
 
+    /// Create a new canvas node with an empty buffer.
+    pub fn canvas() -> Self {
+        Self {
+            kind: NodeKind::Canvas {
+                buffer: Arc::new(CanvasBuffer::default()),
+            },
+            parent: None,
+            children: Vec::new(),
+            style: Style::default(),
+            resolved_style: RwLock::new(None),
+            transition_configs: HashMap::new(),
+            attrs: HashMap::new(),
+        }
+    }
+
     /// Create a new frames node starting its cycle at `started`.
     pub fn frames(frames: Vec<String>, interval: Duration, started: Instant) -> Self {
         Self {
@@ -431,6 +449,11 @@ pub enum NodeKindView {
         /// Index of the frame showing at the time of this snapshot.
         current: usize,
     },
+    /// Cells the app draws itself.
+    Canvas {
+        /// The buffer last given to [`Document::set_canvas`](crate::Document::set_canvas).
+        buffer: Arc<CanvasBuffer>,
+    },
 }
 
 impl NodeKind {
@@ -461,6 +484,9 @@ impl NodeKind {
                 frames: frames.clone(),
                 interval: *interval,
                 current: frames_index(frames.len(), *interval, *started, now),
+            },
+            NodeKind::Canvas { buffer } => NodeKindView::Canvas {
+                buffer: buffer.clone(),
             },
         }
     }

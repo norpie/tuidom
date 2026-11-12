@@ -7,6 +7,7 @@ use std::time::Duration;
 use super::*;
 use crate::TuidomError;
 use crate::animation::{Easing, TransitionConfig};
+use crate::canvas::{CanvasBuffer, CanvasStyle};
 use crate::event::{
     DragPhase, EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, KeyModifiers,
     ListenerHandle, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
@@ -78,6 +79,94 @@ async fn set_text_content_with_unchanged_content_does_not_notify_render() {
 
     let view = doc.get_node(text).unwrap();
     assert!(matches!(view.kind, NodeKindView::Text { content } if content == "updated"));
+}
+
+fn canvas_buffer(width: u16, height: u16, text: &str) -> CanvasBuffer {
+    let mut buffer = CanvasBuffer::new(width, height);
+    buffer.text(0, 0, text, CanvasStyle::default());
+    buffer
+}
+
+#[tokio::test]
+async fn set_canvas_with_an_unchanged_buffer_does_not_notify_render() {
+    let doc = Document::new().unwrap();
+    let canvas = doc.create_canvas().unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_canvas(canvas, canvas_buffer(3, 1, "abc")).unwrap();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_canvas(canvas, canvas_buffer(3, 1, "abc")).unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .is_err()
+    );
+
+    let view = doc.get_node(canvas).unwrap();
+    assert!(
+        matches!(view.kind, NodeKindView::Canvas { buffer } if buffer.get(1, 0).unwrap().0 == "b")
+    );
+}
+
+#[test]
+fn set_canvas_on_another_kind_of_node_errors() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("a").unwrap();
+    assert_eq!(
+        doc.set_canvas(text, CanvasBuffer::new(1, 1)).unwrap_err(),
+        TuidomError::NodeNotCanvas { id: text }
+    );
+}
+
+#[test]
+fn a_canvas_measures_as_its_buffer_on_unset_axes() {
+    let doc = Document::new().unwrap();
+    let canvas = doc.create_canvas().unwrap();
+    let mut style = Style::new();
+    style.align_self(AlignSelf::FlexStart);
+    style.padding(EdgeInsets::all(1));
+    doc.set_style(canvas, &style).unwrap();
+    doc.append_child(doc.root(), canvas).unwrap();
+    let rect = |doc: &Document| doc.get_node(canvas).unwrap().layout.unwrap().rect;
+
+    doc.set_canvas(canvas, CanvasBuffer::new(4, 2)).unwrap();
+    doc.compute_layout(20, 10).unwrap();
+    assert_eq!((rect(&doc).width, rect(&doc).height), (6, 4));
+
+    // Same size, new content: nothing for layout to redo.
+    doc.set_canvas(canvas, canvas_buffer(4, 2, "ab")).unwrap();
+    assert!(!lock::mutex(&doc.inner.layout).needs_compute(20, 10));
+
+    doc.set_canvas(canvas, CanvasBuffer::new(5, 3)).unwrap();
+    doc.compute_layout(20, 10).unwrap();
+    assert_eq!((rect(&doc).width, rect(&doc).height), (7, 5));
+
+    doc.update_style(canvas, |style| style.width(Length::Cells(9)))
+        .unwrap();
+    doc.compute_layout(20, 10).unwrap();
+    assert_eq!((rect(&doc).width, rect(&doc).height), (9, 5));
+}
+
+#[test]
+fn a_canvas_takes_no_children() {
+    let doc = Document::new().unwrap();
+    let canvas = doc.create_canvas().unwrap();
+    let child = doc.create_box().unwrap();
+    let error = TuidomError::NodeCannotHaveChildren { id: canvas };
+    assert_eq!(doc.append_child(canvas, child).unwrap_err(), error);
+
+    let sibling = doc.create_box().unwrap();
+    doc.append_child(doc.root(), sibling).unwrap();
+    assert_eq!(
+        doc.insert_before(canvas, child, sibling).unwrap_err(),
+        error
+    );
+    assert!(doc.get_children(canvas).is_empty());
+    assert_eq!(doc.get_parent(child), None);
 }
 
 #[test]

@@ -306,6 +306,8 @@ enum MeasureContext {
     /// Frame-cycling content: measured on the largest frame, so cycling never
     /// reflows the layout around it.
     Frames { frames: Vec<String> },
+    /// A canvas: its buffer's size, in cells.
+    Canvas { width: u16, height: u16 },
 }
 
 /// The measurement context a node kind carries into taffy, if any.
@@ -319,6 +321,10 @@ fn measure_context_for(kind: &NodeKind) -> Option<MeasureContext> {
         }),
         NodeKind::Frames { frames, .. } => Some(MeasureContext::Frames {
             frames: frames.clone(),
+        }),
+        NodeKind::Canvas { buffer } => Some(MeasureContext::Canvas {
+            width: buffer.width(),
+            height: buffer.height(),
         }),
         NodeKind::Box => None,
     }
@@ -488,6 +494,14 @@ fn measure_fn(
             );
             measure_natural(natural, known_dimensions, available_space)
         }
+        Some(MeasureContext::Canvas { width, height }) => measure_natural(
+            Size {
+                width: f32::from(*width),
+                height: f32::from(*height),
+            },
+            known_dimensions,
+            available_space,
+        ),
         None => Size::ZERO,
     }
 }

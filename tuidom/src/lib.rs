@@ -14,6 +14,7 @@ extern crate self as tuidom;
 
 /// Animation driver and types.
 pub mod animation;
+pub mod canvas;
 /// Error types returned by tuidom APIs.
 mod error;
 /// Event types and dispatch.
