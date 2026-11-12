@@ -193,17 +193,25 @@ impl Axes {
 }
 
 /// The cells of band `index` when `length` cells are split into `count` equal slots, as offsets
-/// from the start. A slot of two cells or more leaves its last one empty, to set its band apart
-/// from the next. Slots differ in size by at most a cell. A band past `count`, or in a slot too
-/// narrow to get a cell, is empty.
+/// from the start.
+///
+/// Every band is as wide: the width of the narrowest slot, less a cell to set it apart from the
+/// next when that leaves one. The bands' starts are spread evenly, so cells left over fall
+/// between them. When there are more bands than cells, each band is one cell or none. A band
+/// past `count` is empty.
 pub fn band(index: usize, count: usize, length: u16) -> Range<u16> {
     if index >= count {
         return length..length;
     }
     let edge = |index: usize| (index as u128 * u128::from(length) / count as u128) as u16;
-    let (start, end) = (edge(index), edge(index + 1));
-    let end = if end - start >= 2 { end - 1 } else { end };
-    start..end
+    let start = edge(index);
+    let slot = (u128::from(length) / count as u128) as u16;
+    let width = match slot {
+        0 => return start..edge(index + 1),
+        1 => 1,
+        slot => slot - 1,
+    };
+    start..start + width
 }
 
 /// The marks along an axis `length` cells long. `upward` counts a linear axis's offsets from
@@ -458,7 +466,7 @@ mod tests {
     fn bands_split_a_length_evenly() {
         assert_eq!(band(0, 3, 10), 0..2);
         assert_eq!(band(1, 3, 10), 3..5);
-        assert_eq!(band(2, 3, 10), 6..9);
+        assert_eq!(band(2, 3, 10), 6..8);
         assert_eq!(band(0, 2, 2), 0..1);
         assert!(band(3, 3, 10).is_empty());
         assert!(band(0, 0, 10).is_empty());
