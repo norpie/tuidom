@@ -10,3 +10,6 @@ description = "Charts for tuidom, drawn into canvas buffers"
 [lib]
 # Per docs/STYLE.md the crate carries no doc tests. Tests live in-crate next to the code.
 doctest = false
+
+[dependencies]
+tuidom = { path = "../tuidom" }
