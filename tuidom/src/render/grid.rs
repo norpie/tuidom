@@ -835,6 +835,57 @@ impl Grid {
         glyphs
     }
 
+    /// Write one canvas cell at `col`, `row`: `bg` blended over what is there, then the glyph
+    /// if the cell holds one. Writes nothing unless every cell it covers is writable, so a
+    /// wide glyph cut by the clip is dropped whole. Returns whether a glyph was written.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_canvas_cell(
+        &mut self,
+        col: usize,
+        row: usize,
+        content: &CellContent,
+        fg: Option<Rgb>,
+        bg: Option<Rgb>,
+        alpha: f64,
+        attrs: CellAttrs,
+    ) -> bool {
+        let width = match content {
+            CellContent::WideContinuation => return false,
+            CellContent::Empty if bg.is_none() => return false,
+            CellContent::Empty => 1,
+            CellContent::Glyph { width, .. } => *width,
+        };
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
+        let (left, top) = (col as i64, row as i64);
+        if left < bound_left
+            || left + i64::from(width) > bound_right
+            || top < bound_top
+            || top >= bound_bottom
+        {
+            return false;
+        }
+
+        if let Some(bg) = bg {
+            self.fill_rect(
+                col as i32,
+                row as i32,
+                u16::from(width),
+                1,
+                Cell::empty_with_bg(bg),
+                alpha,
+            );
+        }
+        let CellContent::Glyph { text, width } = content else {
+            return false;
+        };
+        if clamp_alpha(alpha) <= 0.0 {
+            return false;
+        }
+        self.write_glyph(row, col, text.as_str(), *width, fg, alpha, attrs);
+        self.touch_span(row, col, col + usize::from(*width));
+        true
+    }
+
     /// Recolor a run of selected glyph cells on one row.
     ///
     /// With explicit selection colors, blends them over the run at the given alpha.
@@ -1109,7 +1160,9 @@ impl Grid {
         1
     }
 
-    fn clip_rect(
+    /// The writable part of a rectangle, as `(left, top, right, bottom)` cell indices with
+    /// exclusive right and bottom, or `None` when no cell of it is writable.
+    pub fn clip_rect(
         &self,
         x: i32,
         y: i32,

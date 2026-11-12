@@ -169,6 +169,167 @@ fn a_canvas_takes_no_children() {
     assert_eq!(doc.get_parent(child), None);
 }
 
+/// A canvas under the root, sized by its buffer on both axes, holding `buffer`.
+fn painted_canvas(buffer: CanvasBuffer, style: impl FnOnce(&mut Style)) -> (Document, NodeId) {
+    let doc = Document::new().unwrap();
+    let canvas = doc.create_canvas().unwrap();
+    let mut canvas_style = Style::new();
+    canvas_style.align_self(AlignSelf::FlexStart);
+    canvas_style.flex_shrink(0.0);
+    style(&mut canvas_style);
+    doc.set_style(canvas, &canvas_style).unwrap();
+    doc.set_canvas(canvas, buffer).unwrap();
+    doc.append_child(doc.root(), canvas).unwrap();
+    (doc, canvas)
+}
+
+#[test]
+fn a_canvas_draws_from_its_content_origin() {
+    let (doc, _) = painted_canvas(canvas_buffer(2, 1, "ab"), |style| {
+        style.border(Border::new(BorderCharset::single()));
+        style.padding(EdgeInsets::new(0, 0, 0, 1));
+    });
+    let mut runtime = HeadlessRuntime::new(doc, 6, 3);
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 0, 6), "┌───┐ ");
+    assert_eq!(row_text(&runtime, 1, 6), "│ ab│ ");
+}
+
+#[test]
+fn a_canvas_crops_its_buffer_to_the_content_box() {
+    let (doc, canvas) = painted_canvas(canvas_buffer(6, 2, "abcdef"), |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(1));
+    });
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 6, 2);
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 0, 6), "abc   ");
+
+    // A wide glyph whose second half falls outside the box is dropped whole.
+    doc.set_canvas(canvas, canvas_buffer(4, 1, "ab日")).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 0, 6), "ab    ");
+    assert!(!runtime.get_cell(3, 0).unwrap().is_wide_continuation);
+}
+
+#[test]
+fn canvas_cells_take_the_node_color_and_background_where_unset() {
+    let red = CanvasStyle {
+        fg: Some(ResolvedColor::red()),
+        italic: true,
+        ..CanvasStyle::default()
+    };
+    let green_bg = CanvasStyle {
+        bg: Some(ResolvedColor::from_srgb(0, 255, 0)),
+        ..CanvasStyle::default()
+    };
+    let mut buffer = CanvasBuffer::new(4, 1);
+    buffer.set(0, 0, "a", red);
+    buffer.set(1, 0, "b", CanvasStyle::default());
+    buffer.set(2, 0, "c", green_bg);
+    let (doc, _) = painted_canvas(buffer, |style| {
+        style.color(Color::blue());
+        style.background(Color::black());
+        style.bold(true);
+    });
+    let mut runtime = HeadlessRuntime::new(doc, 4, 1);
+    runtime.render().unwrap();
+
+    let black = Some(ScreenColor::from_rgb(0, 0, 0));
+    let blue = Some(ScreenColor::from_rgb(0, 0, 255));
+    let a = runtime.get_cell(0, 0).unwrap();
+    assert_eq!(
+        (a.fg, a.bg, a.bold, a.italic),
+        (Some(ScreenColor::from_rgb(255, 0, 0)), black, true, true)
+    );
+    let b = runtime.get_cell(1, 0).unwrap();
+    assert_eq!((b.fg, b.bg, b.italic), (blue, black, false));
+    let c = runtime.get_cell(2, 0).unwrap();
+    assert_eq!((c.fg, c.bg), (blue, Some(ScreenColor::from_rgb(0, 255, 0))));
+    let empty = runtime.get_cell(3, 0).unwrap();
+    assert_eq!((empty.text.as_str(), empty.bg), (" ", black));
+}
+
+#[test]
+fn canvas_cells_blend_with_the_node_opacity() {
+    let mut buffer = CanvasBuffer::new(1, 1);
+    buffer.set(
+        0,
+        0,
+        " ",
+        CanvasStyle {
+            bg: Some(ResolvedColor::red()),
+            ..CanvasStyle::default()
+        },
+    );
+    let (doc, _) = painted_canvas(buffer, |style| style.opacity(0.5));
+    doc.update_style(doc.root(), |style| style.background(Color::black()))
+        .unwrap();
+    let mut runtime = HeadlessRuntime::new(doc, 2, 1);
+    runtime.render().unwrap();
+
+    let bg = runtime.get_cell(0, 0).unwrap().bg.unwrap();
+    assert!(
+        (127..=128).contains(&bg.r),
+        "half red over black, got {bg:?}"
+    );
+    assert_eq!((bg.g, bg.b), (0, 0));
+}
+
+#[test]
+fn a_scrolled_canvas_shows_only_what_the_viewport_does() {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.height(Length::Cells(2));
+    // Wide enough that the scrollbar in its last column stays clear of the canvas.
+    style.width(Length::Cells(4));
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let canvas = doc.create_canvas().unwrap();
+    let mut style = Style::new();
+    style.flex_shrink(0.0);
+    doc.set_style(canvas, &style).unwrap();
+    let mut buffer = CanvasBuffer::new(2, 4);
+    for row in 0..4 {
+        buffer.text(0, row, &format!("r{row}"), CanvasStyle::default());
+    }
+    doc.set_canvas(canvas, buffer).unwrap();
+    doc.append_child(container, canvas).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 3);
+    runtime.render().unwrap();
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 0, 3), "r1 ");
+    assert_eq!(row_text(&runtime, 1, 3), "r2 ");
+    assert_eq!(row_text(&runtime, 2, 3), "   ");
+}
+
+#[test]
+fn a_sibling_with_a_higher_z_index_draws_over_a_canvas() {
+    let doc = Document::new().unwrap();
+    let overlay = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x: 1, y: 0 });
+    style.z_index(1);
+    doc.set_style(overlay, &style).unwrap();
+    let text = doc.create_text("XY").unwrap();
+    doc.append_child(overlay, text).unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+
+    let canvas = doc.create_canvas().unwrap();
+    doc.set_canvas(canvas, canvas_buffer(4, 1, "abcd")).unwrap();
+    doc.append_child(doc.root(), canvas).unwrap();
+
+    let mut runtime = HeadlessRuntime::new(doc, 4, 1);
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 0, 4), "aXYd");
+}
+
 #[test]
 fn performance_snapshot_exposes_recorded_metrics_and_detail() {
     let doc = Document::new().unwrap();

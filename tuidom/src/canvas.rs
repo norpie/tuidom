@@ -12,13 +12,16 @@ use unicode_width::UnicodeWidthStr;
 use crate::render::grid::{CellContent, Glyph};
 use crate::style::ResolvedColor;
 
-/// How a canvas cell is drawn. An unset color shows whatever is behind the canvas: the node's
-/// own background, or what it sits on.
+/// How a canvas cell is drawn.
+///
+/// Colors blend like any other, so a translucent one mixes with what is under it. The node's
+/// own bold, italic and underline apply to every cell, and these add to them.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CanvasStyle {
-    /// Glyph color.
+    /// Glyph color. Unset takes the node's resolved `color`, as text does.
     pub fg: Option<ResolvedColor>,
-    /// Cell background.
+    /// Cell background. Unset shows what is behind the cell: the node's background, or what the
+    /// node sits on.
     pub bg: Option<ResolvedColor>,
     /// Bold glyph.
     pub bold: bool,
@@ -138,7 +141,6 @@ impl CanvasBuffer {
         self.cells.fill(CanvasCell::EMPTY);
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn cell(&self, x: u16, y: u16) -> Option<&CanvasCell> {
         self.cells.get(self.index(x, y)?)
     }

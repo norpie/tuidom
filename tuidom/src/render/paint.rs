@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::canvas::CanvasBuffer;
 use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
 use crate::id::{NodeId, NodeMap};
@@ -152,7 +153,12 @@ fn paint_entry(
     paint_half_block_edges(grid, node, alpha, rgb_cache, profile);
 
     let cursor = match &node.kind {
-        NodeKindView::Box | NodeKindView::Canvas { .. } => None,
+        NodeKindView::Box => None,
+
+        NodeKindView::Canvas { buffer } => {
+            paint_canvas(grid, node, buffer, fg_rgb, alpha, rgb_cache, profile);
+            None
+        }
 
         NodeKindView::Text { content } => {
             paint_text(grid, node, fg_rgb, alpha, content, profile);
@@ -331,6 +337,63 @@ fn paint_text(
         cell_attrs(node),
     );
     if let Some(start) = text_start {
+        profile.text_write_time += start.elapsed();
+        profile.glyphs_written += glyphs;
+    }
+}
+
+/// Draw a canvas buffer from the node's content origin, cropped to its content box.
+///
+/// Only the window both the crop and the clip leave writable is walked, so a large buffer in a
+/// small box costs only what shows.
+fn paint_canvas(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    buffer: &CanvasBuffer,
+    fg_rgb: Rgb,
+    alpha: f64,
+    rgb_cache: &mut RgbCache,
+    profile: &mut PaintProfile,
+) {
+    let content = node.layout.content_rect(&node.resolved);
+    let width = content.width.min(buffer.width());
+    let height = content.height.min(buffer.height());
+    let (x, y) = (i64::from(content.x), i64::from(content.y));
+    grid.set_clip(
+        node.clip
+            .bound_x(x, x + i64::from(width))
+            .bound_y(y, y + i64::from(height)),
+    );
+
+    let write_start = profile.enabled.then(Instant::now);
+    let mut glyphs = 0;
+    if let Some((left, top, right, bottom)) = grid.clip_rect(content.x, content.y, width, height) {
+        let node_attrs = cell_attrs(node);
+        for row in top..bottom {
+            let buffer_y = (row as i64 - y) as u16;
+            for col in left..right {
+                let Some(cell) = buffer.cell((col as i64 - x) as u16, buffer_y) else {
+                    continue;
+                };
+                let style = cell.style;
+                let fg = style
+                    .fg
+                    .map_or(fg_rgb, |fg| resolve_rgb(rgb_cache, fg, profile));
+                let bg = style.bg.map(|bg| resolve_rgb(rgb_cache, bg, profile));
+                let attrs = CellAttrs {
+                    bold: node_attrs.bold || style.bold,
+                    italic: node_attrs.italic || style.italic,
+                    underline: node_attrs.underline || style.underline,
+                };
+                if grid.write_canvas_cell(col, row, &cell.content, Some(fg), bg, alpha, attrs) {
+                    glyphs += 1;
+                }
+            }
+        }
+    }
+    grid.set_clip(node.clip);
+
+    if let Some(start) = write_start {
         profile.text_write_time += start.elapsed();
         profile.glyphs_written += glyphs;
     }
@@ -551,7 +614,8 @@ fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
     }
 
     match &entry.kind {
-        NodeKindView::Box | NodeKindView::Canvas { .. } => true,
+        NodeKindView::Box => true,
+        NodeKindView::Canvas { buffer } => buffer.width() == 0 || buffer.height() == 0,
         NodeKindView::Text { content } => content.is_empty(),
         NodeKindView::Input { .. } => false,
         NodeKindView::Frames {
