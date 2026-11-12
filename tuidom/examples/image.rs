@@ -3,7 +3,7 @@
 //! and a soft transparent hole, so color, fitting and alpha all show.
 //!
 //! f — cycle the fit (contain, cover, fill)
-//! p — cycle the protocol (auto, kitty, half-block)
+//! p — cycle the protocol (auto, kitty, sixel, iterm2, half-block)
 //! `+` and `-` — widen or narrow the box
 //! q — quit
 
@@ -15,9 +15,11 @@ use tuidom::style::{Border, BorderCharset, Length, Style};
 use tuidom::{Document, NodeId, Result, style};
 
 const FITS: [ImageFit; 3] = [ImageFit::Contain, ImageFit::Cover, ImageFit::Fill];
-const PROTOCOLS: [ImageProtocol; 3] = [
+const PROTOCOLS: [ImageProtocol; 5] = [
     ImageProtocol::Auto,
     ImageProtocol::Kitty,
+    ImageProtocol::Sixel,
+    ImageProtocol::ITerm2,
     ImageProtocol::HalfBlock,
 ];
 
@@ -101,13 +103,12 @@ fn apply(
 
     let info = doc.terminal();
     let drawn = match protocol {
-        ImageProtocol::Auto => {
-            if info.as_ref().is_some_and(|info| info.graphics.placeholders) {
-                "auto (placeholders)"
-            } else {
-                "auto (half-blocks)"
-            }
-        }
+        ImageProtocol::Auto => match info.as_ref() {
+            Some(info) if info.graphics.placeholders => "auto (placeholders)",
+            Some(info) if info.graphics.iterm2 && info.multiplexer.is_none() => "auto (iterm2)",
+            Some(info) if info.graphics.sixel => "auto (sixel)",
+            _ => "auto (half-blocks)",
+        },
         ImageProtocol::Kitty => "kitty",
         ImageProtocol::Sixel => "sixel",
         ImageProtocol::ITerm2 => "iterm2",
