@@ -20,6 +20,9 @@ pub struct Ticks {
 }
 
 impl LinearScale {
+    /// The scale over 0 to 1, for when there are no values to span.
+    pub(crate) const UNIT: Self = Self { min: 0.0, max: 1.0 };
+
     /// A scale over `min` to `max`, in either order.
     ///
     /// Equal bounds are padded apart: by 1 either side of zero, otherwise by a tenth of the

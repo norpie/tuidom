@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::scale::{LinearScale, compact};
 
 /// Rows per y tick and columns per x tick the axes aim for.
-const Y_SPACING: u16 = 3;
+pub(crate) const Y_SPACING: u16 = 3;
 const X_SPACING: u16 = 10;
 
 /// What one edge of a chart shows.
