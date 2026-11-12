@@ -29,7 +29,7 @@ default = ["decode"]
 decode = ["dep:image"]
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", default-features = false, features = ["event", "std", "stdio", "termios"] }
+rustix = { version = "1.1.4", default-features = false, features = ["event", "fs", "std", "stdio", "termios"] }
 
 [dev-dependencies]
 criterion = "0.8.2"

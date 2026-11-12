@@ -8,6 +8,19 @@ use rustix::io::Errno;
 
 use super::probe::ProbeIo;
 
+/// The terminals the standard streams are attached to, by device path.
+pub(super) fn own_ttys() -> Vec<String> {
+    [
+        rustix::stdio::stdin(),
+        rustix::stdio::stdout(),
+        rustix::stdio::stderr(),
+    ]
+    .into_iter()
+    .filter_map(|fd| rustix::termios::ttyname(fd, Vec::new()).ok())
+    .filter_map(|name| name.into_string().ok())
+    .collect()
+}
+
 /// The terminal crossterm talks to: replies are read from stdin when it is a terminal and from
 /// `/dev/tty` otherwise, the same choice crossterm makes, and queries go to stdout.
 pub(super) struct TtyIo {

@@ -1,9 +1,10 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+use super::env;
 use super::merge::merge;
 use super::reply::{self, Reply};
-use super::tmux::{self, TmuxClient};
+use super::tmux::{self, TmuxClient, TmuxPane};
 use super::{MultiplexerKind, PixelSize, TerminalInfo};
 
 /// How long one batch may take to answer. A terminal answers DA1 well within it, so it only
@@ -32,12 +33,21 @@ pub(crate) async fn probe() -> TerminalInfo {
 }
 
 fn probe_blocking() -> TerminalInfo {
-    let env = TerminalInfo::from_env();
-    let tmux = env
+    let mut env = TerminalInfo::from_env();
+    let mut tmux = None;
+    let in_tmux = env
         .multiplexer
         .as_ref()
-        .filter(|multiplexer| multiplexer.kind == MultiplexerKind::Tmux)
-        .and_then(|_| tmux::query_client());
+        .is_some_and(|multiplexer| multiplexer.kind == MultiplexerKind::Tmux);
+    if in_tmux {
+        match tmux::query_pane(&own_ttys()) {
+            TmuxPane::Inside(client) => tmux = Some(client),
+            TmuxPane::Elsewhere => {
+                env = env::detect_outside_tmux(|name| std::env::var(name).ok());
+            }
+            TmuxPane::Unknown => {}
+        }
+    }
     let mut info = match ask_terminal(env.clone(), tmux.as_ref()) {
         Ok(info) => info,
         Err(err) => {
@@ -59,6 +69,16 @@ fn ask_terminal(env: TerminalInfo, tmux: Option<&TmuxClient>) -> io::Result<Term
 #[cfg(not(unix))]
 fn ask_terminal(env: TerminalInfo, tmux: Option<&TmuxClient>) -> io::Result<TerminalInfo> {
     Ok(merge(env, &[], tmux))
+}
+
+#[cfg(unix)]
+fn own_ttys() -> Vec<String> {
+    super::tty::own_ttys()
+}
+
+#[cfg(not(unix))]
+fn own_ttys() -> Vec<String> {
+    Vec::new()
 }
 
 pub(crate) fn pixel_size() -> Option<PixelSize> {

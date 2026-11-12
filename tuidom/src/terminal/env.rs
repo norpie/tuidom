@@ -42,6 +42,17 @@ pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
     }
 }
 
+/// What the environment says once `$TMUX` is known to be inherited rather than set for this
+/// application. tmux's own `TERM_PROGRAM` goes with it, since the terminal outside did not set it.
+pub(super) fn detect_outside_tmux(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
+    let set_by_tmux = var("TERM_PROGRAM").as_deref() == Some("tmux");
+    detect(|name| match name {
+        "TMUX" | "TMUX_PANE" => None,
+        "TERM_PROGRAM" | "TERM_PROGRAM_VERSION" if set_by_tmux => None,
+        _ => var(name),
+    })
+}
+
 fn detect_multiplexer(var: impl Fn(&str) -> Option<String>) -> Option<Multiplexer> {
     let kind = if var("TMUX").is_some() {
         MultiplexerKind::Tmux
@@ -92,6 +103,14 @@ mod tests {
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect();
         detect(|name| vars.get(name).cloned())
+    }
+
+    fn detect_outside_tmux_from(vars: &[(&str, &str)]) -> TerminalInfo {
+        let vars: HashMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        detect_outside_tmux(|name| vars.get(name).cloned())
     }
 
     #[test]
@@ -183,6 +202,36 @@ mod tests {
         assert_eq!(info.name, None);
         assert_eq!(info.version, None);
         assert_eq!(info.graphics, Graphics::default());
+    }
+
+    #[test]
+    fn an_inherited_tmux_is_dropped_with_its_term_program() {
+        let vars = [
+            ("TMUX", "/tmp/tmux-1000/default,1234,0"),
+            ("TMUX_PANE", "%3"),
+            ("TERM", "xterm-kitty"),
+            ("TERM_PROGRAM", "tmux"),
+            ("TERM_PROGRAM_VERSION", "3.4"),
+            ("KITTY_WINDOW_ID", "1"),
+        ];
+        let info = detect_outside_tmux_from(&vars);
+        assert!(info.multiplexer.is_none());
+        assert_eq!(info.name.as_deref(), Some("kitty"));
+        assert_eq!(info.version, None);
+        assert!(info.graphics.placeholders);
+    }
+
+    #[test]
+    fn a_term_program_set_after_tmux_is_kept() {
+        let vars = [
+            ("TMUX", "/tmp/tmux-1000/default,1234,0"),
+            ("TERM_PROGRAM", "WezTerm"),
+            ("TERM_PROGRAM_VERSION", "20240203"),
+        ];
+        let info = detect_outside_tmux_from(&vars);
+        assert!(info.multiplexer.is_none());
+        assert_eq!(info.name.as_deref(), Some("WezTerm"));
+        assert_eq!(info.version.as_deref(), Some("20240203"));
     }
 
     #[test]

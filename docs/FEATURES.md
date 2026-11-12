@@ -337,6 +337,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
         DA1 as the end marker and sixel flag, with a deadline for terminals that ignore DA1
   - [x] Inside tmux: the attached terminal and `allow-passthrough` from `tmux display-message`;
         image protocols by that terminal's name, never by a passthrough query
+  - [x] A `$TMUX` inherited from outside the application's pane is ignored
   - [x] Kitty placeholder support, by the kitty reply and the terminal's name
   - [x] Pixel size, re-read on resize
   - [x] Declared in headless with `HeadlessRuntime::set_terminal_info`

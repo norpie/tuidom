@@ -372,8 +372,10 @@ typed while the probe runs are lost. Queries need a Unix terminal; elsewhere the
 from the environment alone.
 
 **Inside tmux**, tmux answers the queries itself: XTVERSION gives tmux's version, and the
-colors are the pane's. One `tmux display-message` names the terminal tmux is attached to
-and says whether `allow-passthrough` is on. Nothing is asked of that terminal directly. A query
+colors are the pane's. One `tmux display-message` about `$TMUX_PANE` names the terminal tmux
+is attached to and says whether `allow-passthrough` is on. It also gives the pane's tty: when
+that is not the application's, `$TMUX` was inherited, as by a terminal started from a shell
+inside tmux, and the probe carries on as if outside it. Nothing is asked of that terminal directly. A query
 wrapped for passthrough does reach it, but its reply comes back to tmux, which keeps it, and a
 device attributes reply tmux did not ask for makes it briefly resize the window. So inside
 tmux, kitty graphics and iTerm2 images go by the attached terminal's name, and only count while
