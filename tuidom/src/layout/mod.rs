@@ -494,14 +494,13 @@ fn measure_fn(
             );
             measure_natural(natural, known_dimensions, available_space)
         }
-        Some(MeasureContext::Canvas { width, height }) => measure_natural(
-            Size {
-                width: f32::from(*width),
-                height: f32::from(*height),
-            },
-            known_dimensions,
-            available_space,
-        ),
+        // The buffer is what the app drew last, usually for the size it was last given, so it is
+        // the preferred size but no minimum: a canvas holding a buffer drawn for a larger box can
+        // still shrink and report the smaller size to be redrawn for.
+        Some(MeasureContext::Canvas { width, height }) => Size {
+            width: canvas_axis(known_dimensions.width, available_space.width, *width),
+            height: canvas_axis(known_dimensions.height, available_space.height, *height),
+        },
         None => Size::ZERO,
     }
 }
@@ -528,6 +527,14 @@ fn natural_text_size(content: &str) -> Size<f32> {
         .fold(0.0_f32, f32::max);
     let height = content.lines().count() as f32;
     Size { width, height }
+}
+
+fn canvas_axis(known: Option<f32>, available: AvailableSpace, buffer: u16) -> f32 {
+    match (known, available) {
+        (Some(known), _) => known,
+        (None, AvailableSpace::MinContent) => 0.0,
+        (None, available) => resolve_measured_axis(None, available, f32::from(buffer)),
+    }
 }
 
 fn resolve_measured_axis(known: Option<f32>, available: AvailableSpace, natural: f32) -> f32 {

@@ -152,6 +152,23 @@ fn a_canvas_measures_as_its_buffer_on_unset_axes() {
 }
 
 #[test]
+fn a_canvas_can_shrink_below_its_buffer() {
+    let doc = Document::new().unwrap();
+    let canvas = doc.create_canvas().unwrap();
+    doc.set_canvas(canvas, CanvasBuffer::new(6, 1)).unwrap();
+    doc.append_child(doc.root(), canvas).unwrap();
+    let width = |doc: &Document| doc.get_node(canvas).unwrap().layout.unwrap().rect.width;
+
+    doc.compute_layout(4, 1).unwrap();
+    assert_eq!(width(&doc), 4);
+
+    doc.update_style(canvas, |style| style.flex_shrink(0.0))
+        .unwrap();
+    doc.compute_layout(4, 1).unwrap();
+    assert_eq!(width(&doc), 6);
+}
+
+#[test]
 fn a_canvas_takes_no_children() {
     let doc = Document::new().unwrap();
     let canvas = doc.create_canvas().unwrap();

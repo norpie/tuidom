@@ -353,7 +353,9 @@ impl Document {
     /// Create a new canvas node: cells the app draws with [`set_canvas`](Self::set_canvas).
     ///
     /// A canvas lays out like a box, except that an axis its style leaves unset takes the
-    /// buffer's size, and it takes no children. It starts with an empty zero-by-zero buffer.
+    /// buffer's size, and it takes no children. The buffer is a preferred size, not a minimum:
+    /// flex can shrink a canvas below it, cropping what it shows, unless `flex_shrink` is zero.
+    /// It starts with an empty zero-by-zero buffer.
     ///
     /// Returns the [`NodeId`] of the created node.
     pub fn create_canvas(&self) -> Result<NodeId> {
