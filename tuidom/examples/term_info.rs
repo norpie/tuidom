@@ -121,6 +121,14 @@ fn show(doc: &Document, list: NodeId, env: &TerminalInfo, info: &TerminalInfo) -
     row(
         doc,
         list,
+        "kitty placeholders",
+        yes_no(info.graphics.placeholders),
+        None,
+        source(&env.graphics.placeholders, &info.graphics.placeholders),
+    )?;
+    row(
+        doc,
+        list,
         "sixel",
         yes_no(info.graphics.sixel),
         None,

@@ -88,6 +88,9 @@ pub enum ColorDepth {
 pub struct Graphics {
     /// The kitty graphics protocol.
     pub kitty: bool,
+    /// Kitty graphics shown through Unicode placeholder cells. Not every terminal that speaks
+    /// kitty graphics supports these, and none answers a query for them, so this goes by name.
+    pub placeholders: bool,
     /// Sixel.
     pub sixel: bool,
     /// iTerm2's inline images (OSC 1337), which has no query, so it is known only by name.
@@ -133,6 +136,10 @@ fn speaks_kitty(name: &str) -> bool {
         name,
         "kitty" | "WezTerm" | "ghostty" | "xterm-kitty" | "xterm-ghostty"
     )
+}
+
+fn speaks_placeholders(name: &str) -> bool {
+    matches!(name, "kitty" | "ghostty" | "xterm-kitty" | "xterm-ghostty")
 }
 
 fn speaks_iterm2(name: &str) -> bool {

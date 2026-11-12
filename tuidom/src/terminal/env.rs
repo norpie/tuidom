@@ -1,6 +1,6 @@
 use super::{
     ColorDepth, Graphics, Multiplexer, MultiplexerKind, TerminalInfo, is_truecolor_terminal,
-    speaks_iterm2, speaks_kitty,
+    speaks_iterm2, speaks_kitty, speaks_placeholders,
 };
 
 pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
@@ -27,6 +27,7 @@ pub(super) fn detect(var: impl Fn(&str) -> Option<String>) -> TerminalInfo {
         ),
         graphics: Graphics {
             kitty: name.as_deref().is_some_and(speaks_kitty),
+            placeholders: name.as_deref().is_some_and(speaks_placeholders),
             sixel: false,
             iterm2: name.as_deref().is_some_and(speaks_iterm2),
         },
@@ -141,6 +142,7 @@ mod tests {
             let info = detect_from(vars);
             assert_eq!(info.name.as_deref(), Some("kitty"));
             assert!(info.graphics.kitty);
+            assert!(info.graphics.placeholders);
             assert_eq!(info.color_depth, ColorDepth::TrueColor);
         }
     }

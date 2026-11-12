@@ -2,6 +2,7 @@ use super::reply::Reply;
 use super::tmux::TmuxClient;
 use super::{
     ColorDepth, MultiplexerKind, TerminalInfo, is_truecolor_terminal, speaks_iterm2, speaks_kitty,
+    speaks_placeholders,
 };
 
 /// Combine what the environment said with what tmux and the terminal answered.
@@ -53,6 +54,7 @@ pub(super) fn merge(
     if info.multiplexer.is_some() {
         info.graphics.kitty = reaches_terminal && name.is_some_and(speaks_kitty);
     }
+    info.graphics.placeholders = info.graphics.kitty && name.is_some_and(speaks_placeholders);
     info.graphics.iterm2 = reaches_terminal && name.is_some_and(speaks_iterm2);
     info
 }
@@ -128,6 +130,7 @@ mod tests {
             color_depth: ColorDepth::TrueColor,
             graphics: Graphics {
                 kitty: true,
+                placeholders: true,
                 ..Graphics::default()
             },
             ..TerminalInfo::default()
@@ -149,6 +152,7 @@ mod tests {
         let info = merge(env, &[DA1], None);
         assert!(info.probed);
         assert!(!info.graphics.kitty);
+        assert!(!info.graphics.placeholders);
         assert_eq!(info.name.as_deref(), Some("kitty"));
     }
 
@@ -240,11 +244,32 @@ mod tests {
         for terminal in ["kitty(0.35.2)", "ghostty 1.1.0", "xterm-kitty"] {
             let on = merge(in_tmux(), &[DA1], Some(&client(terminal, true)));
             assert!(on.graphics.kitty, "{terminal}");
+            assert!(on.graphics.placeholders, "{terminal}");
             let off = merge(in_tmux(), &[DA1], Some(&client(terminal, false)));
             assert!(!off.graphics.kitty, "{terminal}");
+            assert!(!off.graphics.placeholders, "{terminal}");
         }
         let alacritty = merge(in_tmux(), &[DA1], Some(&client("alacritty", true)));
         assert!(!alacritty.graphics.kitty);
+        let wezterm = merge(in_tmux(), &[DA1], Some(&client("WezTerm 20240203", true)));
+        assert!(wezterm.graphics.kitty);
+        assert!(!wezterm.graphics.placeholders);
+    }
+
+    #[test]
+    fn placeholders_need_a_kitty_reply_and_a_known_name() {
+        let answering = |terminal| {
+            merge(
+                TerminalInfo::default(),
+                &[version(terminal), Reply::KittyGraphics(true), DA1],
+                None,
+            )
+        };
+        assert!(answering("kitty(0.35.2)").graphics.placeholders);
+        assert!(answering("ghostty 1.1.0").graphics.placeholders);
+        let wezterm = answering("WezTerm 20240203");
+        assert!(wezterm.graphics.kitty);
+        assert!(!wezterm.graphics.placeholders);
     }
 
     #[test]
