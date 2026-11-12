@@ -64,6 +64,7 @@ pub(crate) fn paint(
     instrument: bool,
     clear_grid: bool,
 ) -> DomPaintOutput {
+    rgb_cache.trim();
     let collect_start = Instant::now();
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();

@@ -426,6 +426,10 @@ impl From<ResolvedColor> for Color {
 // Conversion cache
 // ---------------------------------------------------------------------------
 
+/// Entries past which [`RgbCache::trim`] empties the cache. Canvas and image cells can each
+/// bring a color of their own, so without a bound the cache grows with every picture shown.
+const RGB_CACHE_LIMIT: usize = 4096;
+
 /// Read-through cache for converting resolved colors to terminal RGB.
 #[derive(Debug, Default)]
 pub(crate) struct RgbCache {
@@ -448,6 +452,14 @@ impl RgbCache {
         let rgb = color_to_rgb(color);
         self.entries.insert(key, rgb);
         rgb
+    }
+
+    /// Empty the cache once it holds more than [`RGB_CACHE_LIMIT`] entries. Called between
+    /// frames, so a frame's own lookups still hit.
+    pub fn trim(&mut self) {
+        if self.entries.len() > RGB_CACHE_LIMIT {
+            self.entries.clear();
+        }
     }
 
     #[cfg(test)]
@@ -537,6 +549,21 @@ mod tests {
 
         assert_eq!(rgb1, rgb2);
         assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn trimming_empties_the_cache_only_past_its_limit() {
+        let mut cache = RgbCache::new();
+        let gray = |i: usize| ResolvedColor::oklch(i as f64 / 10_000.0, 0.0, 0.0);
+        for i in 0..RGB_CACHE_LIMIT {
+            cache.resolve(gray(i));
+        }
+        cache.trim();
+        assert_eq!(cache.len(), RGB_CACHE_LIMIT);
+
+        cache.resolve(gray(RGB_CACHE_LIMIT));
+        cache.trim();
+        assert_eq!(cache.len(), 0);
     }
 
     fn eval_in(color: &Color, vars: &HashMap<String, ResolvedColor>) -> Option<ResolvedColor> {
