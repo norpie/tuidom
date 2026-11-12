@@ -43,7 +43,7 @@ pub use signal::{Signal, state};
 /// A `Copy` handle identifying one slot in the runtime arena.
 ///
 /// Allocated from a monotonic counter and never reused, so it cannot alias a later slot.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub(crate) struct SlotId(u64);
 
 /// A `Copy` handle identifying an owner scope.
@@ -413,7 +413,8 @@ pub(crate) fn flush_session(id: SessionId) {
     });
 }
 
-/// Run every pending effect, at most once each per cycle, until the queue drains.
+/// Run every pending effect, at most once each per cycle and oldest first, until the queue
+/// drains.
 ///
 /// A single guard against reentrancy: a write from inside an effect adds to [`PENDING`] and
 /// is picked up by the loop below rather than starting a nested flush.
@@ -430,10 +431,13 @@ fn flush() {
 
     let mut runs = 0usize;
     loop {
-        let batch: Vec<SlotId> = PENDING.with(|p| std::mem::take(&mut *p.borrow_mut()));
+        let mut batch: Vec<SlotId> = PENDING.with(|p| std::mem::take(&mut *p.borrow_mut()));
         if batch.is_empty() {
             break;
         }
+        // Slot ids count up, so this reruns effects in the order they were created: an
+        // ancestor's bindings before those of the nodes mounted inside it.
+        batch.sort_unstable();
         for id in batch {
             runs += 1;
             if runs > MAX_EFFECT_RUNS_PER_FLUSH {

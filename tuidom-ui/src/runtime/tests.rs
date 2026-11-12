@@ -5,8 +5,8 @@
 //! and effects) and observes reruns through per-graph counters rather than any global, which
 //! keeps them correct under the default parallel test runner.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use std::thread;
 
@@ -215,6 +215,31 @@ fn diamond_reruns_the_effect_once_per_write() {
 }
 
 #[test]
+fn effects_rerun_in_the_order_they_were_created() {
+    let s = state(0);
+    let order = Arc::new(Mutex::new(Vec::new()));
+    for index in 0..32 {
+        let o = order.clone();
+        if index % 2 == 0 {
+            effect(move || {
+                s.get();
+                o.lock().unwrap().push(index);
+            });
+        } else {
+            let doubled = derived(move || s.get() * 2);
+            effect(move || {
+                doubled.get();
+                o.lock().unwrap().push(index);
+            });
+        }
+    }
+    order.lock().unwrap().clear();
+
+    s.set(1);
+    assert_eq!(*order.lock().unwrap(), (0..32).collect::<Vec<_>>());
+}
+
+#[test]
 fn a_batch_flushes_once() {
     let s = state(0);
     let runs = counter();
@@ -267,7 +292,7 @@ fn dispose_frees_signals_and_read_is_inert() {
 
 #[test]
 fn cleanups_run_in_reverse_order() {
-    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let order = Arc::new(Mutex::new(Vec::new()));
     let scope = Scope::new();
 
     for i in 0..3 {

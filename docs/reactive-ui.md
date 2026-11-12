@@ -82,7 +82,9 @@ use tuidom_ui::effect;
 effect(move || tracing::info!("{} tasks", tasks.with(Vec::len)));
 ```
 
-Most code never calls `effect` directly; every reactive binding in a view is one. An effect
+Most code never calls `effect` directly; every reactive binding in a view is one. Effects a
+write reruns run in the order they were created, so a node's bindings rerun before those of
+the nodes mounted inside it, and an effect sees what an ancestor's binding just did. An effect
 that writes a signal it reads reschedules itself. The runtime stops such a loop after a fixed
 number of passes and logs it, but the effect is still wrong.
 
