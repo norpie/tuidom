@@ -16,6 +16,7 @@ use crate::event_loop;
 use rustc_hash::FxBuildHasher;
 
 use crate::id::{NodeId, NodeMap, NodeSet, next_document_id};
+use crate::image::ImageProtocol;
 use crate::inner::{DocumentInner, FocusStack};
 use crate::layout::LayoutEngine;
 use crate::lock;
@@ -31,6 +32,7 @@ mod attrs;
 mod events;
 mod focus;
 mod focus_context;
+mod image;
 mod input;
 mod layout;
 mod pseudo;
@@ -155,6 +157,7 @@ impl Document {
                 color_vars: Mutex::new(HashMap::new()),
                 terminal_background: Mutex::new(Color::black()),
                 terminal_info: Mutex::new(None),
+                image_protocol: Mutex::new(ImageProtocol::Auto),
                 default_color: Mutex::new(Arc::new(Color::white())),
                 flush_hook: RwLock::new(None),
             }),

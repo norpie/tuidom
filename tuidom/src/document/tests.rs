@@ -13,6 +13,7 @@ use crate::event::{
     ListenerHandle, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
 use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
+use crate::image::{ImageDrawing, ImageProtocol};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::paint_order::paint_order;
 use crate::performance::PerformanceDetail;
@@ -7311,6 +7312,82 @@ fn terminal_info_listeners_can_be_removed() {
 
     assert_eq!(calls.load(Ordering::Relaxed), 1);
     assert_eq!(doc.terminal(), Some(TerminalInfo::default()));
+}
+
+#[test]
+fn auto_draws_images_with_placeholders_only_where_the_terminal_supports_them() {
+    let doc = Document::new().unwrap();
+    assert_eq!(doc.image_protocol(), ImageProtocol::Auto);
+    assert_eq!(
+        doc.image_drawing(),
+        ImageDrawing::HalfBlock,
+        "not probed yet"
+    );
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.set_terminal_info(kitty_terminal());
+    assert_eq!(doc.image_drawing(), ImageDrawing::HalfBlock);
+
+    let mut placeholders = kitty_terminal();
+    placeholders.graphics.placeholders = true;
+    runtime.set_terminal_info(placeholders);
+    assert_eq!(doc.image_drawing(), ImageDrawing::Placeholders);
+
+    doc.set_image_protocol(ImageProtocol::HalfBlock);
+    assert_eq!(doc.image_drawing(), ImageDrawing::HalfBlock);
+}
+
+#[tokio::test]
+async fn terminal_info_that_changes_how_images_draw_notifies_render() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.render().unwrap();
+
+    let notified = doc.inner.notify.notified();
+    runtime.set_terminal_info(kitty_terminal());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .is_err()
+    );
+
+    let mut placeholders = kitty_terminal();
+    placeholders.graphics.placeholders = true;
+    let notified = doc.inner.notify.notified();
+    runtime.set_terminal_info(placeholders);
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn the_kitty_protocol_draws_placeholders_whatever_the_terminal_says() {
+    let doc = Document::new().unwrap();
+    doc.set_image_protocol(ImageProtocol::Kitty);
+    assert_eq!(doc.image_drawing(), ImageDrawing::Placeholders);
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.set_terminal_info(TerminalInfo::default());
+    assert_eq!(doc.image_drawing(), ImageDrawing::Placeholders);
+}
+
+#[tokio::test]
+async fn changing_the_image_protocol_notifies_render() {
+    let doc = Document::new().unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_image_protocol(ImageProtocol::HalfBlock);
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_image_protocol(ImageProtocol::HalfBlock);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .is_err()
+    );
 }
 
 #[test]

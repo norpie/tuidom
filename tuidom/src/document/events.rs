@@ -398,7 +398,11 @@ impl Document {
 
     /// Store `info` as the terminal's and tell the listeners.
     pub(crate) fn apply_terminal_info(&self, info: TerminalInfo) {
+        let drawing = self.image_drawing();
         *lock::mutex(&self.inner.terminal_info) = Some(info.clone());
+        if self.image_drawing() != drawing {
+            self.inner.notify.notify_one();
+        }
         let listeners = lock::mutex(&self.inner.terminal_info_listeners).clone();
         let mut event = TerminalInfoEvent { info };
         for listener in listeners {

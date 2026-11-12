@@ -12,6 +12,7 @@ use crate::animation::driver::AnimationDriver;
 use crate::document::selection::SelectionState;
 use crate::event::{FocusKeys, Listener, ScrollKeys, TargetedEventKind};
 use crate::id::{NodeId, NodeMap, NodeSet};
+use crate::image::ImageProtocol;
 use crate::layout::LayoutEngine;
 use crate::node::{NodeData, NodeLayout, ScrollOffset};
 use crate::performance::{PerformanceState, StyleCounters};
@@ -338,6 +339,9 @@ pub(crate) struct DocumentInner {
 
     /// What the probe in [`Document::run`](crate::Document::run) found out about the terminal.
     pub terminal_info: Mutex<Option<TerminalInfo>>,
+
+    /// How images are drawn.
+    pub image_protocol: Mutex<ImageProtocol>,
 
     /// The foreground of every node whose `color` is unset, evaluated at each such node.
     pub default_color: Mutex<Arc<Color>>,

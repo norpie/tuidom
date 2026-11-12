@@ -4,6 +4,29 @@ use std::fmt;
 
 use crate::{Result, TuidomError};
 
+/// How images are drawn, set for the whole document with
+/// [`Document::set_image_protocol`](crate::Document::set_image_protocol).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ImageProtocol {
+    /// Kitty placeholders where [`Graphics::placeholders`](crate::terminal::Graphics::placeholders)
+    /// says the terminal supports them, half-blocks everywhere else, including before the
+    /// terminal has been probed.
+    #[default]
+    Auto,
+    /// Kitty placeholders whatever the terminal is detected as, for one known to support them
+    /// that detection misses.
+    Kitty,
+    /// Half-block characters colored from the pixels, which any color terminal can show.
+    HalfBlock,
+}
+
+/// What a frame draws images with, once [`ImageProtocol::Auto`] is resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageDrawing {
+    Placeholders,
+    HalfBlock,
+}
+
 /// An image as RGBA pixels, eight bits per channel, rows top to bottom.
 ///
 /// A zero-sized image is allowed and shows nothing.
