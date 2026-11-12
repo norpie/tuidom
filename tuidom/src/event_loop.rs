@@ -217,26 +217,16 @@ async fn render_task(doc: Document, terminal: Terminal) -> io::Result<()> {
 /// reset when animations go idle, so a fresh animation never inherits a stale
 /// deadline.
 ///
-/// With only frames nodes or waiting `WhenScrolling` bars active, the wait is a
-/// plain deadline instead: the next frame flip, or the instant a bar starts its
-/// fade. A mid-fade bar ticks smoothly like a transition.
+/// With nothing animating smoothly, the wait is a plain deadline instead, from
+/// [`idle_deadline`]. A mid-fade bar ticks smoothly like a transition.
 async fn wait_for_anim_tick(doc: &Document, next_anim_frame_at: &mut Option<TokioInstant>) {
-    let schedule = doc.scrollbar_fade_schedule(doc.now());
-    let (smooth, next_flip) = {
-        let driver = lock::mutex(&doc.inner.animation);
-        (
-            driver.has_smooth_active() || schedule.fading,
-            driver.next_frames_flip(doc.now()),
-        )
-    };
+    let now = doc.now();
+    let smooth = doc.scrollbar_fade_schedule(now).fading
+        || lock::mutex(&doc.inner.animation).has_smooth_active();
 
     if !smooth {
         *next_anim_frame_at = None;
-        let deadline = [next_flip, schedule.next_deadline]
-            .into_iter()
-            .flatten()
-            .min();
-        match deadline {
+        match idle_deadline(doc, now) {
             Some(at) => sleep_until(TokioInstant::from_std(at)).await,
             // Guarded by animation_frame_needed, so something exists; a schedule
             // that stopped cycling between checks just yields once.
@@ -260,6 +250,16 @@ async fn wait_for_anim_tick(doc: &Document, next_anim_frame_at: &mut Option<Toki
         next += interval;
     }
     *next_anim_frame_at = Some(next);
+}
+
+/// When the next frame is due while nothing animates smoothly: a frames node's
+/// flip, a `WhenScrolling` bar starting its fade, or the cursor's blink flipping or
+/// ending.
+fn idle_deadline(doc: &Document, now: Instant) -> Option<Instant> {
+    let next_flip = lock::mutex(&doc.inner.animation).next_frames_flip(now);
+    let fade = doc.scrollbar_fade_schedule(now).next_deadline;
+    let blink = doc.cursor_blink(now).map(|blink| blink.next);
+    [next_flip, fade, blink].into_iter().flatten().min()
 }
 
 fn is_shutdown(doc: &Document) -> bool {
@@ -471,10 +471,15 @@ fn animations_active(doc: &Document) -> bool {
 }
 
 /// Whether the render task has any animation-driven frame to schedule: an active
-/// transition, keyframe animation, or frames node — or a `WhenScrolling` bar that
-/// is waiting to fade or mid-fade.
+/// transition, keyframe animation, or frames node, a `WhenScrolling` bar that is
+/// waiting to fade or mid-fade, or a blinking cursor.
 fn animation_frame_needed(doc: &Document) -> bool {
-    animations_active(doc) || doc.scrollbar_fade_schedule(doc.now()).is_active()
+    let now = doc.now();
+    // FIXME: a blink runs with no input focused too, so there is no cursor to show, and
+    // its flips still wake the render task for frames that change nothing.
+    animations_active(doc)
+        || doc.scrollbar_fade_schedule(now).is_active()
+        || doc.cursor_blink(now).is_some()
 }
 
 /// Remove finished transitions and animations and queue their events.
@@ -599,6 +604,7 @@ fn convert_mouse_button(button: CrosstermMouseButton) -> Option<MouseButton> {
 mod tests {
     use super::*;
     use crate::event::WheelAxis;
+    use crate::headless::HeadlessRuntime;
 
     fn scroll_event(kind: MouseEventKind, modifiers: KeyModifiers) -> CrosstermMouseEvent {
         CrosstermMouseEvent {
@@ -690,6 +696,24 @@ mod tests {
             }
             other => panic!("expected a mouse down event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_cursor_blink_wakes_the_render_task_at_each_flip_and_its_end() {
+        let doc = Document::new().unwrap();
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 1);
+        assert!(!animation_frame_needed(&doc));
+
+        runtime.simulate_window_focus();
+        let start = doc.now();
+        for ms in [500, 1000, 1500, 2000, 2500, 3000] {
+            assert!(animation_frame_needed(&doc));
+            let due = start + Duration::from_millis(ms);
+            assert_eq!(idle_deadline(&doc, doc.now()), Some(due));
+            runtime.advance_time(Duration::from_millis(500));
+        }
+        assert!(!animation_frame_needed(&doc), "idle once the blink is over");
+        assert_eq!(idle_deadline(&doc, doc.now()), None);
     }
 }
 

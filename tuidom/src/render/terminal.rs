@@ -398,7 +398,7 @@ fn queue_cursor<W: Write>(stdout: &mut W, cursor: Option<RenderCursor>) -> io::R
         queue!(stdout, Hide)?;
         return Ok(());
     };
-    if cursor.shape == CursorShape::Block {
+    if !cursor.native {
         queue!(stdout, Hide)?;
         return Ok(());
     }
@@ -417,10 +417,13 @@ fn cursor_color_sequence(color: Rgb) -> String {
 }
 
 fn cursor_style(cursor: RenderCursor) -> SetCursorStyle {
-    match cursor.shape {
-        CursorShape::Block => SetCursorStyle::SteadyBlock,
-        CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
-        CursorShape::Bar => SetCursorStyle::SteadyBar,
+    match (cursor.shape, cursor.blinking) {
+        (CursorShape::Block, false) => SetCursorStyle::SteadyBlock,
+        (CursorShape::Block, true) => SetCursorStyle::BlinkingBlock,
+        (CursorShape::Underline, false) => SetCursorStyle::SteadyUnderScore,
+        (CursorShape::Underline, true) => SetCursorStyle::BlinkingUnderScore,
+        (CursorShape::Bar, false) => SetCursorStyle::SteadyBar,
+        (CursorShape::Bar, true) => SetCursorStyle::BlinkingBar,
     }
 }
 

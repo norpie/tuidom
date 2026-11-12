@@ -2878,6 +2878,51 @@ fn a_painted_block_blinks_after_the_window_regains_focus() {
     assert!(!runtime.cursor().unwrap().blinking);
 }
 
+const SHOW_CURSOR: &str = "\x1b[?25h";
+
+/// Render through the flush, and what a terminal would have received.
+fn flushed(runtime: &mut HeadlessRuntime) -> String {
+    runtime.render_flushed().unwrap();
+    String::from_utf8_lossy(runtime.flush_output()).into_owned()
+}
+
+#[test]
+fn the_flush_shows_the_terminal_cursor_only_when_it_is_native() {
+    let mut runtime = cursor_on_a(CursorShape::Block);
+    assert!(!flushed(&mut runtime).contains(SHOW_CURSOR));
+
+    runtime.simulate_window_blur();
+    let out = flushed(&mut runtime);
+    assert!(out.contains("\x1b[2 q"), "a steady block");
+    assert!(out.contains(SHOW_CURSOR));
+
+    runtime.simulate_window_focus();
+    assert!(
+        !flushed(&mut runtime).contains(SHOW_CURSOR),
+        "a blinking block is painted"
+    );
+}
+
+#[test]
+fn a_blinking_native_cursor_takes_the_terminals_blinking_style() {
+    for (shape, blinking, steady) in [
+        (CursorShape::Bar, "\x1b[5 q", "\x1b[6 q"),
+        (CursorShape::Underline, "\x1b[3 q", "\x1b[4 q"),
+    ] {
+        let mut runtime = cursor_on_a(shape);
+        runtime.simulate_window_focus();
+        let out = flushed(&mut runtime);
+        assert!(
+            out.contains(blinking) && out.contains(SHOW_CURSOR),
+            "{shape:?}"
+        );
+
+        runtime.advance_time(Duration::from_secs(3));
+        let out = flushed(&mut runtime);
+        assert!(out.contains(steady) && !out.contains(blinking), "{shape:?}");
+    }
+}
+
 #[test]
 fn bar_and_underline_cursors_stay_native_and_the_terminal_blinks_them() {
     for shape in [CursorShape::Bar, CursorShape::Underline] {
