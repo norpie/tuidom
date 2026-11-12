@@ -1,0 +1,5 @@
+error: `image` takes no children
+ --> tests/ui/image_with_children.rs:5:9
+  |
+5 |         image { text("no") }
+  |         ^^^^^

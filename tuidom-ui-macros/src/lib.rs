@@ -53,9 +53,9 @@ use syn::{
 ///
 /// # Grammar
 ///
-/// - **Elements** — `box { … }`, `input { … }` and `canvas { … }`. Braces hold a
-///   comma-separated mix of attributes and children; a nested element or `text(..)` is a child.
-///   A `canvas` takes no children.
+/// - **Elements** — `box { … }`, `input { … }`, `canvas { … }` and `image { … }`. Braces hold
+///   a comma-separated mix of attributes and children; a nested element or `text(..)` is a
+///   child. A `canvas` or `image` takes no children.
 /// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
 ///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
 ///   `text(..) { style: s }` styles the node, always reactively. A text node inherits nothing
@@ -71,6 +71,8 @@ use syn::{
 ///     `Signal<String>`, bound both ways), and `mask:` (an `Option<char>`). These and
 ///     `multiline:` are compile errors on `box`.
 ///   - On `canvas` only: `buffer:` — a `CanvasBuffer`, always bound reactively.
+///   - On `image` only: `source:` — an `Arc<ImageData>`, and `fit:` — an `ImageFit`, both
+///     always bound reactively.
 ///   - `ref:` — a `NodeRef`, filled with the element's node while it is mounted.
 ///   - `transitions:` — an iterable of `TransitionConfig`, evaluated once when the element is
 ///     built. A signal read there does not update the transitions, and inside an `if` or
@@ -1001,8 +1003,19 @@ impl Parse for Node {
                         format!("`buffer` applies only to `canvas`, not `{name}`"),
                     ));
                 }
-                if name == "canvas" && !children.is_empty() {
-                    return Err(syn::Error::new(name.span(), "`canvas` takes no children"));
+                if name != "image"
+                    && let Some(attr) = attrs.iter().find(|a| a.name == "source" || a.name == "fit")
+                {
+                    return Err(syn::Error::new(
+                        attr.name.span(),
+                        format!("`{}` applies only to `image`, not `{name}`", attr.name),
+                    ));
+                }
+                if (name == "canvas" || name == "image") && !children.is_empty() {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!("`{name}` takes no children"),
+                    ));
                 }
                 Ok(Node::Element {
                     name,
@@ -1484,6 +1497,8 @@ impl Attr {
             }
             "bind_value" => quote! { .bind_value(#value) },
             "buffer" => quote! { .dyn_buffer(move || #value) },
+            "source" => quote! { .dyn_source(move || #value) },
+            "fit" => quote! { .dyn_fit(move || #value) },
             "ref" => quote! { .node_ref(#value) },
             // Evaluated once as the element is built, so a signal read here is not tracked by the
             // element. Inside an `if`/`match`, it would subscribe the enclosing dynamic block.
@@ -1565,6 +1580,7 @@ fn element_ctor(name: &Ident) -> TokenStream2 {
         "box" => quote! { ::tuidom_ui::boxed() },
         "input" => quote! { ::tuidom_ui::input() },
         "canvas" => quote! { ::tuidom_ui::canvas() },
+        "image" => quote! { ::tuidom_ui::image() },
         other => {
             let message = format!("unknown element `{other}`");
             quote_spanned! { name.span() => compile_error!(#message) }

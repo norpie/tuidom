@@ -11,14 +11,16 @@ use tuidom::animation::{
 use tuidom::canvas::{CanvasBuffer, CanvasStyle};
 use tuidom::event::{KeyCode, MouseButton};
 use tuidom::headless::{HeadlessRuntime, ScreenColor};
+use tuidom::image::{ImageData, ImageFit};
 use tuidom::style::{
     Color, Display, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position, Style,
 };
 use tuidom::{Document, NodeId};
 
 use super::{
-    Children, View, VirtualListRef, boxed, canvas, component, dyn_text, dynamic, fragment, keyed,
-    mount, node_ref, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
+    Children, View, VirtualListRef, boxed, canvas, component, dyn_text, dynamic, fragment, image,
+    keyed, mount, node_ref, text, use_document, virtual_list, virtual_list_measured,
+    virtual_list_ref,
 };
 use crate::testing::Harness;
 use crate::{Callback, Signal, state};
@@ -2811,6 +2813,77 @@ fn a_buffer_on_a_box_is_ignored() {
 #[test]
 fn children_on_a_canvas_fail_the_mount() {
     let view = canvas().child(text("no"));
+    let doc = Document::new().unwrap();
+    assert!(mount(&doc, doc.root(), view).is_err());
+    assert!(doc.get_children(doc.root()).is_empty());
+}
+
+fn two_by_two(top: [u8; 8], bottom: [u8; 8]) -> Arc<ImageData> {
+    Arc::new(ImageData::from_rgba(2, 2, [top, bottom].concat()).unwrap())
+}
+
+const RED_GREEN: [u8; 8] = [255, 0, 0, 255, 0, 255, 0, 255];
+const BLUE_WHITE: [u8; 8] = [0, 0, 255, 255, 255, 255, 255, 255];
+
+fn colors(h: &mut Harness, x: i32) -> (Option<ScreenColor>, Option<ScreenColor>) {
+    let cell = h.cell(x, 0).unwrap();
+    (cell.fg, cell.bg)
+}
+
+#[test]
+fn an_image_shows_its_source_and_swaps_it_when_a_signal_changes() {
+    let source = state(two_by_two(RED_GREEN, BLUE_WHITE));
+    let mut h = Harness::new(2, 1, move || {
+        crate::view! {
+            image {
+                style: tuidom::style! { width: 2, height: 1 },
+                fit: ImageFit::Fill,
+                source: source.get(),
+            }
+        }
+    });
+    let red = Some(ScreenColor::from_rgb(255, 0, 0));
+    let blue = Some(ScreenColor::from_rgb(0, 0, 255));
+    assert_eq!(h.row(0), "▀▀");
+    assert_eq!(colors(&mut h, 0), (red, blue));
+
+    source.set(two_by_two(BLUE_WHITE, RED_GREEN));
+    assert_eq!(colors(&mut h, 0), (blue, red));
+}
+
+#[test]
+fn an_image_fit_binds_reactively() {
+    let fit = state(ImageFit::Contain);
+    let mut h = Harness::new(4, 1, move || {
+        crate::view! {
+            image {
+                style: tuidom::style! { width: 4, height: 1 },
+                fit: fit.get(),
+                source: two_by_two(RED_GREEN, BLUE_WHITE),
+            }
+        }
+    });
+    assert_eq!(h.row(0), " ▀▀");
+
+    fit.set(ImageFit::Fill);
+    assert_eq!(h.row(0), "▀▀▀▀");
+}
+
+#[test]
+fn image_properties_on_a_box_are_ignored() {
+    let view = boxed()
+        .source(two_by_two(RED_GREEN, BLUE_WHITE))
+        .fit(ImageFit::Fill);
+    let doc = Document::new().unwrap();
+    mount(&doc, doc.root(), view).unwrap();
+    let mut rt = HeadlessRuntime::new(doc, 2, 1);
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 0, 2), "  ");
+}
+
+#[test]
+fn children_on_an_image_fail_the_mount() {
+    let view = image().child(text("no"));
     let doc = Document::new().unwrap();
     assert!(mount(&doc, doc.root(), view).is_err());
     assert!(doc.get_children(doc.root()).is_empty());

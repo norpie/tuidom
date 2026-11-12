@@ -64,6 +64,7 @@ use tuidom::event::{
     AnimationEndEvent, AnimationIterationEvent, DragEvent, FocusEvent, InputEvent, KeyEvent,
     ListenerHandle, MouseEvent, ScrollEvent, SizeChangeEvent, TransitionEndEvent, WheelEvent,
 };
+use tuidom::image::{ImageData, ImageFit};
 use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
 use tuidom::{Document, NodeId, Result};
@@ -268,12 +269,13 @@ impl<K: Eq + Hash + Clone + Send + Sync + 'static> DynKey for K {
 ///
 /// All share the same builder — style, attributes, focusability, listeners, and children —
 /// and differ only in the node the engine creates for them. An `Input` is an editable leaf,
-/// focusable by default; a `Canvas` is a leaf showing a buffer of cells; a `Box` is a plain
-/// container.
+/// focusable by default; a `Canvas` is a leaf showing a buffer of cells; an `Image` is a leaf
+/// showing decoded pixels; a `Box` is a plain container.
 enum ElementKind {
     Box,
     Input,
     Canvas,
+    Image,
 }
 
 /// An element description: a builder for its style, attributes, focusability, disabled state,
@@ -295,6 +297,7 @@ pub struct Element {
     trap_focus: bool,
     input: InputProps,
     buffer: Option<Source<CanvasBuffer>>,
+    image: ImageProps,
     listeners: Vec<ListenerReg>,
     node_ref: Option<NodeRef>,
     children: Vec<View>,
@@ -808,6 +811,28 @@ pub fn canvas() -> Element {
     element(ElementKind::Canvas)
 }
 
+/// Begin building an image element: a leaf showing [`ImageData`].
+///
+/// [`source`](Element::source) sets the image and [`fit`](Element::fit) how it fills the
+/// element, each with a `dyn_` counterpart. An image takes no children; mounting one with
+/// children fails.
+pub fn image() -> Element {
+    element(ElementKind::Image)
+}
+
+/// What only an image element uses.
+#[derive(Default)]
+struct ImageProps {
+    source: Option<Source<Arc<ImageData>>>,
+    fit: Option<Source<ImageFit>>,
+}
+
+impl ImageProps {
+    fn is_empty(&self) -> bool {
+        self.source.is_none() && self.fit.is_none()
+    }
+}
+
 /// The shared empty builder every element constructor starts from.
 fn element(kind: ElementKind) -> Element {
     Element {
@@ -824,6 +849,7 @@ fn element(kind: ElementKind) -> Element {
         trap_focus: false,
         input: InputProps::default(),
         buffer: None,
+        image: ImageProps::default(),
         listeners: Vec::new(),
         node_ref: None,
         children: Vec::new(),
@@ -1053,6 +1079,38 @@ impl Element {
         self
     }
 
+    /// Set an image's pixels once, at mount.
+    pub fn source(mut self, source: Arc<ImageData>) -> Self {
+        self.image.source = Some(Source::Static(source));
+        self
+    }
+
+    /// Bind an image's pixels reactively: the closure reruns when a signal it read changes.
+    /// Returning the `Arc` already shown changes nothing, so keep the image in a signal as an
+    /// `Arc` rather than building it in the closure.
+    pub fn dyn_source<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Arc<ImageData> + Send + Sync + 'static,
+    {
+        self.image.source = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
+    /// Set how an image fills the element once, at mount.
+    pub fn fit(mut self, fit: ImageFit) -> Self {
+        self.image.fit = Some(Source::Static(fit));
+        self
+    }
+
+    /// Bind how an image fills the element reactively.
+    pub fn dyn_fit<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> ImageFit + Send + Sync + 'static,
+    {
+        self.image.fit = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
     /// Bind `node_ref` to this element's node while it is mounted. It fills once the element's
     /// children have mounted and empties when the element unmounts.
     pub fn node_ref(mut self, node_ref: NodeRef) -> Self {
@@ -1270,6 +1328,7 @@ fn mount_view(
                 ElementKind::Box => doc.create_box()?,
                 ElementKind::Input => doc.create_input("")?,
                 ElementKind::Canvas => doc.create_canvas()?,
+                ElementKind::Image => doc.create_image()?,
             };
             place(doc, parent, node, before)?;
             register_remove(doc, parent, node, scope);
@@ -1342,10 +1401,32 @@ fn mount_view(
                     "a buffer set on an element that is not a canvas; ignored"
                 );
             }
+            if !matches!(element.kind, ElementKind::Image) && !element.image.is_empty() {
+                tracing::warn!(
+                    ?node,
+                    "image-only properties set on another element; ignored"
+                );
+            }
             match element.kind {
                 ElementKind::Input => bind_input(doc, node, element.input),
                 ElementKind::Canvas => {
                     bind_node(doc, node, "buffer", element.buffer, Document::set_canvas);
+                }
+                ElementKind::Image => {
+                    bind_node(
+                        doc,
+                        node,
+                        "image source",
+                        element.image.source,
+                        Document::set_image,
+                    );
+                    bind_node(
+                        doc,
+                        node,
+                        "image fit",
+                        element.image.fit,
+                        Document::set_image_fit,
+                    );
                 }
                 ElementKind::Box => {}
             }

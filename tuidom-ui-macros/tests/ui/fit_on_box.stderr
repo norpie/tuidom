@@ -1,0 +1,5 @@
+error: `fit` applies only to `image`, not `box`
+ --> tests/ui/fit_on_box.rs:5:15
+  |
+5 |         box { fit: todo!() }
+  |               ^^^
