@@ -1309,6 +1309,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuidom-charts"
+version = "0.1.0"
+
+[[package]]
 name = "tuidom-components"
 version = "0.1.0"
 dependencies = [

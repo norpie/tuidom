@@ -1,0 +1,12 @@
+[package]
+name = "tuidom-charts"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Charts for tuidom, drawn into canvas buffers"
+
+[lib]
+# Per docs/STYLE.md the crate carries no doc tests. Tests live in-crate next to the code.
+doctest = false
