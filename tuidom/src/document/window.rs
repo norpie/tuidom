@@ -62,7 +62,6 @@ impl Document {
     }
 
     /// The cursor's blink at `now`, or `None` once it has ended or when there is none.
-    #[cfg_attr(not(test), expect(dead_code, reason = "not yet read by paint"))]
     pub(crate) fn cursor_blink(&self, now: Instant) -> Option<CursorBlink> {
         let mut window = lock::mutex(&self.inner.window_focus);
         let start = window.blink_start?;

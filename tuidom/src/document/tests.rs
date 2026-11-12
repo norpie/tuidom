@@ -2817,6 +2817,95 @@ fn input_cursor_shapes_render_distinct_metadata_without_replacing_text() {
     }
 }
 
+/// A focused input reading "AB" in black, its cursor of `shape` on the A at (0, 0).
+fn cursor_on_a(shape: CursorShape) -> HeadlessRuntime {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("AB").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    let mut style = Style::new();
+    style.width(Length::Cells(3));
+    style.color(Color::black());
+    style.cursor_shape(shape);
+    doc.set_style(input, &style).unwrap();
+    doc.set_input_cursor(input, 0).unwrap();
+    doc.focus(input).unwrap();
+    HeadlessRuntime::new(doc, 5, 1)
+}
+
+/// Render, and whether the cell under the cursor came out inverted. Its character never
+/// changes.
+fn inverted(runtime: &mut HeadlessRuntime) -> bool {
+    runtime.render().unwrap();
+    let cell = runtime.get_cell(0, 0).unwrap();
+    assert_eq!(cell.text, "A");
+    cell.bg == Some(ScreenColor::from_rgb(0, 0, 0))
+}
+
+#[test]
+fn a_blurred_window_hands_the_block_cursor_to_the_terminal() {
+    let mut runtime = cursor_on_a(CursorShape::Block);
+    assert!(inverted(&mut runtime));
+    let cursor = runtime.cursor().unwrap();
+    assert!(!cursor.native && !cursor.blinking);
+
+    runtime.simulate_window_blur();
+    assert!(!inverted(&mut runtime));
+    let cursor = runtime.cursor().unwrap();
+    assert_eq!(
+        (cursor.x, cursor.y, cursor.shape),
+        (0, 0, CursorShape::Block)
+    );
+    assert!(cursor.native && cursor.visible && !cursor.blinking);
+}
+
+#[test]
+fn a_painted_block_blinks_after_the_window_regains_focus() {
+    let mut runtime = cursor_on_a(CursorShape::Block);
+    runtime.simulate_window_blur();
+    runtime.simulate_window_focus();
+
+    assert!(inverted(&mut runtime));
+    assert!(runtime.cursor().unwrap().blinking);
+    runtime.advance_time(Duration::from_millis(500));
+    assert!(!inverted(&mut runtime), "an off phase");
+    let cursor = runtime.cursor().unwrap();
+    assert!(cursor.blinking && !cursor.native);
+    runtime.advance_time(Duration::from_millis(500));
+    assert!(inverted(&mut runtime));
+
+    runtime.advance_time(Duration::from_millis(2000));
+    assert!(inverted(&mut runtime), "steady once the blink is over");
+    assert!(!runtime.cursor().unwrap().blinking);
+}
+
+#[test]
+fn bar_and_underline_cursors_stay_native_and_the_terminal_blinks_them() {
+    for shape in [CursorShape::Bar, CursorShape::Underline] {
+        let mut runtime = cursor_on_a(shape);
+        let cursor = |runtime: &mut HeadlessRuntime| {
+            assert!(!inverted(runtime), "{shape:?} is never painted");
+            let cursor = runtime.cursor().unwrap();
+            assert!(cursor.native && cursor.visible);
+            assert_eq!(cursor.shape, shape);
+            cursor.blinking
+        };
+        assert!(!cursor(&mut runtime));
+
+        runtime.simulate_window_blur();
+        assert!(!cursor(&mut runtime));
+
+        runtime.simulate_window_focus();
+        assert!(cursor(&mut runtime));
+        runtime.advance_time(Duration::from_millis(500));
+        assert!(
+            cursor(&mut runtime),
+            "an off phase leaves it to the terminal"
+        );
+        runtime.advance_time(Duration::from_millis(2500));
+        assert!(!cursor(&mut runtime));
+    }
+}
+
 #[test]
 fn cursor_metadata_over_wide_grapheme_points_at_head_cell() {
     let doc = Document::new().unwrap();

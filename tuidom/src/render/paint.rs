@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::canvas::CanvasBuffer;
 use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
+use crate::document::window::CursorBlink;
 use crate::id::{NodeId, NodeMap};
 use crate::image::kitty::KittyShown;
 use crate::image::{ImageDrawing, ImageFitting, PlacedImage, fit_image, placeholder};
@@ -74,7 +75,11 @@ pub(crate) fn paint(
     let entries = paint_order(doc);
     let collect_time = collect_start.elapsed();
 
-    let focused = doc.focused();
+    let focus = CursorFocus {
+        node: doc.focused(),
+        window_focused: doc.window_focused(),
+        blink: doc.cursor_blink(doc.now()),
+    };
     let selection: NodeMap<Range<usize>> = doc.selection_ranges().into_iter().collect();
     let mut profile = PaintProfile {
         enabled: instrument,
@@ -181,7 +186,7 @@ pub(crate) fn paint(
         if let Some(entry_cursor) = paint_entry(
             grid,
             entry,
-            focused,
+            &focus,
             selection.get(&entry.id),
             image.as_ref(),
             rgb_cache,
@@ -212,7 +217,7 @@ pub(crate) fn paint(
 fn paint_entry(
     grid: &mut Grid,
     node: &PaintEntry,
-    focused: Option<crate::id::NodeId>,
+    focus: &CursorFocus,
     selected: Option<&Range<usize>>,
     image: Option<&ImagePaint>,
     rgb_cache: &mut RgbCache,
@@ -323,15 +328,16 @@ fn paint_entry(
             paint_text(grid, node, fg_rgb, alpha, &visible_content, profile);
             // The selection highlight is gated on focus like the cursor: an input's
             // selection is editing state, meaningful while the input is being edited.
-            if focused == Some(node.id)
+            if focus.node == Some(node.id)
                 && let Some(range) = selection
             {
                 paint_input_selection(grid, node, value, &content, range, rgb_cache, profile);
             }
-            if focused == Some(node.id) {
+            if focus.node == Some(node.id) {
                 input_cursor_metadata(
                     grid,
                     node,
+                    focus,
                     InputCursorPaint {
                         value,
                         cursor: *cursor,
@@ -1062,6 +1068,13 @@ fn resolve_rgb(rgb_cache: &mut RgbCache, color: ResolvedColor, profile: &mut Pai
     rgb_cache.resolve(color)
 }
 
+/// The focused node, and what the window's focus makes of its cursor this frame.
+struct CursorFocus {
+    node: Option<NodeId>,
+    window_focused: bool,
+    blink: Option<CursorBlink>,
+}
+
 struct InputCursorPaint<'a> {
     value: &'a str,
     cursor: usize,
@@ -1074,6 +1087,7 @@ struct InputCursorPaint<'a> {
 fn input_cursor_metadata(
     grid: &mut Grid,
     node: &PaintEntry,
+    focus: &CursorFocus,
     input: InputCursorPaint<'_>,
     color: Rgb,
 ) -> Option<RenderCursor> {
@@ -1097,7 +1111,11 @@ fn input_cursor_metadata(
         || screen_y >= i32::from(grid.height)
         || !node.clip.contains(i64::from(screen_x), i64::from(screen_y));
     let visible = !input_clipped && !screen_clipped;
-    if visible && node.resolved.cursor_shape == CursorShape::Block {
+    // An unfocused window's cursor goes to the terminal, which can draw it hollow; a painted
+    // cell cannot be.
+    let native = !focus.window_focused || node.resolved.cursor_shape != CursorShape::Block;
+    let shown = focus.blink.is_none_or(|blink| blink.on);
+    if visible && !native && shown {
         invert_cursor_cell(grid, screen_x, screen_y, color);
     }
 
@@ -1107,6 +1125,8 @@ fn input_cursor_metadata(
         shape: node.resolved.cursor_shape,
         color,
         visible,
+        native,
+        blinking: focus.blink.is_some(),
     })
 }
 

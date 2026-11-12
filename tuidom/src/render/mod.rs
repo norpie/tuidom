@@ -48,6 +48,11 @@ pub(crate) struct RenderCursor {
     pub color: Rgb,
     /// Whether the cursor should be shown after input/layout clipping.
     pub visible: bool,
+    /// Whether the terminal draws the cursor. A block in a focused window is painted into
+    /// the grid instead.
+    pub native: bool,
+    /// Whether the cursor is in the blink that follows the window regaining focus.
+    pub blinking: bool,
 }
 
 /// Backend-neutral render metadata for an existing frame grid.

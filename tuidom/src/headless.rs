@@ -648,6 +648,12 @@ pub struct ScreenCursor {
     pub color: ScreenColor,
     /// Whether this cursor should be visible after layout/input clipping.
     pub visible: bool,
+    /// Whether the terminal draws this cursor. A block cursor in a focused window is painted
+    /// as an inverted cell instead, which the screen shows.
+    pub native: bool,
+    /// Whether the cursor is in the blink that follows the window regaining focus. A painted
+    /// cursor shows on screen only in the blink's on phases; the terminal blinks a native one.
+    pub blinking: bool,
 }
 
 impl ScreenCursor {
@@ -658,6 +664,8 @@ impl ScreenCursor {
             shape: cursor.shape,
             color: ScreenColor::from(cursor.color),
             visible: cursor.visible,
+            native: cursor.native,
+            blinking: cursor.blinking,
         }
     }
 }
