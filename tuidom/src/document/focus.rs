@@ -296,6 +296,7 @@ impl Document {
             return Ok(());
         }
 
+        self.restart_cursor_blink(next);
         if let Some(previous) = previous {
             self.refresh_focus_style_effect(previous)?;
             self.dispatch_blur_to(previous);
@@ -350,6 +351,9 @@ impl Document {
             was_focused
         };
 
+        if removed_focus {
+            self.end_cursor_blink();
+        }
         if removed_focus || removed_active {
             self.inner.notify.notify_one();
         }

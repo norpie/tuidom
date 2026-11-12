@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::TuidomError;
@@ -2817,7 +2817,8 @@ fn input_cursor_shapes_render_distinct_metadata_without_replacing_text() {
     }
 }
 
-/// A focused input reading "AB" in black, its cursor of `shape` on the A at (0, 0).
+/// A focused input reading "AB" in black, its cursor of `shape` on the A at (0, 0), past the
+/// blink its focus started.
 fn cursor_on_a(shape: CursorShape) -> HeadlessRuntime {
     let doc = Document::new().unwrap();
     let input = doc.create_input("AB").unwrap();
@@ -2828,8 +2829,10 @@ fn cursor_on_a(shape: CursorShape) -> HeadlessRuntime {
     style.cursor_shape(shape);
     doc.set_style(input, &style).unwrap();
     doc.set_input_cursor(input, 0).unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 5, 1);
     doc.focus(input).unwrap();
-    HeadlessRuntime::new(doc, 5, 1)
+    runtime.advance_time(Duration::from_secs(5));
+    runtime
 }
 
 /// Render, and whether the cell under the cursor came out inverted. Its character never
@@ -2869,13 +2872,38 @@ fn a_painted_block_blinks_after_the_window_regains_focus() {
     runtime.advance_time(Duration::from_millis(500));
     assert!(!inverted(&mut runtime), "an off phase");
     let cursor = runtime.cursor().unwrap();
-    assert!(cursor.blinking && !cursor.native);
+    assert!(cursor.blinking && !cursor.visible && !cursor.native);
     runtime.advance_time(Duration::from_millis(500));
     assert!(inverted(&mut runtime));
 
-    runtime.advance_time(Duration::from_millis(2000));
+    runtime.advance_time(Duration::from_millis(4000));
     assert!(inverted(&mut runtime), "steady once the blink is over");
     assert!(!runtime.cursor().unwrap().blinking);
+}
+
+#[test]
+fn bar_and_underline_cursors_are_native_and_hidden_in_off_phases() {
+    for shape in [CursorShape::Bar, CursorShape::Underline] {
+        let mut runtime = cursor_on_a(shape);
+        let cursor = |runtime: &mut HeadlessRuntime| {
+            assert!(!inverted(runtime), "{shape:?} is never painted");
+            let cursor = runtime.cursor().unwrap();
+            assert!(cursor.native);
+            assert_eq!(cursor.shape, shape);
+            (cursor.visible, cursor.blinking)
+        };
+        assert_eq!(cursor(&mut runtime), (true, false));
+
+        runtime.simulate_window_blur();
+        assert_eq!(cursor(&mut runtime), (true, false));
+
+        runtime.simulate_window_focus();
+        assert_eq!(cursor(&mut runtime), (true, true));
+        runtime.advance_time(Duration::from_millis(500));
+        assert_eq!(cursor(&mut runtime), (false, true), "an off phase");
+        runtime.advance_time(Duration::from_millis(4500));
+        assert_eq!(cursor(&mut runtime), (true, false));
+    }
 }
 
 const SHOW_CURSOR: &str = "\x1b[?25h";
@@ -2904,50 +2932,28 @@ fn the_flush_shows_the_terminal_cursor_only_when_it_is_native() {
 }
 
 #[test]
-fn a_blinking_native_cursor_takes_the_terminals_blinking_style() {
-    for (shape, blinking, steady) in [
-        (CursorShape::Bar, "\x1b[5 q", "\x1b[6 q"),
-        (CursorShape::Underline, "\x1b[3 q", "\x1b[4 q"),
+fn the_flush_blinks_a_native_cursor_by_hiding_it() {
+    for (shape, steady) in [
+        (CursorShape::Bar, "\x1b[6 q"),
+        (CursorShape::Underline, "\x1b[4 q"),
     ] {
         let mut runtime = cursor_on_a(shape);
         runtime.simulate_window_focus();
         let out = flushed(&mut runtime);
         assert!(
-            out.contains(blinking) && out.contains(SHOW_CURSOR),
+            out.contains(steady) && out.contains(SHOW_CURSOR),
             "{shape:?}"
         );
 
-        runtime.advance_time(Duration::from_secs(3));
-        let out = flushed(&mut runtime);
-        assert!(out.contains(steady) && !out.contains(blinking), "{shape:?}");
-    }
-}
-
-#[test]
-fn bar_and_underline_cursors_stay_native_and_the_terminal_blinks_them() {
-    for shape in [CursorShape::Bar, CursorShape::Underline] {
-        let mut runtime = cursor_on_a(shape);
-        let cursor = |runtime: &mut HeadlessRuntime| {
-            assert!(!inverted(runtime), "{shape:?} is never painted");
-            let cursor = runtime.cursor().unwrap();
-            assert!(cursor.native && cursor.visible);
-            assert_eq!(cursor.shape, shape);
-            cursor.blinking
-        };
-        assert!(!cursor(&mut runtime));
-
-        runtime.simulate_window_blur();
-        assert!(!cursor(&mut runtime));
-
-        runtime.simulate_window_focus();
-        assert!(cursor(&mut runtime));
         runtime.advance_time(Duration::from_millis(500));
+        assert!(!flushed(&mut runtime).contains(SHOW_CURSOR), "{shape:?}");
+
+        runtime.advance_time(Duration::from_millis(500));
+        let out = flushed(&mut runtime);
         assert!(
-            cursor(&mut runtime),
-            "an off phase leaves it to the terminal"
+            out.contains(steady) && out.contains(SHOW_CURSOR),
+            "{shape:?}"
         );
-        runtime.advance_time(Duration::from_millis(2500));
-        assert!(!cursor(&mut runtime));
     }
 }
 
@@ -8718,19 +8724,33 @@ fn window_focus_is_stored_before_its_listeners_run() {
     assert_eq!(&*seen.lock().unwrap(), &[false, true]);
 }
 
-#[test]
-fn regaining_window_focus_blinks_the_cursor_for_three_seconds() {
+/// A document holding one input, nothing focused, its clock frozen.
+fn blink_setup() -> (Document, HeadlessRuntime, NodeId) {
     let doc = Document::new().unwrap();
-    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
-    assert_eq!(doc.cursor_blink(doc.now()), None, "no blink on startup");
+    let input = doc.create_input("abc").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    let runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    (doc, runtime, input)
+}
+
+fn blink(doc: &Document) -> Option<(bool, Instant)> {
+    doc.cursor_blink(doc.now())
+        .map(|blink| (blink.on, blink.next))
+}
+
+#[test]
+fn regaining_window_focus_blinks_the_cursor_for_five_seconds() {
+    let (doc, mut runtime, input) = blink_setup();
+    doc.focus(input).unwrap();
+    runtime.advance_time(Duration::from_secs(5));
+    assert_eq!(blink(&doc), None);
 
     runtime.simulate_window_blur();
-    assert_eq!(doc.cursor_blink(doc.now()), None);
+    assert_eq!(blink(&doc), None);
     runtime.simulate_window_focus();
     let start = doc.now();
     let at = |ms: u64| start + Duration::from_millis(ms);
 
-    let blink = |doc: &Document| doc.cursor_blink(doc.now()).map(|b| (b.on, b.next));
     assert_eq!(blink(&doc), Some((true, at(500))));
     runtime.advance_time(Duration::from_millis(499));
     assert_eq!(blink(&doc), Some((true, at(500))));
@@ -8738,43 +8758,93 @@ fn regaining_window_focus_blinks_the_cursor_for_three_seconds() {
     assert_eq!(blink(&doc), Some((false, at(1000))));
     runtime.advance_time(Duration::from_millis(500));
     assert_eq!(blink(&doc), Some((true, at(1500))));
-    runtime.advance_time(Duration::from_millis(1500));
-    assert_eq!(blink(&doc), Some((false, at(3000))), "the last off phase");
+    runtime.advance_time(Duration::from_millis(3500));
+    assert_eq!(blink(&doc), Some((false, at(5000))), "the last off phase");
     runtime.advance_time(Duration::from_millis(500));
     assert_eq!(blink(&doc), None, "over, and the cursor stays shown");
 }
 
 #[test]
 fn losing_window_focus_ends_the_blink() {
-    let doc = Document::new().unwrap();
-    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
-    runtime.simulate_window_focus();
+    let (doc, mut runtime, input) = blink_setup();
+    doc.focus(input).unwrap();
     runtime.advance_time(Duration::from_millis(700));
     runtime.simulate_window_blur();
-    assert_eq!(doc.cursor_blink(doc.now()), None);
+    assert_eq!(blink(&doc), None);
 
     runtime.simulate_window_focus();
-    let blink = doc.cursor_blink(doc.now()).unwrap();
-    assert!(blink.on, "a new focus starts a new blink");
-    assert_eq!(blink.next, doc.now() + Duration::from_millis(500));
+    let next = doc.now() + Duration::from_millis(500);
+    assert_eq!(
+        blink(&doc),
+        Some((true, next)),
+        "a new focus starts a new blink"
+    );
+}
+
+#[test]
+fn focusing_an_input_starts_a_blink_and_focusing_anything_else_ends_it() {
+    let (doc, mut runtime, input) = blink_setup();
+    let other = doc.create_input("def").unwrap();
+    doc.append_child(doc.root(), other).unwrap();
+    let button = focusable_child(&doc, doc.root());
+    assert_eq!(blink(&doc), None, "no blink on startup");
+
+    doc.focus(button).unwrap();
+    assert_eq!(blink(&doc), None);
+    doc.focus(input).unwrap();
+    assert_eq!(
+        blink(&doc),
+        Some((true, doc.now() + Duration::from_millis(500)))
+    );
+
+    runtime.advance_time(Duration::from_millis(700));
+    doc.focus(other).unwrap();
+    let next = doc.now() + Duration::from_millis(500);
+    assert_eq!(blink(&doc), Some((true, next)), "each input starts its own");
+
+    doc.focus(button).unwrap();
+    assert_eq!(blink(&doc), None, "no cursor left to blink");
+}
+
+#[test]
+fn only_a_focused_input_in_a_focused_window_blinks() {
+    let (doc, mut runtime, input) = blink_setup();
+    let button = focusable_child(&doc, doc.root());
+
+    doc.focus(button).unwrap();
+    runtime.simulate_window_blur();
+    runtime.simulate_window_focus();
+    assert_eq!(blink(&doc), None, "refocusing the window over a button");
+
+    runtime.simulate_window_blur();
+    doc.focus(input).unwrap();
+    assert_eq!(
+        blink(&doc),
+        None,
+        "focusing an input in an unfocused window"
+    );
+}
+
+#[test]
+fn removing_the_focused_input_ends_the_blink() {
+    let (doc, _runtime, input) = blink_setup();
+    doc.focus(input).unwrap();
+    doc.remove_child(doc.root(), input).unwrap();
+    assert_eq!(blink(&doc), None);
 }
 
 #[test]
 fn a_key_the_focused_input_takes_ends_the_blink() {
-    let doc = Document::new().unwrap();
-    let input = doc.create_input("abc").unwrap();
-    doc.append_child(doc.root(), input).unwrap();
+    let (doc, mut runtime, input) = blink_setup();
     doc.focus(input).unwrap();
-    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
-    runtime.simulate_window_focus();
 
     runtime.simulate_key(KeyCode::Up);
     assert!(
-        doc.cursor_blink(doc.now()).is_some(),
+        blink(&doc).is_some(),
         "a single-line input declines up, so the blink goes on"
     );
     runtime.simulate_key(KeyCode::Char('d'));
-    assert_eq!(doc.cursor_blink(doc.now()), None);
+    assert_eq!(blink(&doc), None);
 }
 
 fn kitty_terminal() -> TerminalInfo {

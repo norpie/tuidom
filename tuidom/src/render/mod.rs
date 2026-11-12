@@ -46,12 +46,13 @@ pub(crate) struct RenderCursor {
     pub shape: CursorShape,
     /// Cursor color derived from the focused node's resolved foreground color.
     pub color: Rgb,
-    /// Whether the cursor should be shown after input/layout clipping.
+    /// Whether the cursor is shown this frame: false when clipped by the input or the
+    /// screen, and in a blink's off phases.
     pub visible: bool,
     /// Whether the terminal draws the cursor. A block in a focused window is painted into
     /// the grid instead.
     pub native: bool,
-    /// Whether the cursor is in the blink that follows the window regaining focus.
+    /// Whether the cursor is in the blink that follows the window or its input gaining focus.
     pub blinking: bool,
 }
 

@@ -382,16 +382,19 @@ window's cursor hollow, which a painted cell cannot be. How an unfocused bar or 
 looks is the terminal's choice too. A terminal that does not report focus never blurs, so its
 block stays painted.
 
-When the window regains focus, the cursor blinks for three seconds, half a second on and half
-off, and ends shown. A painted block blinks on the engine's clock, which wakes the render task
-at each flip and goes idle again when the blink is over. The terminal's cursor gets the
-terminal's own blinking style for the same three seconds, at the terminal's own rate. A key
-the focused input handles ends the blink at once, so typing never happens into a blinking
-cursor.
+When the window regains focus, or an input gains it, the cursor blinks for five seconds, half
+a second on and half off, and ends shown. The engine blinks every shape: a painted block is
+inverted only in the on phases, and the terminal's cursor is hidden in the off ones. The
+terminal's own blinking styles are not used: each frame shows the cursor again, which restarts
+the blink in most terminals, and some ignore the request when the user has turned blinking
+off. The render task wakes at
+each flip and goes idle again when the blink is over. A key the focused input handles ends the
+blink at once, so typing never happens into a blinking cursor, and with no input focused there
+is no blink.
 
 Headless tests read all of this from `cursor()`: `native` says whether the terminal would
-draw the cursor and `blinking` whether it is in the blink. A painted block shows on the
-screen itself, inverted only in the blink's on phases.
+draw the cursor, `blinking` whether it is in the blink, and `visible` whether it is shown in
+this frame. A painted block shows on the screen itself.
 
 ## Terminal lifecycle
 

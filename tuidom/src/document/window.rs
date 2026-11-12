@@ -1,14 +1,16 @@
 use std::time::{Duration, Instant};
 
 use crate::document::Document;
+use crate::id::NodeId;
 use crate::lock;
+use crate::node::NodeKind;
 
 /// How long the cursor is shown, and then hidden, in each half of a blink.
 const BLINK_PHASE: Duration = Duration::from_millis(500);
 
-/// How long the cursor blinks after the window regains focus. A whole number of on-off
+/// How long the cursor blinks after the window or an input gains focus. A whole number of on-off
 /// pairs, so the blink ends with the cursor shown.
-const BLINK_DURATION: Duration = Duration::from_secs(3);
+const BLINK_DURATION: Duration = Duration::from_secs(5);
 
 /// Whether the terminal window holds OS focus, and when the cursor's current blink began.
 #[derive(Debug)]
@@ -45,15 +47,26 @@ impl Document {
         lock::mutex(&self.inner.window_focus).focused
     }
 
-    /// Record a window focus change. Gaining focus starts the cursor blinking; losing it
-    /// ends any blink.
+    /// Record a window focus change. Gaining focus starts the cursor blinking if an input is
+    /// focused; losing it ends any blink.
     pub(crate) fn set_window_focused(&self, focused: bool) {
+        lock::mutex(&self.inner.window_focus).focused = focused;
+        self.restart_cursor_blink(self.focused());
+        self.inner.notify.notify_one();
+    }
+
+    /// Start the cursor blinking afresh when `focused` is an input in a focused window, and
+    /// end any blink otherwise, since there is then no cursor to blink.
+    pub(crate) fn restart_cursor_blink(&self, focused: Option<NodeId>) {
+        let input = focused.is_some_and(|node| {
+            self.inner
+                .nodes
+                .get(&node)
+                .is_some_and(|data| matches!(data.kind, NodeKind::Input { .. }))
+        });
         let now = self.now();
         let mut window = lock::mutex(&self.inner.window_focus);
-        window.focused = focused;
-        window.blink_start = focused.then_some(now);
-        drop(window);
-        self.inner.notify.notify_one();
+        window.blink_start = (input && window.focused).then_some(now);
     }
 
     /// Stop the cursor's blink, if it has one.

@@ -646,13 +646,13 @@ pub struct ScreenCursor {
     pub shape: CursorShape,
     /// Cursor color derived from the focused node's resolved foreground color.
     pub color: ScreenColor,
-    /// Whether this cursor should be visible after layout/input clipping.
+    /// Whether the cursor is shown this frame: false when clipped by the input or the
+    /// screen, and in a blink's off phases.
     pub visible: bool,
     /// Whether the terminal draws this cursor. A block cursor in a focused window is painted
     /// as an inverted cell instead, which the screen shows.
     pub native: bool,
-    /// Whether the cursor is in the blink that follows the window regaining focus. A painted
-    /// cursor shows on screen only in the blink's on phases; the terminal blinks a native one.
+    /// Whether the cursor is in the blink that follows the window or its input gaining focus.
     pub blinking: bool,
 }
 

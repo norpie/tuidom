@@ -80,9 +80,9 @@
   - [x] A block is painted as an inverted cell while the window is focused, and left to the
         terminal while it is not, which most terminals draw hollow
   - [x] Bar and underline are always the terminal's own cursor
-  - [x] Blinks for 3 seconds when the window regains focus: a painted block on the engine's
-        timer, bar and underline in the terminal's blinking style. A key the input handles
-        ends it
+  - [x] Blinks for 5 seconds when the window regains focus or an input gains it, on the
+        engine's clock for every shape: a painted block skips its inversion and the terminal's
+        cursor is hidden in the off phases. A key the input handles ends it
 - [x] Multiple cursors are **not built in**: downstream syncs several through events
 
 ## Focus Management

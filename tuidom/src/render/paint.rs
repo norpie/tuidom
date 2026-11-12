@@ -1114,8 +1114,8 @@ fn input_cursor_metadata(
     // An unfocused window's cursor goes to the terminal, which can draw it hollow; a painted
     // cell cannot be.
     let native = !focus.window_focused || node.resolved.cursor_shape != CursorShape::Block;
-    let shown = focus.blink.is_none_or(|blink| blink.on);
-    if visible && !native && shown {
+    let visible = visible && focus.blink.is_none_or(|blink| blink.on);
+    if visible && !native {
         invert_cursor_cell(grid, screen_x, screen_y, color);
     }
 

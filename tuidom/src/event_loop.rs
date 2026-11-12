@@ -475,8 +475,6 @@ fn animations_active(doc: &Document) -> bool {
 /// waiting to fade or mid-fade, or a blinking cursor.
 fn animation_frame_needed(doc: &Document) -> bool {
     let now = doc.now();
-    // FIXME: a blink runs with no input focused too, so there is no cursor to show, and
-    // its flips still wake the render task for frames that change nothing.
     animations_active(doc)
         || doc.scrollbar_fade_schedule(now).is_active()
         || doc.cursor_blink(now).is_some()
@@ -701,12 +699,14 @@ mod tests {
     #[test]
     fn a_cursor_blink_wakes_the_render_task_at_each_flip_and_its_end() {
         let doc = Document::new().unwrap();
+        let input = doc.create_input("abc").unwrap();
+        doc.append_child(doc.root(), input).unwrap();
         let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 1);
         assert!(!animation_frame_needed(&doc));
 
-        runtime.simulate_window_focus();
+        doc.focus(input).unwrap();
         let start = doc.now();
-        for ms in [500, 1000, 1500, 2000, 2500, 3000] {
+        for ms in (1..=10).map(|phase| phase * 500) {
             assert!(animation_frame_needed(&doc));
             let due = start + Duration::from_millis(ms);
             assert_eq!(idle_deadline(&doc, doc.now()), Some(due));

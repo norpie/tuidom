@@ -417,13 +417,12 @@ fn cursor_color_sequence(color: Rgb) -> String {
 }
 
 fn cursor_style(cursor: RenderCursor) -> SetCursorStyle {
-    match (cursor.shape, cursor.blinking) {
-        (CursorShape::Block, false) => SetCursorStyle::SteadyBlock,
-        (CursorShape::Block, true) => SetCursorStyle::BlinkingBlock,
-        (CursorShape::Underline, false) => SetCursorStyle::SteadyUnderScore,
-        (CursorShape::Underline, true) => SetCursorStyle::BlinkingUnderScore,
-        (CursorShape::Bar, false) => SetCursorStyle::SteadyBar,
-        (CursorShape::Bar, true) => SetCursorStyle::BlinkingBar,
+    // Steady even while blinking: the engine hides it in the off phases, and a terminal's own
+    // blink restarts every time a frame shows the cursor again.
+    match cursor.shape {
+        CursorShape::Block => SetCursorStyle::SteadyBlock,
+        CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+        CursorShape::Bar => SetCursorStyle::SteadyBar,
     }
 }
 

@@ -444,7 +444,7 @@ returns the user to exactly the node they left.
 The document also keeps the state: `doc.window_focused()` is set before the listeners run,
 so they read the new value. What it does change is the cursor, which is
 [drawn differently](rendering.md#the-cursor) while the window is unfocused and blinks for a
-moment when focus comes back.
+moment when focus comes back to an input.
 
 Terminals that do not support focus reporting simply never send it. There is no capability
 check to write; the events just stay silent, and `window_focused()` stays true.
