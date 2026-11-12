@@ -22,10 +22,12 @@ pub struct Series<'a> {
 /// Where an axis's scale comes from.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum Domain {
-    /// The span of the plotted points. On the y axis it is widened to the nearest round ticks.
+    /// Taken from the values drawn. Line and scatter charts span them, widened on the y axis to
+    /// the nearest round ticks. Bar charts span them and zero, widened the same way. A
+    /// sparkline runs from zero to the largest.
     #[default]
     Data,
-    /// A set scale. Points outside it are cut off at the plot's edge.
+    /// A set scale. What lies outside it is cut off at the plot's edge.
     Fixed(LinearScale),
 }
 

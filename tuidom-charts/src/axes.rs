@@ -15,7 +15,7 @@ use crate::scale::{LinearScale, compact};
 
 /// Rows per y tick and columns per x tick the axes aim for.
 pub(crate) const Y_SPACING: u16 = 3;
-const X_SPACING: u16 = 10;
+pub(crate) const X_SPACING: u16 = 10;
 
 /// What one edge of a chart shows.
 #[derive(Clone, Copy)]
@@ -27,8 +27,8 @@ pub enum Axis<'a> {
         /// The label for a tick value, or `None` for [`compact`] labels.
         format: Option<&'a dyn Fn(f64) -> String>,
     },
-    /// Categories in equal slots, the first at the left or the top, each labelled at its
-    /// centre. See [`band`] for the slots.
+    /// Categories in equal slots, the first at the left or the top, each labelled at the
+    /// centre of its band. See [`band`] for the cells a band takes.
     Bands(&'a [String]),
     /// No line and no labels, taking no space.
     Hidden,
@@ -89,7 +89,7 @@ struct Mark {
     offset: u16,
     text: String,
     /// The band's cells, for a band axis.
-    slot: Option<Range<u16>>,
+    band: Option<Range<u16>>,
 }
 
 impl Axes {
@@ -192,15 +192,18 @@ impl Axes {
     }
 }
 
-/// The cells of slot `index` when `length` cells are split into `count` slots, as offsets from
-/// the start. Slots differ in size by at most a cell. A slot past `count`, or one too narrow to
-/// get a cell, is empty.
+/// The cells of band `index` when `length` cells are split into `count` equal slots, as offsets
+/// from the start. A slot of two cells or more leaves its last one empty, to set its band apart
+/// from the next. Slots differ in size by at most a cell. A band past `count`, or in a slot too
+/// narrow to get a cell, is empty.
 pub fn band(index: usize, count: usize, length: u16) -> Range<u16> {
     if index >= count {
         return length..length;
     }
     let edge = |index: usize| (index as u128 * u128::from(length) / count as u128) as u16;
-    edge(index)..edge(index + 1)
+    let (start, end) = (edge(index), edge(index + 1));
+    let end = if end - start >= 2 { end - 1 } else { end };
+    start..end
 }
 
 /// The marks along an axis `length` cells long. `upward` counts a linear axis's offsets from
@@ -231,20 +234,20 @@ fn marks(axis: &Axis, length: u16, spacing: u16, upward: bool) -> Vec<Mark> {
                 marks.push(Mark {
                     offset,
                     text,
-                    slot: None,
+                    band: None,
                 });
             }
         }
         Axis::Bands(labels) => {
             for (index, text) in labels.iter().enumerate() {
-                let slot = band(index, labels.len(), length);
-                if slot.is_empty() {
+                let cells = band(index, labels.len(), length);
+                if cells.is_empty() {
                     continue;
                 }
                 marks.push(Mark {
-                    offset: slot.start + (slot.len() as u16 - 1) / 2,
+                    offset: cells.start + (cells.len() as u16 - 1) / 2,
                     text: text.clone(),
-                    slot: Some(slot),
+                    band: Some(cells),
                 });
             }
         }
@@ -253,19 +256,18 @@ fn marks(axis: &Axis, length: u16, spacing: u16, upward: bool) -> Vec<Mark> {
     marks
 }
 
-/// Labels for x marks on `row`, in a buffer `width` wide. A band label is cut to its slot, less
-/// a column to keep it apart from the next. A tick label is centred on its tick, kept inside the
+/// Labels for x marks on `row`, in a buffer `width` wide. A band label is cut to its band and
+/// centred in it. A tick label is centred on its tick, kept inside the
 /// buffer, and dropped when it would touch the label before it.
 fn x_labels(marks: Vec<Mark>, plot_x: u16, row: u16, width: u16) -> Vec<Label> {
     let mut labels = Vec::new();
     let mut free = 0;
     for mark in marks {
-        let (text, x) = match mark.slot {
-            Some(slot) => {
-                let length = slot.len() as u16;
-                let room = if length >= 2 { length - 1 } else { length };
-                let text = fit(&mark.text, room);
-                let x = plot_x + slot.start + (length - text_width(&text)) / 2;
+        let (text, x) = match mark.band {
+            Some(cells) => {
+                let length = cells.len() as u16;
+                let text = fit(&mark.text, length);
+                let x = plot_x + cells.start + (length - text_width(&text)) / 2;
                 (text, x)
             }
             None => {
@@ -427,10 +429,10 @@ mod tests {
     }
 
     #[test]
-    fn band_labels_are_cut_to_their_slot() {
+    fn band_labels_are_cut_to_their_band() {
         let days = ["Monday", "Tuesday", "Wednesday"].map(String::from);
         let (_, rows) = drawn(15, 2, &Axis::Bands(&days), &Axis::Hidden);
-        assert_eq!(rows, ["──┬────┬────┬──", "Mon… Tue… Wed… "]);
+        assert_eq!(rows, ["─┬────┬────┬───", "Mon… Tue… Wed… "]);
     }
 
     #[test]
@@ -454,14 +456,15 @@ mod tests {
 
     #[test]
     fn bands_split_a_length_evenly() {
-        assert_eq!(band(0, 3, 10), 0..3);
-        assert_eq!(band(1, 3, 10), 3..6);
-        assert_eq!(band(2, 3, 10), 6..10);
+        assert_eq!(band(0, 3, 10), 0..2);
+        assert_eq!(band(1, 3, 10), 3..5);
+        assert_eq!(band(2, 3, 10), 6..9);
+        assert_eq!(band(0, 2, 2), 0..1);
         assert!(band(3, 3, 10).is_empty());
         assert!(band(0, 0, 10).is_empty());
-        let slots: Vec<_> = (0..20).map(|index| band(index, 20, 10).len()).collect();
-        assert_eq!(slots.iter().sum::<usize>(), 10);
-        assert!(slots.iter().all(|&length| length <= 1));
+        let bands: Vec<_> = (0..20).map(|index| band(index, 20, 10).len()).collect();
+        assert_eq!(bands.iter().sum::<usize>(), 10);
+        assert!(bands.iter().all(|&length| length <= 1));
     }
 
     #[test]
