@@ -12,6 +12,7 @@ pub(crate) use terminal::Terminal;
 pub(crate) use terminal::{flush_changes_into, flush_full_into, restore_for_panic};
 
 use crate::document::Document;
+use crate::image::PlacedImage;
 use crate::image::kitty::{KittyShown, KittyUploads};
 use crate::lock;
 use crate::performance::{DiffProfile, FlushMode, PaintProfile, RenderMetrics};
@@ -58,6 +59,8 @@ pub(crate) struct RenderGridOutput {
     pub stats: GridRenderStats,
     /// Images drawn as kitty placeholders.
     pub kitty: Vec<KittyShown>,
+    /// Images drawn as marker cells.
+    pub placed: Vec<PlacedImage>,
 }
 
 /// Paint a laid-out document into an existing grid without flushing to a terminal.
@@ -85,6 +88,7 @@ fn render_grid(
     RenderGridOutput {
         cursor: dom_output.cursor,
         kitty: dom_output.kitty,
+        placed: dom_output.placed,
         clear_base: dom_output.stats.clear_base,
         stats: GridRenderStats {
             grid_time: dom_output.stats.grid_time,

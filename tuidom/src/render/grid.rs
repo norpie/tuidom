@@ -114,12 +114,15 @@ pub(crate) enum CellContent {
     },
     /// Second cell occupied by a width-2 glyph.
     WideContinuation,
+    /// A cell an image drawn over cells covers: the image's id and the cell's column and row
+    /// in it. The cell's background is what was painted beneath the image.
+    Image { id: u32, column: u16, row: u16 },
 }
 
 impl CellContent {
     fn terminal_text(&self) -> &str {
         match self {
-            Self::Empty => " ",
+            Self::Empty | Self::Image { .. } => " ",
             Self::Glyph { text, .. } => text.as_str(),
             Self::WideContinuation => "",
         }
@@ -850,7 +853,7 @@ impl Grid {
         attrs: CellAttrs,
     ) -> bool {
         let width = match content {
-            CellContent::WideContinuation => return false,
+            CellContent::WideContinuation | CellContent::Image { .. } => return false,
             CellContent::Empty if bg.is_none() => return false,
             CellContent::Empty => 1,
             CellContent::Glyph { width, .. } => *width,
@@ -883,6 +886,33 @@ impl Grid {
         }
         self.write_glyph(row, col, text.as_str(), *width, fg, alpha, attrs);
         self.touch_span(row, col, col + usize::from(*width));
+        true
+    }
+
+    /// Make a cell one an image covers, keeping its background and dropping its glyph, which the
+    /// image draws over.
+    pub fn write_image_cell(
+        &mut self,
+        col: usize,
+        row: usize,
+        id: u32,
+        position: (u16, u16),
+    ) -> bool {
+        let (bound_left, bound_top, bound_right, bound_bottom) = self.writable_bounds();
+        let (left, top) = (col as i64, row as i64);
+        if left < bound_left || left >= bound_right || top < bound_top || top >= bound_bottom {
+            return false;
+        }
+        self.clear_text_span_at(row, col);
+        let cell = &mut self.cells[row][col];
+        cell.content = CellContent::Image {
+            id,
+            column: position.0,
+            row: position.1,
+        };
+        cell.fg = None;
+        cell.attrs = CellAttrs::default();
+        self.touch_span(row, col, col + 1);
         true
     }
 

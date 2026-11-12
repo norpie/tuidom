@@ -12,14 +12,14 @@ use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
 use crate::id::{NodeId, NodeMap};
 use crate::image::kitty::KittyShown;
-use crate::image::{ImageDrawing, ImageFitting, fit_image, placeholder};
+use crate::image::{ImageDrawing, ImageFitting, PlacedImage, fit_image, placeholder};
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
 };
 use crate::paint_order::{PaintEntry, ScrollbarPaint, paint_order};
 use crate::performance::{LargestFillProfile, PaintProfile};
 use crate::render::RenderCursor;
-use crate::render::grid::{Cell, CellAttrs, CellContent, Glyph, Grid, GridRect};
+use crate::render::grid::{Cell, CellAttrs, CellContent, ClipRect, Glyph, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
 use crate::style::{CursorShape, ResolvedColor};
 
@@ -57,6 +57,8 @@ pub(crate) struct DomPaintOutput {
     pub cursor: Option<RenderCursor>,
     /// Images drawn as kitty placeholders, which the terminal needs uploaded.
     pub kitty: Vec<KittyShown>,
+    /// Images drawn as marker cells, which the flush draws over them.
+    pub placed: Vec<PlacedImage>,
 }
 
 /// Paint the visible portion of the DOM tree into the grid.
@@ -102,6 +104,8 @@ pub(crate) fn paint(
     let paint_start = Instant::now();
     let mut cursor = None;
     let mut kitty = Vec::new();
+    let mut placed = Vec::new();
+    let last_row = i32::from(grid.height) - 1;
     for entry in &entries {
         grid.set_clip(entry.clip);
         if let Some(bar) = &entry.scrollbar {
@@ -113,13 +117,51 @@ pub(crate) fn paint(
                 let content = entry.layout.content_rect(&entry.resolved);
                 let content = (content.width, content.height);
                 match drawing {
-                    ImageDrawing::HalfBlock | ImageDrawing::Sixel | ImageDrawing::ITerm2 => doc
+                    ImageDrawing::HalfBlock => doc
                         .half_block_image(entry.id, data, *fit, content, cell_pixels)
                         .map(|(fitting, cells)| ImagePaint::HalfBlock(fitting, cells)),
+                    ImageDrawing::Sixel | ImageDrawing::ITerm2 => fit_image(
+                        (data.width(), data.height()),
+                        cell_pixels,
+                        content,
+                        *fit,
+                    )
+                    .map(|fitting| {
+                        let id = doc.image_id(entry.id, data, &fitting, cell_pixels);
+                        let top = entry
+                            .layout
+                            .content_rect(&entry.resolved)
+                            .y
+                            .saturating_add(i32::from(fitting.y));
+                        let bottom = top.saturating_add(i32::from(fitting.height));
+                        let last_row = (bottom > last_row)
+                            .then(|| {
+                                doc.half_block_image(entry.id, data, *fit, content, cell_pixels)
+                            })
+                            .flatten()
+                            .map(|(_, cells)| cells);
+                        let background = resolve_rgb(
+                            rgb_cache,
+                            entry.resolved.effective_background,
+                            &mut profile,
+                        );
+                        placed.push(PlacedImage {
+                            id,
+                            image: data.clone(),
+                            fitting,
+                            cell: cell_pixels,
+                            background: [background.r, background.g, background.b],
+                        });
+                        ImagePaint::OverCells {
+                            fitting,
+                            id,
+                            last_row,
+                        }
+                    }),
                     ImageDrawing::Placeholders => {
                         fit_image((data.width(), data.height()), cell_pixels, content, *fit).map(
                             |fitting| {
-                                let id = doc.kitty_image_id(entry.id, data, &fitting, cell_pixels);
+                                let id = doc.image_id(entry.id, data, &fitting, cell_pixels);
                                 kitty.push(KittyShown {
                                     id,
                                     image: data.clone(),
@@ -160,6 +202,7 @@ pub(crate) fn paint(
         },
         cursor,
         kitty,
+        placed,
     }
 }
 
@@ -201,6 +244,7 @@ fn paint_entry(
             paint_cells(
                 grid,
                 node,
+                node.clip,
                 buffer,
                 (0, 0),
                 fg_rgb,
@@ -215,10 +259,27 @@ fn paint_entry(
             match image {
                 Some(ImagePaint::HalfBlock(fitting, cells)) => {
                     let offset = (fitting.x, fitting.y);
-                    paint_cells(grid, node, cells, offset, fg_rgb, alpha, rgb_cache, profile);
+                    paint_cells(
+                        grid, node, node.clip, cells, offset, fg_rgb, alpha, rgb_cache, profile,
+                    );
                 }
                 Some(ImagePaint::Placeholders { fitting, id }) => {
                     paint_placeholders(grid, node, fitting, *id, profile);
+                }
+                Some(ImagePaint::OverCells {
+                    fitting,
+                    id,
+                    last_row,
+                }) => {
+                    paint_image_cells(grid, node, fitting, *id, profile);
+                    if let Some(cells) = last_row {
+                        let row = i64::from(grid.height) - 1;
+                        let offset = (fitting.x, fitting.y);
+                        let clip = node.clip.bound_y(row, row + 1);
+                        paint_cells(
+                            grid, node, clip, cells, offset, fg_rgb, alpha, rgb_cache, profile,
+                        );
+                    }
                 }
                 None => {}
             }
@@ -417,6 +478,7 @@ fn paint_text(
 fn paint_cells(
     grid: &mut Grid,
     node: &PaintEntry,
+    clip: ClipRect,
     buffer: &CanvasBuffer,
     offset: (u16, u16),
     fg_rgb: Rgb,
@@ -431,8 +493,7 @@ fn paint_cells(
     let origin_y = content.y.saturating_add(i32::from(offset.1));
     let (x, y) = (i64::from(origin_x), i64::from(origin_y));
     grid.set_clip(
-        node.clip
-            .bound_x(x, x + i64::from(width))
+        clip.bound_x(x, x + i64::from(width))
             .bound_y(y, y + i64::from(height)),
     );
 
@@ -473,7 +534,17 @@ fn paint_cells(
 /// How an image node's cells are drawn this frame.
 enum ImagePaint {
     HalfBlock(ImageFitting, Arc<CanvasBuffer>),
-    Placeholders { fitting: ImageFitting, id: u32 },
+    Placeholders {
+        fitting: ImageFitting,
+        id: u32,
+    },
+    /// Marker cells for sixel or iTerm2, with the half-block cells the screen's last row shows
+    /// instead when the image reaches it.
+    OverCells {
+        fitting: ImageFitting,
+        id: u32,
+        last_row: Option<Arc<CanvasBuffer>>,
+    },
 }
 
 /// Write kitty placeholder cells over the fitted rectangle, cropped to the content box and the
@@ -541,6 +612,50 @@ fn paint_placeholders(
     if let Some(start) = write_start {
         profile.text_write_time += start.elapsed();
         profile.glyphs_written += glyphs;
+    }
+}
+
+/// Write marker cells over the fitted rectangle, cropped to the content box and the clip, each
+/// numbered by its place in the image. The screen's last row is left out: some terminals scroll
+/// when an image drawn over cells reaches it.
+fn paint_image_cells(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    fitting: &ImageFitting,
+    id: u32,
+    profile: &mut PaintProfile,
+) {
+    let content = node.layout.content_rect(&node.resolved);
+    let width = content.width.saturating_sub(fitting.x).min(fitting.width);
+    let height = content.height.saturating_sub(fitting.y).min(fitting.height);
+    let origin_x = content.x.saturating_add(i32::from(fitting.x));
+    let origin_y = content.y.saturating_add(i32::from(fitting.y));
+    let (x, y) = (i64::from(origin_x), i64::from(origin_y));
+    let last_row = i64::from(grid.height) - 1;
+    grid.set_clip(
+        node.clip
+            .bound_x(x, x + i64::from(width))
+            .bound_y(y, (y + i64::from(height)).min(last_row)),
+    );
+
+    let write_start = profile.enabled.then(Instant::now);
+    let mut cells = 0;
+    if let Some((left, top, right, bottom)) = grid.clip_rect(origin_x, origin_y, width, height) {
+        for row in top..bottom {
+            let image_row = (row as i64 - y) as u16;
+            for col in left..right {
+                let position = ((col as i64 - x) as u16, image_row);
+                if grid.write_image_cell(col, row, id, position) {
+                    cells += 1;
+                }
+            }
+        }
+    }
+    grid.set_clip(node.clip);
+
+    if let Some(start) = write_start {
+        profile.text_write_time += start.elapsed();
+        profile.glyphs_written += cells;
     }
 }
 

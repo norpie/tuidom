@@ -131,7 +131,7 @@ impl CanvasBuffer {
         let cell = self.cells.get(self.index(x, y)?)?;
         let symbol = match &cell.content {
             CellContent::Glyph { text, .. } => text.as_str(),
-            CellContent::Empty | CellContent::WideContinuation => "",
+            CellContent::Empty | CellContent::WideContinuation | CellContent::Image { .. } => "",
         };
         Some((symbol, cell.style))
     }

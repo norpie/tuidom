@@ -153,17 +153,29 @@ fn pixels(value: f64, limit: u32) -> u32 {
     (value.round() as u32).clamp(1, limit)
 }
 
-/// The kitty image id a node's image is shown under, and what it was uploaded as. An id names
-/// one image at one fitted size, crop and cell size; when any of them changes the node gets a
-/// new id, so its cells change color and are rewritten, and the old upload is deleted by its
-/// own id.
+/// The id a node's image is shown under, and what it was made from. An id names one image at
+/// one fitted size, crop and cell size; when any of them changes the node gets a new id, so its
+/// cells change and are rewritten, and a kitty upload under the old id is deleted.
 #[derive(Debug)]
-pub(crate) struct KittyImage {
+pub(crate) struct NumberedImage {
     pub image: Arc<ImageData>,
     pub size: (u16, u16),
     pub source: (u32, u32, u32, u32),
     pub cell: (u16, u16),
     pub id: u32,
+}
+
+/// An image a frame drew as marker cells, for the flush to draw over them with sixel or iTerm2.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) struct PlacedImage {
+    pub id: u32,
+    pub image: Arc<ImageData>,
+    pub fitting: ImageFitting,
+    /// One cell's size in pixels when it was drawn.
+    pub cell: (u16, u16),
+    /// The node's effective background, which sixel blends partly transparent pixels with.
+    pub background: [u8; 3],
 }
 
 /// An image node's half-block cells and what they were made from.

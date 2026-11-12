@@ -12,7 +12,7 @@ use crate::animation::driver::AnimationDriver;
 use crate::document::selection::SelectionState;
 use crate::event::{FocusKeys, Listener, ScrollKeys, TargetedEventKind};
 use crate::id::{NodeId, NodeMap, NodeSet};
-use crate::image::{HalfBlockImage, ImageProtocol, KittyImage};
+use crate::image::{HalfBlockImage, ImageProtocol, NumberedImage};
 use crate::layout::LayoutEngine;
 use crate::node::{NodeData, NodeLayout, ScrollOffset};
 use crate::performance::{PerformanceState, StyleCounters};
@@ -282,8 +282,8 @@ pub(crate) struct DocumentInner {
     /// an unchanged image is not resampled every frame. Only paint touches it.
     pub half_block_images: Mutex<NodeMap<HalfBlockImage>>,
 
-    /// The kitty image id each image node is shown under, and the last id handed out.
-    pub kitty_images: Mutex<(NodeMap<KittyImage>, u32)>,
+    /// The image id each image node is shown under, and the last id handed out.
+    pub image_ids: Mutex<(NodeMap<NumberedImage>, u32)>,
 
     /// Current scroll offset per scroll container. Absent means `(0, 0)`.
     pub scroll_offsets: Mutex<NodeMap<ScrollOffset>>,

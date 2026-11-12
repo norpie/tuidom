@@ -5,7 +5,7 @@ use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::image::{
     ASSUMED_CELL_PIXELS, HalfBlockImage, ImageData, ImageDrawing, ImageFit, ImageFitting,
-    ImageProtocol, KittyImage, fit_image,
+    ImageProtocol, NumberedImage, fit_image,
 };
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
@@ -141,10 +141,10 @@ impl Document {
         Some((fitting, cells))
     }
 
-    /// The kitty image id `node` shows `image` under at `fitting`, handing out a new one when
+    /// The image id `node` shows `image` under at `fitting`, handing out a new one when
     /// the image, its fitted size, its crop or the cell size is not what the node last showed.
     /// Ids are 24-bit and never zero.
-    pub(crate) fn kitty_image_id(
+    pub(crate) fn image_id(
         &self,
         node: NodeId,
         image: &Arc<ImageData>,
@@ -152,7 +152,7 @@ impl Document {
         cell: (u16, u16),
     ) -> u32 {
         let size = (fitting.width, fitting.height);
-        let mut guard = lock::mutex(&self.inner.kitty_images);
+        let mut guard = lock::mutex(&self.inner.image_ids);
         let (images, last) = &mut *guard;
         if let Some(entry) = images.get(&node)
             && Arc::ptr_eq(&entry.image, image)
@@ -166,7 +166,7 @@ impl Document {
         let id = *last;
         images.insert(
             node,
-            KittyImage {
+            NumberedImage {
                 image: image.clone(),
                 size,
                 source: fitting.source,

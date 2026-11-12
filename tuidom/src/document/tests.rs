@@ -12,7 +12,7 @@ use crate::event::{
     DragPhase, EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, KeyModifiers,
     ListenerHandle, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
-use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
+use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor, ScreenImageCell};
 use crate::image::{ImageData, ImageDrawing, ImageFit, ImageProtocol};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::paint_order::paint_order;
@@ -561,12 +561,8 @@ fn placeholder_text(row: u16, column: u16) -> String {
     crate::image::placeholder::placeholder(row, column).unwrap()
 }
 
-fn kitty_id(doc: &Document, node: NodeId) -> u32 {
-    lock::mutex(&doc.inner.kitty_images)
-        .0
-        .get(&node)
-        .unwrap()
-        .id
+fn shown_id(doc: &Document, node: NodeId) -> u32 {
+    lock::mutex(&doc.inner.image_ids).0.get(&node).unwrap().id
 }
 
 fn id_screen_color(id: u32) -> Option<ScreenColor> {
@@ -586,11 +582,11 @@ fn a_placeholder_image_numbers_each_cell_and_colors_it_with_its_id() {
     doc.set_image_fit(image, ImageFit::Fill).unwrap();
     doc.set_image(image, solid_image(4, 4)).unwrap();
     // An id whose color is far from black, so blending it toward the background would show.
-    lock::mutex(&doc.inner.kitty_images).1 = 0x0080_C0FF;
+    lock::mutex(&doc.inner.image_ids).1 = 0x0080_C0FF;
     let mut runtime = placeholder_runtime(&doc, 3, 2);
     runtime.render().unwrap();
 
-    let id = kitty_id(&doc, image);
+    let id = shown_id(&doc, image);
     assert_eq!(id, 0x0080_C100);
     for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
         let cell = runtime.get_cell(x, y).unwrap();
@@ -684,21 +680,21 @@ fn a_new_image_gets_a_new_id_and_a_removed_node_drops_its_own() {
     doc.set_image(image, data.clone()).unwrap();
     let mut runtime = placeholder_runtime(&doc, 2, 1);
     runtime.render().unwrap();
-    let first = kitty_id(&doc, image);
+    let first = shown_id(&doc, image);
 
     doc.update_style(image, |style| style.background(Color::black()))
         .unwrap();
     runtime.render().unwrap();
-    assert_eq!(kitty_id(&doc, image), first);
+    assert_eq!(shown_id(&doc, image), first);
 
     doc.set_image(image, solid_image(8, 16)).unwrap();
     runtime.render().unwrap();
-    let second = kitty_id(&doc, image);
+    let second = shown_id(&doc, image);
     assert_ne!(second, first);
     assert_eq!(runtime.get_cell(0, 0).unwrap().fg, id_screen_color(second));
 
     doc.remove_child(doc.root(), image).unwrap();
-    assert!(lock::mutex(&doc.inner.kitty_images).0.is_empty());
+    assert!(lock::mutex(&doc.inner.image_ids).0.is_empty());
 }
 
 /// A kitty graphics command from flushed output: its keys and its payload.
@@ -775,6 +771,221 @@ fn uploaded_ids(commands: &[GraphicsCommand]) -> Vec<u32> {
 }
 
 /// A kitty-drawn image filling `columns` by `rows` cells at the root's top left.
+fn image_cell(runtime: &HeadlessRuntime, x: i32, y: i32) -> Option<ScreenImageCell> {
+    runtime.get_cell(x, y).unwrap().image
+}
+
+#[test]
+fn sixel_and_iterm2_images_are_numbered_marker_cells_over_their_background() {
+    for protocol in [ImageProtocol::Sixel, ImageProtocol::ITerm2] {
+        let doc = Document::new().unwrap();
+        let image = image_at_start(&doc, |style| {
+            style.width(Length::Cells(2));
+            style.height(Length::Cells(2));
+            style.background(Color::red());
+            style.bold(true);
+        });
+        doc.set_image_fit(image, ImageFit::Fill).unwrap();
+        doc.set_image(image, solid_image(4, 4)).unwrap();
+        doc.set_image_protocol(protocol);
+        let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 3);
+        runtime.render().unwrap();
+
+        let id = shown_id(&doc, image);
+        let red = runtime.get_cell(0, 0).unwrap().bg;
+        assert!(red.is_some());
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let cell = runtime.get_cell(x, y).unwrap();
+            assert_eq!(
+                cell.image,
+                Some(ScreenImageCell {
+                    id,
+                    column: x as u16,
+                    row: y as u16,
+                }),
+                "{protocol:?}"
+            );
+            assert_eq!(cell.text, " ");
+            assert_eq!(cell.bg, red);
+            assert_eq!(cell.fg, None);
+            assert!(!cell.bold);
+        }
+        assert_eq!(image_cell(&runtime, 2, 0), None);
+    }
+}
+
+#[test]
+fn a_contained_marker_image_starts_numbering_at_its_own_corner() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image(image, solid_image(16, 16)).unwrap();
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render().unwrap();
+
+    let columns: Vec<Option<u16>> = (0..4)
+        .map(|x| image_cell(&runtime, x, 0).map(|cell| cell.column))
+        .collect();
+    assert_eq!(columns, [None, Some(0), Some(1), None]);
+}
+
+#[test]
+fn a_scrolled_marker_image_keeps_its_row_numbers() {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.height(Length::Cells(2));
+    style.width(Length::Cells(3));
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let image = doc.create_image().unwrap();
+    let mut style = Style::new();
+    style.flex_shrink(0.0);
+    style.width(Length::Cells(1));
+    style.height(Length::Cells(4));
+    doc.set_style(image, &style).unwrap();
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(1, 4)).unwrap();
+    doc.append_child(container, image).unwrap();
+
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 3);
+    runtime.render().unwrap();
+    doc.scroll_to(container, 0, 2).unwrap();
+    runtime.render().unwrap();
+
+    let rows: Vec<Option<u16>> = (0..3)
+        .map(|y| image_cell(&runtime, 0, y).map(|cell| cell.row))
+        .collect();
+    assert_eq!(rows, [Some(2), Some(3), None]);
+}
+
+#[test]
+fn a_sibling_with_a_higher_z_index_replaces_marker_cells() {
+    let doc = Document::new().unwrap();
+    let overlay = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x: 1, y: 0 });
+    style.z_index(1);
+    doc.set_style(overlay, &style).unwrap();
+    let text = doc.create_text("X").unwrap();
+    doc.append_child(overlay, text).unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(3, 2)).unwrap();
+    doc.set_image_protocol(ImageProtocol::ITerm2);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 2);
+    runtime.render().unwrap();
+
+    assert_eq!(image_cell(&runtime, 0, 0).map(|cell| cell.column), Some(0));
+    let covered = runtime.get_cell(1, 0).unwrap();
+    assert_eq!((covered.text.as_str(), covered.image), ("X", None));
+    assert_eq!(image_cell(&runtime, 2, 0).map(|cell| cell.column), Some(2));
+}
+
+#[test]
+fn the_screens_last_row_of_a_marker_image_is_drawn_as_half_blocks() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(2));
+        style.height(Length::Cells(2));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(
+        image,
+        pixels(2, 4, &[RED, RED, RED, RED, GREEN, GREEN, BLUE, BLUE]),
+    )
+    .unwrap();
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 2);
+    runtime.render().unwrap();
+
+    for x in 0..2 {
+        assert_eq!(image_cell(&runtime, x, 0).map(|cell| cell.row), Some(0));
+        let cell = runtime.get_cell(x, 1).unwrap();
+        assert_eq!(cell.image, None);
+        assert_eq!(
+            (cell.text, cell.fg, cell.bg),
+            ("▀".to_string(), screen(GREEN), screen(BLUE))
+        );
+    }
+}
+
+#[test]
+fn a_new_fit_or_cell_size_gives_marker_cells_a_new_id() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image(image, solid_image(16, 16)).unwrap();
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 5, 2);
+    runtime.render().unwrap();
+    let first = shown_id(&doc, image);
+
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    runtime.render().unwrap();
+    let second = shown_id(&doc, image);
+    assert_ne!(second, first);
+    assert_eq!(image_cell(&runtime, 0, 0).map(|cell| cell.id), Some(second));
+
+    runtime.set_terminal_info(with_cell_pixels(10, 20));
+    runtime.render().unwrap();
+    let third = shown_id(&doc, image);
+    assert_ne!(third, second);
+    assert_eq!(image_cell(&runtime, 0, 0).map(|cell| cell.id), Some(third));
+}
+
+#[test]
+fn each_marker_image_is_listed_once_with_its_background() {
+    let doc = Document::new().unwrap();
+    let first = image_at_start(&doc, |style| {
+        style.width(Length::Cells(2));
+        style.height(Length::Cells(1));
+        style.background(Color::white());
+    });
+    doc.set_image(first, solid_image(16, 16)).unwrap();
+    let second = image_at_start(&doc, |style| {
+        style.width(Length::Cells(2));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image(second, solid_image(16, 16)).unwrap();
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 3);
+    runtime.render().unwrap();
+
+    let placed = runtime.placed_images();
+    let ids: Vec<u32> = placed.iter().map(|image| image.id).collect();
+    assert_eq!(ids, [shown_id(&doc, first), shown_id(&doc, second)]);
+    assert_eq!(placed[0].background, [255, 255, 255]);
+    assert_eq!(placed[0].cell, (8, 16));
+    assert!(Arc::ptr_eq(&placed[0].image, &solid_image_of(&doc, first)));
+    assert_eq!(placed[0].fitting.width, 2);
+
+    doc.set_image_protocol(ImageProtocol::HalfBlock);
+    runtime.render().unwrap();
+    assert!(runtime.placed_images().is_empty());
+}
+
+fn solid_image_of(doc: &Document, node: NodeId) -> Arc<ImageData> {
+    match doc.get_node(node).unwrap().kind {
+        NodeKindView::Image { data, .. } => data,
+        _ => panic!("not an image"),
+    }
+}
+
 fn kitty_image(doc: &Document, columns: u16, rows: u16, data: Arc<ImageData>) -> NodeId {
     let image = image_at_start(doc, |style| {
         style.width(Length::Cells(columns));
@@ -797,7 +1008,7 @@ fn an_image_is_uploaded_at_its_fitted_pixel_size_before_its_cells() {
     let commands = graphics_commands(output);
     assert_eq!(commands.len(), 1);
     let keys = &commands[0].keys;
-    let id = kitty_id(&doc, image);
+    let id = shown_id(&doc, image);
     for (key, value) in [
         ("a", "T"),
         ("U", "1"),
@@ -880,12 +1091,12 @@ fn a_resized_image_is_uploaded_under_a_new_id_and_the_old_one_deleted() {
     let image = kitty_image(&doc, 2, 1, solid_image(4, 4));
     let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
     runtime.render_flushed().unwrap();
-    let first = kitty_id(&doc, image);
+    let first = shown_id(&doc, image);
 
     doc.update_style(image, |style| style.width(Length::Cells(3)))
         .unwrap();
     runtime.render_flushed().unwrap();
-    let second = kitty_id(&doc, image);
+    let second = shown_id(&doc, image);
     assert_ne!(first, second);
 
     let commands = graphics_commands(runtime.flush_output());
@@ -900,7 +1111,7 @@ fn an_image_no_longer_drawn_as_placeholders_is_deleted() {
     let image = kitty_image(&doc, 2, 1, solid_image(4, 4));
     let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 1);
     runtime.render_flushed().unwrap();
-    let id = kitty_id(&doc, image);
+    let id = shown_id(&doc, image);
 
     doc.set_image_protocol(ImageProtocol::HalfBlock);
     runtime.render_flushed().unwrap();

@@ -7,11 +7,12 @@ use crate::error::Result;
 use crate::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
+use crate::image::PlacedImage;
 use crate::image::kitty::KittyUploads;
 use crate::lock;
 use crate::performance::{FlushMode, RenderMetrics};
 use crate::render::diff::diff_profiled_with_hints;
-use crate::render::grid::{Cell, Grid};
+use crate::render::grid::{Cell, CellContent, Grid};
 use crate::render::paint::FrameClearBase;
 use crate::render::{
     RenderCursor, flush_changes_into, flush_full_into, render_into_grid, should_flush_full,
@@ -40,6 +41,7 @@ pub struct HeadlessRuntime {
     rgb_cache: RgbCache,
     event_state: RuntimeEventState,
     kitty_uploads: KittyUploads,
+    placed: Vec<PlacedImage>,
 }
 
 /// Reports the harness's configuration, not its buffers.
@@ -59,6 +61,12 @@ impl fmt::Debug for HeadlessRuntime {
 }
 
 impl HeadlessRuntime {
+    /// The images the last frame drew as marker cells.
+    #[cfg(test)]
+    pub(crate) fn placed_images(&self) -> &[PlacedImage] {
+        &self.placed
+    }
+
     /// Create a headless runtime for `doc` with the given screen dimensions.
     ///
     /// Freezes the document clock: animations only progress through
@@ -75,6 +83,7 @@ impl HeadlessRuntime {
             flush_clear_base: None,
             flush_output: Vec::new(),
             kitty_uploads: KittyUploads::default(),
+            placed: Vec::new(),
             cursor: None,
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
@@ -166,6 +175,7 @@ impl HeadlessRuntime {
         };
         let output = render_into_grid(&self.doc, &mut grid, &mut self.rgb_cache);
         self.cursor = output.cursor;
+        self.placed = output.placed.clone();
         self.grid = Some(grid);
 
         let stats = RenderMetrics {
@@ -209,6 +219,7 @@ impl HeadlessRuntime {
         };
         let output = render_into_grid(&self.doc, &mut new_grid, &mut self.rgb_cache);
         self.cursor = output.cursor;
+        self.placed = output.placed.clone();
 
         let previous = self
             .grid
@@ -660,6 +671,21 @@ pub struct ScreenCell {
     pub italic: bool,
     /// Whether this cell's glyph is underlined.
     pub underline: bool,
+    /// The image this cell shows part of, when images are drawn over cells with sixel or
+    /// iTerm2. The cell's text is then a space and its background what lies beneath the image.
+    pub image: Option<ScreenImageCell>,
+}
+
+/// A cell's place in an image drawn over cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScreenImageCell {
+    /// The id the image is drawn under; a new one whenever the image, its fit or the cell size
+    /// changes.
+    pub id: u32,
+    /// The cell's column within the image.
+    pub column: u16,
+    /// The cell's row within the image.
+    pub row: u16,
 }
 
 impl ScreenCell {
@@ -677,6 +703,10 @@ impl ScreenCell {
             bold: cell.attrs.bold,
             italic: cell.attrs.italic,
             underline: cell.attrs.underline,
+            image: match cell.content {
+                CellContent::Image { id, column, row } => Some(ScreenImageCell { id, column, row }),
+                _ => None,
+            },
         }
     }
 }
