@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::{ImageData, ImageFitting, base64, compress};
+use super::{ImageData, ImageFitting, base64, compress, emit};
 
 /// Base64 bytes per command; kitty takes at most 4096, and every chunk but the last must be a
 /// multiple of four.
@@ -90,26 +90,18 @@ fn upload(out: &mut Vec<u8>, shown: &KittyShown, tmux: bool) -> bool {
         } else {
             format!("m={more},q=2")
         };
-        emit(out, &format!("\x1b_G{keys};{data}\x1b\\"), tmux);
+        emit(out, format!("\x1b_G{keys};{data}\x1b\\").as_bytes(), tmux);
     }
     true
 }
 
 /// Queue the deletion of image `id` and the data behind it.
 fn delete(out: &mut Vec<u8>, id: u32, tmux: bool) {
-    emit(out, &format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\"), tmux);
-}
-
-/// Append one escape sequence, wrapped for tmux passthrough when asked: tmux forwards the
-/// body of `ESC P tmux; … ESC \` once every escape inside it is doubled.
-fn emit(out: &mut Vec<u8>, sequence: &str, tmux: bool) {
-    if tmux {
-        out.extend_from_slice(b"\x1bPtmux;");
-        out.extend_from_slice(sequence.replace('\x1b', "\x1b\x1b").as_bytes());
-        out.extend_from_slice(b"\x1b\\");
-    } else {
-        out.extend_from_slice(sequence.as_bytes());
-    }
+    emit(
+        out,
+        format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\").as_bytes(),
+        tmux,
+    );
 }
 
 #[cfg(test)]
@@ -146,7 +138,7 @@ mod tests {
     #[test]
     fn tmux_passthrough_doubles_every_escape() {
         let mut out = Vec::new();
-        emit(&mut out, "\x1b_Ga=d\x1b\\", true);
+        emit(&mut out, b"\x1b_Ga=d\x1b\\", true);
         assert_eq!(out, b"\x1bPtmux;\x1b\x1b_Ga=d\x1b\x1b\\\x1b\\");
     }
 }

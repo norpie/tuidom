@@ -20,6 +20,7 @@ use crate::panic::install_hook;
 use crate::render::RenderCursor;
 use crate::render::diff::CellChange;
 use crate::render::grid::{Cell, CellAttrs, Grid};
+use crate::render::placed::ImageDraw;
 use crate::style::CursorShape;
 use crate::style::color::Rgb;
 
@@ -106,10 +107,11 @@ impl Terminal {
         &mut self,
         changes: &[CellChange],
         graphics: &[u8],
+        images: &[ImageDraw],
         cursor: Option<RenderCursor>,
         bell: bool,
     ) -> io::Result<()> {
-        flush_changes_into(&mut self.stdout, changes, graphics, cursor, bell)
+        flush_changes_into(&mut self.stdout, changes, graphics, images, cursor, bell)
     }
 
     /// Flush the entire grid — used on resize.
@@ -117,10 +119,11 @@ impl Terminal {
         &mut self,
         grid: &Grid,
         graphics: &[u8],
+        images: &[ImageDraw],
         cursor: Option<RenderCursor>,
         bell: bool,
     ) -> io::Result<()> {
-        flush_full_into(&mut self.stdout, grid, graphics, cursor, bell)
+        flush_full_into(&mut self.stdout, grid, graphics, images, cursor, bell)
     }
 
     /// Write bytes that are not a frame, such as image deletes on the way out.
@@ -150,11 +153,13 @@ fn queue_bell<W: Write>(out: &mut W, bell: bool) -> io::Result<()> {
 /// Both flushes wrap the frame in a synchronized update, so a terminal that supports it shows
 /// the frame only once all of it has arrived, and others ignore it. `graphics`, the image
 /// commands the frame needs, goes first inside it, so an image is uploaded before the cells
-/// that show it.
+/// that show it. `images`, drawn over their cells with sixel or iTerm2, go after the cells, each
+/// followed by the cells inside it it covered.
 pub(crate) fn flush_changes_into<W: Write>(
     out: &mut W,
     changes: &[CellChange],
     graphics: &[u8],
+    images: &[ImageDraw],
     cursor: Option<RenderCursor>,
     bell: bool,
 ) -> io::Result<()> {
@@ -169,6 +174,7 @@ pub(crate) fn flush_changes_into<W: Write>(
     for change in changes {
         queue_cell(out, change.x, change.y, &change.cell, &mut attrs)?;
     }
+    queue_images(out, images, &mut attrs)?;
     queue_cursor(out, cursor)?;
     queue!(out, EndSynchronizedUpdate)?;
     out.flush()
@@ -183,6 +189,7 @@ pub(crate) fn flush_full_into<W: Write>(
     out: &mut W,
     grid: &Grid,
     graphics: &[u8],
+    images: &[ImageDraw],
     cursor: Option<RenderCursor>,
     bell: bool,
 ) -> io::Result<()> {
@@ -234,6 +241,7 @@ pub(crate) fn flush_full_into<W: Write>(
             queue!(out, Print(run_text))?;
         }
     }
+    queue_images(out, images, &mut current_attrs)?;
     queue_cursor(out, cursor)?;
     queue!(out, EndSynchronizedUpdate)?;
     out.flush()
@@ -416,6 +424,21 @@ fn cursor_style(cursor: RenderCursor) -> SetCursorStyle {
     }
 }
 
+fn queue_images<W: Write>(
+    out: &mut W,
+    images: &[ImageDraw],
+    attrs: &mut CellAttrs,
+) -> io::Result<()> {
+    for image in images {
+        queue!(out, MoveTo(image.x, image.y))?;
+        out.write_all(&image.bytes)?;
+        for change in &image.cover {
+            queue_cell(out, change.x, change.y, &change.cell, attrs)?;
+        }
+    }
+    Ok(())
+}
+
 /// Queue a single cell to stdout (no flush).
 ///
 /// `current` is the attribute state the terminal is already in, and is updated as
@@ -551,14 +574,15 @@ mod tests {
 
     fn full_bytes(bell: bool) -> String {
         let mut out = Vec::new();
-        flush_full_into(&mut out, &Grid::new(4, 2), &[], None, bell)
+        flush_full_into(&mut out, &Grid::new(4, 2), &[], &[], None, bell)
             .expect("writing to a Vec cannot fail");
         String::from_utf8(out).expect("flush output is valid utf-8")
     }
 
     fn changes_bytes(bell: bool) -> String {
         let mut out = Vec::new();
-        flush_changes_into(&mut out, &[], &[], None, bell).expect("writing to a Vec cannot fail");
+        flush_changes_into(&mut out, &[], &[], &[], None, bell)
+            .expect("writing to a Vec cannot fail");
         String::from_utf8(out).expect("flush output is valid utf-8")
     }
 

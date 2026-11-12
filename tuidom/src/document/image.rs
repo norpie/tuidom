@@ -177,8 +177,8 @@ impl Document {
         id
     }
 
-    /// Whether kitty graphics commands have to be wrapped for tmux passthrough.
-    pub(crate) fn kitty_through_tmux(&self) -> bool {
+    /// Whether kitty and iTerm2 image commands have to be wrapped for tmux passthrough.
+    pub(crate) fn graphics_through_tmux(&self) -> bool {
         lock::mutex(&self.inner.terminal_info)
             .as_ref()
             .and_then(|info| info.multiplexer.as_ref())

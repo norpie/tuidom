@@ -14,6 +14,7 @@ use crate::performance::{FlushMode, RenderMetrics};
 use crate::render::diff::diff_profiled_with_hints;
 use crate::render::grid::{Cell, CellContent, Grid};
 use crate::render::paint::FrameClearBase;
+use crate::render::placed::PlacedImages;
 use crate::render::{
     RenderCursor, flush_changes_into, flush_full_into, render_into_grid, should_flush_full,
 };
@@ -42,6 +43,7 @@ pub struct HeadlessRuntime {
     event_state: RuntimeEventState,
     kitty_uploads: KittyUploads,
     placed: Vec<PlacedImage>,
+    placed_images: PlacedImages,
 }
 
 /// Reports the harness's configuration, not its buffers.
@@ -84,6 +86,7 @@ impl HeadlessRuntime {
             flush_output: Vec::new(),
             kitty_uploads: KittyUploads::default(),
             placed: Vec::new(),
+            placed_images: PlacedImages::default(),
             cursor: None,
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
@@ -269,14 +272,20 @@ impl HeadlessRuntime {
 
         let bell = self.doc.take_pending_bell();
         let flush_start = Instant::now();
-        let graphics = self
-            .kitty_uploads
-            .commands(&output.kitty, self.doc.kitty_through_tmux());
+        let tmux = self.doc.graphics_through_tmux();
+        let graphics = self.kitty_uploads.commands(&output.kitty, tmux);
+        let images = self.placed_images.draws(
+            &new_grid,
+            changes.as_deref().filter(|_| !full_redraw),
+            &output.placed,
+            tmux,
+        );
         match (&changes, full_redraw) {
             (Some(changes), false) => flush_changes_into(
                 &mut self.flush_output,
                 changes,
                 &graphics,
+                &images,
                 self.cursor,
                 bell,
             )?,
@@ -284,6 +293,7 @@ impl HeadlessRuntime {
                 &mut self.flush_output,
                 &new_grid,
                 &graphics,
+                &images,
                 self.cursor,
                 bell,
             )?,

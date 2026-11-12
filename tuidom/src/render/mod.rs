@@ -3,6 +3,7 @@
 pub(crate) mod diff;
 pub(crate) mod grid;
 pub(crate) mod paint;
+pub(crate) mod placed;
 mod terminal;
 
 use std::io;
@@ -17,6 +18,7 @@ use crate::image::kitty::{KittyShown, KittyUploads};
 use crate::lock;
 use crate::performance::{DiffProfile, FlushMode, PaintProfile, RenderMetrics};
 use crate::render::paint::FrameClearBase;
+use crate::render::placed::PlacedImages;
 use crate::style::CursorShape;
 use crate::style::color::{Rgb, RgbCache};
 
@@ -119,6 +121,7 @@ pub(crate) struct Renderer {
     /// Whether kitty commands went through tmux on the last frame, kept for the deletes sent
     /// on drop.
     kitty_through_tmux: bool,
+    placed: PlacedImages,
 }
 
 impl Renderer {
@@ -132,11 +135,12 @@ impl Renderer {
             rgb_cache: RgbCache::new(),
             uploads: KittyUploads::default(),
             kitty_through_tmux: false,
+            placed: PlacedImages::default(),
         }
     }
 
     fn kitty_commands(&mut self, doc: &Document, shown: &[KittyShown]) -> Vec<u8> {
-        self.kitty_through_tmux = doc.kitty_through_tmux();
+        self.kitty_through_tmux = doc.graphics_through_tmux();
         self.uploads.commands(shown, self.kitty_through_tmux)
     }
 
@@ -176,12 +180,18 @@ impl Renderer {
         let bell = doc.take_pending_bell();
         let flush_start = std::time::Instant::now();
         let graphics = self.kitty_commands(doc, &output.kitty);
+        let images = self.placed.draws(
+            &self.new_grid,
+            (!full_redraw).then_some(changes.as_slice()),
+            &output.placed,
+            self.kitty_through_tmux,
+        );
         if full_redraw {
             self.terminal
-                .flush_full(&self.new_grid, &graphics, cursor, bell)?;
+                .flush_full(&self.new_grid, &graphics, &images, cursor, bell)?;
         } else {
             self.terminal
-                .flush_changes(&changes, &graphics, cursor, bell)?;
+                .flush_changes(&changes, &graphics, &images, cursor, bell)?;
         }
         let flush_time = flush_start.elapsed();
         let cells_flushed = if full_redraw {
@@ -231,8 +241,14 @@ impl Renderer {
         let bell = doc.take_pending_bell();
         let flush_start = std::time::Instant::now();
         let graphics = self.kitty_commands(doc, &output.kitty);
+        let images = self.placed.draws(
+            &self.new_grid,
+            None,
+            &output.placed,
+            self.kitty_through_tmux,
+        );
         self.terminal
-            .flush_full(&self.new_grid, &graphics, cursor, bell)?;
+            .flush_full(&self.new_grid, &graphics, &images, cursor, bell)?;
         let flush_time = flush_start.elapsed();
 
         let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);

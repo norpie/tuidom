@@ -986,6 +986,191 @@ fn solid_image_of(doc: &Document, node: NodeId) -> Arc<ImageData> {
     }
 }
 
+/// Each sixel image in `bytes`: the cell it is drawn at and its raster size in pixels.
+fn sixel_draws(bytes: &[u8]) -> Vec<(u16, u16, u32, u32)> {
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    text.match_indices("\x1bP0;1;0q")
+        .map(|(index, start)| {
+            let before = &text[..index];
+            let position = &before[before.rfind("\x1b[").unwrap() + 2..];
+            let (row, column) = position.strip_suffix('H').unwrap().split_once(';').unwrap();
+            let raster = &text[index + start.len()..];
+            let raster = &raster[..raster.find('#').unwrap()];
+            let numbers: Vec<u32> = raster
+                .trim_start_matches('"')
+                .split(';')
+                .map(|n| n.parse().unwrap())
+                .collect();
+            (
+                column.parse::<u16>().unwrap() - 1,
+                row.parse::<u16>().unwrap() - 1,
+                numbers[2],
+                numbers[3],
+            )
+        })
+        .collect()
+}
+
+/// A 3 by 2 cell image at the top left of a 4 by 3 screen, drawn with sixel on 10 by 18 pixel
+/// cells so every crop is whole bands.
+fn sixel_scene() -> (Document, NodeId, HeadlessRuntime) {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(2));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(6, 4)).unwrap();
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 3);
+    runtime.set_terminal_info(with_cell_pixels(10, 18));
+    (doc, image, runtime)
+}
+
+fn text_over(doc: &Document, x: i32, y: i32, text: &str) -> NodeId {
+    let overlay = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x, y });
+    style.z_index(1);
+    doc.set_style(overlay, &style).unwrap();
+    let text = doc.create_text(text).unwrap();
+    doc.append_child(overlay, text).unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+    overlay
+}
+
+#[test]
+fn a_sixel_image_is_drawn_once_at_its_origin_and_not_again_while_unchanged() {
+    let (_doc, _image, mut runtime) = sixel_scene();
+    runtime.render_flushed().unwrap();
+    assert_eq!(sixel_draws(runtime.flush_output()), [(0, 0, 30, 36)]);
+
+    runtime.render_flushed().unwrap();
+    assert_eq!(sixel_draws(runtime.flush_output()), []);
+}
+
+#[test]
+fn covering_an_image_writes_only_the_cells_over_it() {
+    let (doc, _image, mut runtime) = sixel_scene();
+    runtime.render_flushed().unwrap();
+    text_over(&doc, 1, 0, "X");
+    runtime.render_flushed().unwrap();
+
+    let output = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+    assert_eq!(sixel_draws(runtime.flush_output()), []);
+    assert!(output.contains('X'), "{output:?}");
+}
+
+#[test]
+fn uncovering_an_image_redraws_it_then_what_still_covers_it() {
+    let (doc, _image, mut runtime) = sixel_scene();
+    let first = text_over(&doc, 1, 0, "X");
+    text_over(&doc, 2, 1, "Y");
+    runtime.render_flushed().unwrap();
+    doc.remove_child(doc.root(), first).unwrap();
+    runtime.render_flushed().unwrap();
+
+    let output = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+    assert_eq!(sixel_draws(runtime.flush_output()), [(0, 0, 30, 36)]);
+    let start = output.find("\x1bP0;1;0q").unwrap();
+    let image_end = start + output[start..].find("\x1b\\").unwrap();
+    assert!(output[image_end..].contains('Y'), "{output:?}");
+    assert!(!output.contains('X'), "{output:?}");
+}
+
+#[test]
+fn a_scrolled_image_draws_only_its_visible_part() {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.height(Length::Cells(2));
+    style.width(Length::Cells(3));
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let image = doc.create_image().unwrap();
+    let mut style = Style::new();
+    style.flex_shrink(0.0);
+    style.width(Length::Cells(1));
+    style.height(Length::Cells(4));
+    doc.set_style(image, &style).unwrap();
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(1, 4)).unwrap();
+    doc.append_child(container, image).unwrap();
+
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 3);
+    runtime.set_terminal_info(with_cell_pixels(10, 18));
+    runtime.render_flushed().unwrap();
+    doc.scroll_to(container, 0, 2).unwrap();
+    runtime.render_flushed().unwrap();
+
+    assert_eq!(sixel_draws(runtime.flush_output()), [(0, 0, 10, 36)]);
+}
+
+#[test]
+fn a_removed_image_is_erased_by_rewriting_its_cells() {
+    let (doc, image, mut runtime) = sixel_scene();
+    runtime.render_flushed().unwrap();
+    doc.remove_child(doc.root(), image).unwrap();
+    runtime.render_flushed().unwrap();
+
+    let output = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+    assert_eq!(sixel_draws(runtime.flush_output()), []);
+    assert!(output.contains("\x1b[1;1H"), "{output:?}");
+}
+
+#[test]
+fn an_image_over_another_is_drawn_again_after_the_one_beneath() {
+    let (doc, below, mut runtime) = sixel_scene();
+    let above = doc.create_image().unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x: 1, y: 1 });
+    style.z_index(1);
+    style.width(Length::Cells(2));
+    style.height(Length::Cells(1));
+    doc.set_style(above, &style).unwrap();
+    doc.set_image_fit(above, ImageFit::Fill).unwrap();
+    doc.set_image(above, solid_image(2, 2)).unwrap();
+    doc.append_child(doc.root(), above).unwrap();
+    runtime.render_flushed().unwrap();
+
+    doc.set_image(below, solid_image(6, 4)).unwrap();
+    runtime.render_flushed().unwrap();
+    assert_eq!(
+        sixel_draws(runtime.flush_output()),
+        [(0, 0, 30, 36), (1, 1, 20, 18)]
+    );
+}
+
+#[test]
+fn inside_tmux_iterm2_images_are_wrapped_and_sixel_is_not() {
+    for (protocol, wrapped) in [
+        (ImageProtocol::ITerm2, "\x1bPtmux;\x1b\x1b]1337;File="),
+        (ImageProtocol::Sixel, "\x1bP0;1;0q"),
+    ] {
+        let (doc, _image, mut runtime) = sixel_scene();
+        doc.set_image_protocol(protocol);
+        let mut info = with_cell_pixels(10, 18);
+        info.multiplexer = Some(Multiplexer {
+            kind: MultiplexerKind::Tmux,
+            version: None,
+            passthrough: true,
+        });
+        runtime.set_terminal_info(info);
+        runtime.render_flushed().unwrap();
+
+        let output = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+        assert!(output.contains(wrapped), "{protocol:?}: {output:?}");
+        assert_eq!(
+            output.contains("\x1bPtmux;"),
+            protocol == ImageProtocol::ITerm2
+        );
+    }
+}
+
 fn kitty_image(doc: &Document, columns: u16, rows: u16, data: Arc<ImageData>) -> NodeId {
     let image = image_at_start(doc, |style| {
         style.width(Length::Cells(columns));

@@ -147,6 +147,7 @@ pub(crate) fn paint(
                         );
                         placed.push(PlacedImage {
                             id,
+                            drawing,
                             image: data.clone(),
                             fitting,
                             cell: cell_pixels,

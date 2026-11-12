@@ -167,9 +167,10 @@ pub(crate) struct NumberedImage {
 
 /// An image a frame drew as marker cells, for the flush to draw over them with sixel or iTerm2.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) struct PlacedImage {
     pub id: u32,
+    /// Sixel or iTerm2, whichever the frame was painted for.
+    pub drawing: ImageDrawing,
     pub image: Arc<ImageData>,
     pub fitting: ImageFitting,
     /// One cell's size in pixels when it was drawn.
@@ -389,6 +390,23 @@ fn spans(start: u32, length: u32, target: u32) -> Vec<Vec<(u32, f64)>> {
                 .collect()
         })
         .collect()
+}
+
+/// Append `sequence`, wrapped for tmux passthrough when `tmux` is set: tmux forwards the body of
+/// `ESC P tmux; … ESC \` once every escape inside it is doubled.
+pub(crate) fn emit(out: &mut Vec<u8>, sequence: &[u8], tmux: bool) {
+    if !tmux {
+        out.extend_from_slice(sequence);
+        return;
+    }
+    out.extend_from_slice(b"\x1bPtmux;");
+    for &byte in sequence {
+        out.push(byte);
+        if byte == 0x1b {
+            out.push(byte);
+        }
+    }
+    out.extend_from_slice(b"\x1b\\");
 }
 
 pub(crate) fn compress(bytes: &[u8]) -> Option<Vec<u8>> {

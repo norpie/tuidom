@@ -2,7 +2,6 @@
 //!
 //! Sixel draws six pixel rows at a time, so every height here is a multiple of six: a band
 //! reaching past an image's last cell row would draw into the row below it.
-#![cfg_attr(not(test), expect(dead_code))]
 
 use std::fmt::Write;
 
@@ -59,6 +58,7 @@ impl SixelImage {
         }
     }
 
+    #[cfg(test)]
     pub fn height(&self) -> u32 {
         self.height
     }

@@ -2,7 +2,6 @@
 //!
 //! The terminal stretches the PNG it is sent over the cells it is given, so an image is sent at
 //! its own resolution where that is smaller than the cells' pixels, and is never enlarged here.
-#![cfg_attr(not(test), expect(dead_code))]
 
 use flate2::Crc;
 
