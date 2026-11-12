@@ -29,14 +29,18 @@
     - [x] Sized by pixels over the cell size; one style-set axis derives the other from the
           aspect ratio
     - [x] `ImageFit::Contain`, `Cover` and `Fill`
-    - [x] `set_image_protocol`: `Auto` picks kitty placeholders where detected, half-blocks
-          elsewhere
+    - [x] `set_image_protocol`: `Auto` picks kitty placeholders, iTerm2 outside a multiplexer,
+          sixel, then half-blocks, by what is detected
     - [x] Half-blocks: two pixels a cell, transparent halves show what is behind, cached per
           image and size
     - [x] Kitty Unicode placeholders: images as cells, uploaded fitted and compressed in the
           flush before them, deleted when no longer drawn and on exit, tmux passthrough
-    - [ ] Sixel
-    - [ ] iTerm2 inline images
+    - [x] Sixel and iTerm2 drawn over marker cells: redrawn only when uncovered or changed,
+          cropped to what is visible, the screen's last row as half-blocks
+    - [x] Sixel: 256-color median cut palette cached per image, transparency, heights in whole
+          bands, through tmux's own support
+    - [x] iTerm2 inline images: PNG at the image's own resolution, passthrough when forced in
+          tmux
 - [x] Typed style struct for known properties + raw custom style properties
 - [x] Attributes stored as `HashMap<String, String>`
 - [x] Public attributes API: set/get/remove

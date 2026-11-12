@@ -205,10 +205,12 @@ for.
 
 **How it is drawn** is one choice for the whole document, `doc.set_image_protocol(..)`:
 
-- `Auto`, the default, uses kitty placeholders where `TerminalInfo::graphics.placeholders` says
-  the terminal supports them, and half-blocks everywhere else, including before the probe has
-  answered and in headless runs that declare nothing.
-- `Kitty` always uses placeholders, for a terminal that supports them but is not detected.
+- `Auto`, the default, takes the first the terminal is detected to support: kitty placeholders
+  (`graphics.placeholders`), iTerm2 images (`graphics.iterm2`, and only outside a multiplexer),
+  sixel (`graphics.sixel`), then half-blocks, which are also used before the probe has answered
+  and in headless runs that declare nothing.
+- `Kitty`, `Sixel` and `ITerm2` always use that protocol, for a terminal that supports it but is
+  not detected.
 - `HalfBlock` always uses half-blocks.
 
 When the probe's answer changes what `Auto` resolves to, or changes the cell size, the next
@@ -258,8 +260,48 @@ only with `allow-passthrough` on. The placeholder cells are plain text and need 
 
 Not every terminal that speaks kitty graphics supports placeholders, and none says so when
 asked. WezTerm answers the kitty query without them, so `graphics.placeholders` is set only
-when the kitty query answered and the terminal is kitty or Ghostty. Sixel and iTerm2 images are
-not drawn yet.
+when the kitty query answered and the terminal is kitty or Ghostty.
+
+### Sixel and iTerm2
+
+Sixel and iTerm2 images are not cells: the terminal draws one at the cursor, over whatever
+cells it lands on. So the grid is told where they are. Each cell an image covers holds a
+marker, the image's id and the cell's column and row in it, over the background painted
+beneath. Clipping, scrolling and z-order decide which markers a frame keeps, exactly as they
+would for text, and a marker that appears, moves or changes is a changed cell to the diff. The
+id changes with the image, its fitted size, its crop and the cell size, as for kitty.
+
+The flush writes marker cells as blank background, then draws each image that needs it: the
+cursor moves to the top-left of the image's visible part, the bounding box of its markers, and
+only that part is sent. Drawing it covers everything in that rectangle, so the cells there that
+are not its markers, such as a menu over part of it, are written again after it. An image is
+drawn when the frame has a marker for it the last frame did not have, which happens when it
+first shows, changes, moves or is uncovered. Text drawn over part of an image replaces that
+part in the terminal, so covering one needs no redraw. An image whose rectangle covers another
+image's markers draws that image again after itself. Once an image is gone, its cells turn
+back into ordinary ones and writing them erases it.
+
+Some terminals scroll the whole screen when one of these images touches the last row, and
+DECSDM, the mode meant to stop that, means opposite things in different terminals and
+versions. So the part of an image on the screen's last row is drawn as half-blocks instead.
+
+**Sixel** sends pixels with a palette. The image is resampled to the pixels its cells cover and
+reduced to at most 256 colors by median cut, once per id; a redraw only encodes its crop. A
+sixel pixel is either drawn or not, so fully transparent pixels are left undrawn and partly
+transparent ones are blended with the node's background beforehand. Sixel draws six pixel rows
+at a time, and a band reaching past an image's last row would draw into the row below it, so
+heights are rounded down to a multiple of six: on cells whose height is not one, up to five
+pixel rows go missing at the bottom of the image or of its visible part.
+
+**iTerm2** sends a PNG with the number of cells to stretch it over, and the terminal scales it.
+The image is sent at its own resolution where that is smaller than its cells' pixels, and
+nothing is kept in the terminal between draws, so each redraw sends it again.
+
+Opacity is not applied to either. Inside tmux, sixel goes to tmux, which draws it itself when it
+was built to; its own device attributes reply says whether it was, and that is what sets
+`graphics.sixel` there. iTerm2 images go through passthrough when forced, but `Auto` never
+picks them inside a multiplexer: it does not know the image is there, so switching windows
+loses it without the app finding out.
 
 ## Culling
 
@@ -392,8 +434,8 @@ How far each field goes:
   no terminal answers a query for it.
 - `pixel_size` is re-read on every resize, and the event fires again when it changes.
 
-Images are the one thing that reads it: `graphics.placeholders` picks how they are drawn under
-`ImageProtocol::Auto`, and `pixel_size` sizes them. Nothing else changes how the engine draws.
+Images are the one thing that reads it: `graphics` and `multiplexer` pick how they are drawn
+under `ImageProtocol::Auto`, and `pixel_size` sizes them. Nothing else changes how the engine draws.
 Colors still go out as 24-bit RGB, and the background color math still uses the
 [declared terminal background](colors.md#terminal-background-is-an-assumption).
 

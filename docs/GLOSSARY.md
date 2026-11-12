@@ -236,7 +236,9 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Image Fit** — How an image fills its content box: `Contain`, `Cover`, or `Fill`. See [images](rendering.md#images).
 
-**Image Protocol** — How the document draws images: `Auto`, `Kitty`, or `HalfBlock`. `Auto` uses kitty placeholders where the terminal is detected to support them. See [images](rendering.md#images).
+**Image Protocol** — How the document draws images: `Auto`, `Kitty`, `Sixel`, `ITerm2`, or `HalfBlock`. `Auto` takes the first the terminal is detected to support, in that order, with iTerm2 left out inside a multiplexer. See [images](rendering.md#images).
+
+**Image Cell** — A grid cell a sixel or iTerm2 image covers, holding the image's id and the cell's column and row in it over the background beneath. Lets the diff, clipping and overlays see an image the terminal draws over cells. See [sixel and iTerm2](rendering.md#sixel-and-iterm2).
 
 **Unicode Placeholder** — A cell holding `U+10EEEE` and two marks numbering its row and column, colored with a kitty image id, which kitty draws as that part of the image. Makes an image ordinary cells. See [kitty placeholders](rendering.md#kitty-placeholders).
 

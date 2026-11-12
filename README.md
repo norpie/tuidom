@@ -107,7 +107,8 @@ different framework could be built the same way.
 **Core Primitives:**
 - Box, Text, Input, and Frames node types
 - Canvas nodes showing cells the app draws, for charts and custom graphics
-- Image nodes, drawn with kitty Unicode placeholders or half-block cells
+- Image nodes, drawn with kitty Unicode placeholders, sixel, iTerm2 inline images or half-block
+  cells
 - Arena-based DOM with `NodeId` handles
 - Permanent document root node as the layout and rendering entry point
 - Async-first with Tokio runtime
