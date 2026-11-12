@@ -438,7 +438,8 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
     - [x] One `Terminal` per process, enforced — a second `run()` is refused, not left
           to corrupt the screen
 - [x] Input queue policy: unbounded, coalesced rather than backpressured
-  - [x] Adjacent pointer-move and resize runs collapse to the latest
+  - [x] Adjacent pointer-move runs collapse to the latest, and resizes and terminal info
+        each collapse across a run of the two
   - [x] Keys, presses, releases, and wheel ticks are never dropped or reordered
   - [x] Coalescing engages only when the event task is already behind — nothing is
         ever delayed to build a batch

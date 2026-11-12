@@ -158,8 +158,8 @@ doc.on_size_change(canvas, move |event| {
 })?;
 ```
 
-The event arrives after the frame that changed the size, so that frame still shows the old
-buffer, cropped or with space left over, and the redraw shows in the next one. Because the
+The frame that changes the size waits for that handler before it paints, so the new buffer
+shows in the same frame, never the old one cropped or with space left over. Because the
 buffer is no minimum, a canvas drawn for a larger box can still shrink and be told so.
 
 ## Culling

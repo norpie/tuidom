@@ -166,7 +166,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Window Focus** — Whether the *terminal window* holds OS focus, not DOM focus. Never moves the focused node. See [window focus](events.md#window-focus).
 
-**Input Coalescing** — Collapsing adjacent runs of pointer movement and resize in an already-queued batch; the queue's only bound, since it applies no backpressure. See [input coalescing](events.md#input-coalescing).
+**Input Coalescing** — Collapsing runs of pointer movement, resize and terminal info in an already-queued batch, never across other input; the queue's only bound, since it applies no backpressure. See [input coalescing](events.md#input-coalescing).
 
 **Panic Restore** — The process-wide panic hook that restores terminal modes before a crash reaches the user, chaining to the previously installed hook. Never used for caught callback panics. See [panics and terminal restore](events.md#panics-and-terminal-restore).
 

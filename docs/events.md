@@ -197,9 +197,16 @@ It also fires once on the first layout after a listener is added, so the listene
 starting size without asking. That first report goes to every listener on the node, so adding
 one repeats the current size to the others. A node out of layout, hidden or not yet attached,
 reports zero by zero. A move alone fires nothing, since scrolling would otherwise fire it on
-every wheel tick. It does not bubble. Layout happens while a frame is drawn, so the event
-arrives after that frame; whatever a listener changes in response shows in the next one. A
-[canvas](rendering.md#canvas) uses it to draw at the size it is given.
+every wheel tick. It does not bubble. A [canvas](rendering.md#canvas) uses it to draw at the
+size it is given.
+
+Unlike the other events here, it arrives before the frame that caused it is drawn. Layout
+runs on the render task, which never runs user code, so the frame releases the gate, waits for
+the event task to run the listeners, and lays out again before painting. A canvas that redraws
+for its new size is drawn at that size in the same frame, with no frame showing the old
+drawing cropped. Two limits keep a listener from holding up the screen: the frame repeats this
+at most four times, so a listener that keeps resizing its own node is cut off, and it waits
+only 50 ms for the listeners to finish. Changes past either limit show a frame later.
 
 **`on_focus` / `on_blur`** — focus moved. These carry a `relation`, distinguishing "I am the
 node that gained focus" from "a descendant of mine did":
@@ -450,18 +457,21 @@ the runtime queue, so the handler runs on the event task, ordered with input. Se
 The event queue is unbounded and never applies backpressure. There is nobody to push back
 on — a terminal will not stop sending — and dropping input would lose keystrokes silently.
 
-Instead, when the event task is *already behind*, adjacent runs of redundant events in the
-queued batch collapse to the latest. Only two kinds collapse:
+Instead, when the event task is *already behind*, runs of redundant events in the queued
+batch collapse to the latest. Only three kinds collapse:
 
-- pointer movement
-- resize
+- pointer movement, with the move right after it
+- resize and terminal info, each with a later one of its kind across any run of the two. A
+  resize queues a pixel-size update right behind it, so during a dragged resize the two
+  alternate, and merging only neighbors would collapse nothing.
 
 Everything else — keys, presses, releases, wheel ticks — carries information its successor
 does not, and is never dropped or reordered.
 
-Two properties are worth being precise about. **Adjacency is what makes this safe**:
-hover-to-focus means the pointer's position decides which node a key press targets, so
-merging movement *across* a key would deliver that key to the wrong node. And **nothing is
+Two properties are worth being precise about. **Adjacency to input is what makes this
+safe**: hover-to-focus means the pointer's position decides which node a key press targets,
+so merging movement *across* a key would deliver that key to the wrong node, and a key ends a
+run of resizes the same way. And **nothing is
 ever delayed to build a batch** — a batch of one is returned unchanged, and collapsing
 happens only when work had already piled up.
 

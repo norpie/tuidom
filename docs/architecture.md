@@ -134,7 +134,10 @@ A frame, once the render task wakes:
 
 1. **Wait for a slot** if `set_max_fps` capped the rate. Uncapped by default.
 2. **Take the frame gate**, waiting for the event task to finish the event it is on.
-3. **Layout** — `compute_layout` runs taffy and publishes a new snapshot.
+3. **Layout** — `compute_layout` runs taffy and publishes a new snapshot. If a node with an
+   `on_size_change` listener changed size, the gate is released, the event task runs those
+   listeners, and layout runs again, a few rounds at most, so what they change is in this
+   frame.
 4. **Paint** — walk the tree in paint order into a fresh `Grid` of cells, applying scroll
    offsets as translations, clipping to scrollports, culling anything outside its clip.
    The gate is released here.
