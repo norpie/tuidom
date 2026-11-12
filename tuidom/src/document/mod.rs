@@ -42,9 +42,11 @@ pub(crate) mod selection;
 mod snapshot;
 mod style;
 mod tree;
+pub(crate) mod window;
 
 pub use selection::SelectionPoint;
 pub use snapshot::{DocumentSnapshot, NodeSnapshot};
+use window::WindowFocus;
 
 #[cfg(test)]
 mod tests;
@@ -153,6 +155,7 @@ impl Document {
                 targeted_listeners: Mutex::new(HashMap::new()),
                 resize_listeners: Mutex::new(Vec::new()),
                 post_frame_listeners: Mutex::new(Vec::new()),
+                window_focus: Mutex::new(WindowFocus::default()),
                 window_focus_listeners: Mutex::new(Vec::new()),
                 terminal_info_listeners: Mutex::new(Vec::new()),
                 window_blur_listeners: Mutex::new(Vec::new()),

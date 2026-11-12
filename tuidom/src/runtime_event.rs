@@ -360,9 +360,11 @@ pub(crate) fn process_runtime_event(
         // focused node and the focus stack alone: alt-tabbing away and back must
         // return the user to the node they left, not to nothing.
         RuntimeEvent::WindowFocus => {
+            doc.set_window_focused(true);
             doc.dispatch_window_focus();
         }
         RuntimeEvent::WindowBlur => {
+            doc.set_window_focused(false);
             doc.dispatch_window_blur();
         }
         RuntimeEvent::TerminalInfo(info) => {

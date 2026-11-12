@@ -10,6 +10,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::animation::driver::AnimationDriver;
 use crate::document::selection::SelectionState;
+use crate::document::window::WindowFocus;
 use crate::event::{FocusKeys, Listener, ScrollKeys, TargetedEventKind};
 use crate::id::{NodeId, NodeMap, NodeSet};
 use crate::image::{HalfBlockImage, ImageProtocol, NumberedImage};
@@ -318,6 +319,9 @@ pub(crate) struct DocumentInner {
 
     /// Document-level post-frame listeners.
     pub post_frame_listeners: Mutex<Vec<Listener>>,
+
+    /// Whether the terminal window holds OS focus, and the cursor blink it started.
+    pub window_focus: Mutex<WindowFocus>,
 
     /// Document-level terminal window focus listeners.
     pub window_focus_listeners: Mutex<Vec<Listener>>,

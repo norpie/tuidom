@@ -310,6 +310,7 @@ impl Document {
         };
 
         if handled {
+            self.end_cursor_blink();
             self.update_input_scroll(node)?;
             if value.is_some() {
                 self.register_layout_node(node)?;

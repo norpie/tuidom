@@ -8565,6 +8565,84 @@ fn window_focus_changes_leave_dom_focus_untouched() {
     );
 }
 
+#[test]
+fn window_focus_is_stored_before_its_listeners_run() {
+    let doc = Document::new().unwrap();
+    assert!(doc.window_focused(), "assumed focused until told otherwise");
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (on_focus, on_blur) = (seen.clone(), seen.clone());
+    let (focus_doc, blur_doc) = (doc.clone(), doc.clone());
+    doc.on_window_focus(move |_| on_focus.lock().unwrap().push(focus_doc.window_focused()));
+    doc.on_window_blur(move |_| on_blur.lock().unwrap().push(blur_doc.window_focused()));
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.simulate_window_blur();
+    assert!(!doc.window_focused());
+    runtime.simulate_window_focus();
+    assert!(doc.window_focused());
+    assert_eq!(&*seen.lock().unwrap(), &[false, true]);
+}
+
+#[test]
+fn regaining_window_focus_blinks_the_cursor_for_three_seconds() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    assert_eq!(doc.cursor_blink(doc.now()), None, "no blink on startup");
+
+    runtime.simulate_window_blur();
+    assert_eq!(doc.cursor_blink(doc.now()), None);
+    runtime.simulate_window_focus();
+    let start = doc.now();
+    let at = |ms: u64| start + Duration::from_millis(ms);
+
+    let blink = |doc: &Document| doc.cursor_blink(doc.now()).map(|b| (b.on, b.next));
+    assert_eq!(blink(&doc), Some((true, at(500))));
+    runtime.advance_time(Duration::from_millis(499));
+    assert_eq!(blink(&doc), Some((true, at(500))));
+    runtime.advance_time(Duration::from_millis(1));
+    assert_eq!(blink(&doc), Some((false, at(1000))));
+    runtime.advance_time(Duration::from_millis(500));
+    assert_eq!(blink(&doc), Some((true, at(1500))));
+    runtime.advance_time(Duration::from_millis(1500));
+    assert_eq!(blink(&doc), Some((false, at(3000))), "the last off phase");
+    runtime.advance_time(Duration::from_millis(500));
+    assert_eq!(blink(&doc), None, "over, and the cursor stays shown");
+}
+
+#[test]
+fn losing_window_focus_ends_the_blink() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.simulate_window_focus();
+    runtime.advance_time(Duration::from_millis(700));
+    runtime.simulate_window_blur();
+    assert_eq!(doc.cursor_blink(doc.now()), None);
+
+    runtime.simulate_window_focus();
+    let blink = doc.cursor_blink(doc.now()).unwrap();
+    assert!(blink.on, "a new focus starts a new blink");
+    assert_eq!(blink.next, doc.now() + Duration::from_millis(500));
+}
+
+#[test]
+fn a_key_the_focused_input_takes_ends_the_blink() {
+    let doc = Document::new().unwrap();
+    let input = doc.create_input("abc").unwrap();
+    doc.append_child(doc.root(), input).unwrap();
+    doc.focus(input).unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
+    runtime.simulate_window_focus();
+
+    runtime.simulate_key(KeyCode::Up);
+    assert!(
+        doc.cursor_blink(doc.now()).is_some(),
+        "a single-line input declines up, so the blink goes on"
+    );
+    runtime.simulate_key(KeyCode::Char('d'));
+    assert_eq!(doc.cursor_blink(doc.now()), None);
+}
+
 fn kitty_terminal() -> TerminalInfo {
     TerminalInfo {
         name: Some("kitty".to_string()),
