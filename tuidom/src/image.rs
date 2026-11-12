@@ -1,7 +1,10 @@
 //! Decoded pixels for an image node to show.
 
 use std::fmt;
+use std::sync::Arc;
 
+use crate::canvas::{CanvasBuffer, CanvasStyle};
+use crate::style::ResolvedColor;
 use crate::{Result, TuidomError};
 
 /// How images are drawn, set for the whole document with
@@ -61,7 +64,6 @@ pub(crate) struct ImageFitting {
 
 /// Place an image of `image` pixels in a content box of `content` cells, each `cell` pixels.
 /// `None` when either is empty, since nothing is drawn.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn fit_image(
     image: (u32, u32),
     cell: (u16, u16),
@@ -135,6 +137,46 @@ fn pixels(value: f64, limit: u32) -> u32 {
     (value.round() as u32).clamp(1, limit)
 }
 
+/// An image node's half-block cells and what they were made from.
+#[derive(Debug)]
+pub(crate) struct HalfBlockImage {
+    image: Arc<ImageData>,
+    size: (u16, u16),
+    source: (u32, u32, u32, u32),
+    cells: Arc<CanvasBuffer>,
+}
+
+impl HalfBlockImage {
+    /// The cells for `image` at `fitting`, reusing `cached` when it was made from the same
+    /// image at the same size and crop.
+    pub(crate) fn for_fitting(
+        cached: Option<&Self>,
+        image: &Arc<ImageData>,
+        fitting: ImageFitting,
+    ) -> Self {
+        let cells = match cached {
+            Some(cached)
+                if Arc::ptr_eq(&cached.image, image)
+                    && cached.size == (fitting.width, fitting.height)
+                    && cached.source == fitting.source =>
+            {
+                cached.cells.clone()
+            }
+            _ => Arc::new(image.half_blocks(&fitting)),
+        };
+        Self {
+            image: image.clone(),
+            size: (fitting.width, fitting.height),
+            source: fitting.source,
+            cells,
+        }
+    }
+
+    pub(crate) fn cells(&self) -> &Arc<CanvasBuffer> {
+        &self.cells
+    }
+}
+
 /// An image as RGBA pixels, eight bits per channel, rows top to bottom.
 ///
 /// A zero-sized image is allowed and shows nothing.
@@ -197,17 +239,26 @@ impl ImageData {
         self.height
     }
 
-    /// The image scaled to `width` by `height`, each pixel the average of the source area it
-    /// covers. Color is averaged weighted by alpha, so transparent pixels do not tint their
-    /// neighbors.
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub(crate) fn resample(&self, width: u32, height: u32) -> Vec<[u8; 4]> {
+    /// The `source` region (x, y, width, height) scaled to `width` by `height`, each pixel the
+    /// average of the area it covers. Color is averaged weighted by alpha, so transparent
+    /// pixels do not tint their neighbors.
+    pub(crate) fn resample(
+        &self,
+        source: (u32, u32, u32, u32),
+        width: u32,
+        height: u32,
+    ) -> Vec<[u8; 4]> {
         let mut out = vec![[0; 4]; width as usize * height as usize];
-        if self.width == 0 || self.height == 0 {
+        let (left, top, source_width, source_height) = source;
+        if source_width == 0
+            || source_height == 0
+            || left.saturating_add(source_width) > self.width
+            || top.saturating_add(source_height) > self.height
+        {
             return out;
         }
-        let x_spans = spans(self.width, width);
-        let y_spans = spans(self.height, height);
+        let x_spans = spans(left, source_width, width);
+        let y_spans = spans(top, source_height, height);
         for (ty, y_span) in y_spans.iter().enumerate() {
             for (tx, x_span) in x_spans.iter().enumerate() {
                 let mut sum = [0.0f64; 4];
@@ -237,6 +288,39 @@ impl ImageData {
         out
     }
 
+    /// The fitted image as half-block cells, two pixels to a cell: `▀` with the top pixel as
+    /// glyph color and the bottom as background. A transparent half leaves the background
+    /// unset, so what is behind shows there.
+    pub(crate) fn half_blocks(&self, fitting: &ImageFitting) -> CanvasBuffer {
+        let (columns, rows) = (fitting.width, fitting.height);
+        let width = u32::from(columns);
+        let pixels = self.resample(fitting.source, width, u32::from(rows) * 2);
+        let mut buffer = CanvasBuffer::new(columns, rows);
+        for row in 0..rows {
+            for column in 0..columns {
+                let at = |half: u16| {
+                    let index = (usize::from(row) * 2 + usize::from(half)) * width as usize
+                        + usize::from(column);
+                    pixels.get(index).copied().unwrap_or_default()
+                };
+                let (top, bottom) = (at(0), at(1));
+                let (symbol, fg, bg) = match (top[3], bottom[3]) {
+                    (0, 0) => continue,
+                    (0, _) => ("▄", bottom, None),
+                    (_, 0) => ("▀", top, None),
+                    _ => ("▀", top, Some(bottom)),
+                };
+                let style = CanvasStyle {
+                    fg: Some(pixel_color(fg)),
+                    bg: bg.map(pixel_color),
+                    ..CanvasStyle::default()
+                };
+                buffer.set(column, row, symbol, style);
+            }
+        }
+        buffer
+    }
+
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let start = (y as usize * self.width as usize + x as usize) * 4;
         match self.rgba.get(start..start + 4) {
@@ -246,24 +330,28 @@ impl ImageData {
     }
 }
 
-/// For each of `target` cells along an axis of `source` pixels, the source pixels it covers
-/// and how much of each, in source pixels.
-fn spans(source: u32, target: u32) -> Vec<Vec<(u32, f64)>> {
-    let scale = f64::from(source) / f64::from(target);
+/// For each of `target` pixels along an axis, the `length` source pixels from `start` it
+/// covers and how much of each, in source pixels.
+fn spans(start: u32, length: u32, target: u32) -> Vec<Vec<(u32, f64)>> {
+    let scale = f64::from(length) / f64::from(target);
     (0..target)
         .map(|t| {
-            let start = f64::from(t) * scale;
-            let end = f64::from(t + 1) * scale;
-            let first = start.floor() as u32;
-            let last = (end.ceil() as u32).min(source);
+            let from = f64::from(t) * scale;
+            let to = f64::from(t + 1) * scale;
+            let first = from.floor() as u32;
+            let last = (to.ceil() as u32).min(length);
             (first..last)
                 .filter_map(|s| {
-                    let covered = end.min(f64::from(s + 1)) - start.max(f64::from(s));
-                    (covered > 0.0).then_some((s, covered))
+                    let covered = to.min(f64::from(s + 1)) - from.max(f64::from(s));
+                    (covered > 0.0).then_some((start + s, covered))
                 })
                 .collect()
         })
         .collect()
+}
+
+fn pixel_color([r, g, b, a]: [u8; 4]) -> ResolvedColor {
+    ResolvedColor::from_srgba(r, g, b, a)
 }
 
 fn channel(value: f64) -> u8 {
@@ -349,7 +437,7 @@ mod tests {
             [7, 8, 9, 0],
             [200, 0, 100, 255],
         ];
-        let resampled = image(2, 2, &pixels).resample(2, 2);
+        let resampled = image(2, 2, &pixels).resample((0, 0, 2, 2), 2, 2);
         assert_eq!(resampled[..2], pixels[..2]);
         assert_eq!(resampled[2], [0; 4]);
         assert_eq!(resampled[3], pixels[3]);
@@ -367,23 +455,32 @@ mod tests {
                 [0, 0, 40, 255],
             ],
         );
-        assert_eq!(source.resample(1, 1), [[25, 50, 10, 255]]);
+        assert_eq!(source.resample((0, 0, 2, 2), 1, 1), [[25, 50, 10, 255]]);
 
         let row = image(3, 1, &[[0, 0, 0, 255], [90, 0, 0, 255], [180, 0, 0, 255]]);
-        assert_eq!(row.resample(2, 1), [[30, 0, 0, 255], [150, 0, 0, 255]]);
+        assert_eq!(
+            row.resample((0, 0, 3, 1), 2, 1),
+            [[30, 0, 0, 255], [150, 0, 0, 255]]
+        );
     }
 
     #[test]
     fn transparent_pixels_do_not_tint_the_average() {
         let source = image(2, 1, &[[255, 0, 0, 255], [0, 0, 255, 0]]);
-        assert_eq!(source.resample(1, 1), [[255, 0, 0, 128]]);
+        assert_eq!(source.resample((0, 0, 2, 1), 1, 1), [[255, 0, 0, 128]]);
+    }
+
+    #[test]
+    fn resampling_reads_only_the_source_region() {
+        let source = image(3, 1, &[[200, 0, 0, 255], [0, 100, 0, 255], [0, 0, 50, 255]]);
+        assert_eq!(source.resample((1, 0, 2, 1), 1, 1), [[0, 50, 25, 255]]);
     }
 
     #[test]
     fn upscaling_repeats_pixels() {
         let source = image(2, 1, &[[10, 20, 30, 255], [40, 50, 60, 255]]);
         assert_eq!(
-            source.resample(4, 2),
+            source.resample((0, 0, 2, 1), 4, 2),
             [
                 [10, 20, 30, 255],
                 [10, 20, 30, 255],
@@ -397,7 +494,9 @@ mod tests {
     #[test]
     fn an_empty_image_resamples_to_transparent() {
         let empty = ImageData::from_rgba(0, 0, Vec::new()).unwrap();
-        assert_eq!(empty.resample(2, 1), [[0; 4]; 2]);
+        assert_eq!(empty.resample((0, 0, 0, 0), 2, 1), [[0; 4]; 2]);
+        let outside = image(1, 1, &[[9, 9, 9, 255]]);
+        assert_eq!(outside.resample((0, 0, 2, 1), 1, 1), [[0; 4]]);
     }
 
     #[cfg(feature = "decode")]

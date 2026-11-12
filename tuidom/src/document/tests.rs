@@ -336,6 +336,221 @@ fn an_image_can_shrink_or_stretch_without_changing_its_other_axis() {
     );
 }
 
+fn pixels(width: u32, height: u32, pixels: &[[u8; 4]]) -> Arc<ImageData> {
+    Arc::new(ImageData::from_rgba(width, height, pixels.concat()).unwrap())
+}
+
+const RED: [u8; 4] = [255, 0, 0, 255];
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+const WHITE: [u8; 4] = [255, 255, 255, 255];
+const CLEAR: [u8; 4] = [0, 0, 0, 0];
+
+fn screen([r, g, b, _]: [u8; 4]) -> Option<ScreenColor> {
+    Some(ScreenColor::from_rgb(r, g, b))
+}
+
+/// A headless runtime drawing images with half-blocks.
+fn half_block_runtime(doc: &Document, width: u16, height: u16) -> HeadlessRuntime {
+    doc.set_image_protocol(ImageProtocol::HalfBlock);
+    HeadlessRuntime::new(doc.clone(), width, height)
+}
+
+fn glyph_and_colors(
+    runtime: &HeadlessRuntime,
+    x: i32,
+    y: i32,
+) -> (String, Option<ScreenColor>, Option<ScreenColor>) {
+    let cell = runtime.get_cell(x, y).unwrap();
+    (cell.text, cell.fg, cell.bg)
+}
+
+#[test]
+fn a_half_block_image_draws_two_pixels_to_a_cell() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(2));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, pixels(2, 2, &[RED, GREEN, BLUE, WHITE]))
+        .unwrap();
+    let mut runtime = half_block_runtime(&doc, 3, 1);
+    runtime.render().unwrap();
+
+    assert_eq!(
+        glyph_and_colors(&runtime, 0, 0),
+        ("▀".into(), screen(RED), screen(BLUE))
+    );
+    assert_eq!(
+        glyph_and_colors(&runtime, 1, 0),
+        ("▀".into(), screen(GREEN), screen(WHITE))
+    );
+}
+
+#[test]
+fn a_contained_image_leaves_the_node_background_around_it() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(1));
+        style.background(Color::black());
+    });
+    doc.set_image(image, pixels(2, 2, &[RED, GREEN, BLUE, WHITE]))
+        .unwrap();
+    let mut runtime = half_block_runtime(&doc, 4, 1);
+    runtime.render().unwrap();
+
+    assert_eq!(row_text(&runtime, 0, 4), " ▀▀ ");
+    assert_eq!(
+        glyph_and_colors(&runtime, 1, 0),
+        ("▀".into(), screen(RED), screen(BLUE))
+    );
+    for x in [0, 3] {
+        assert_eq!(runtime.get_cell(x, 0).unwrap().bg, screen([0, 0, 0, 255]));
+    }
+}
+
+#[test]
+fn a_transparent_half_shows_what_is_behind_it() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.background(Color::black());
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.update_style(image, |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(1));
+    })
+    .unwrap();
+    doc.set_image(image, pixels(3, 2, &[CLEAR, RED, CLEAR, RED, CLEAR, CLEAR]))
+        .unwrap();
+    let mut runtime = half_block_runtime(&doc, 3, 1);
+    runtime.render().unwrap();
+
+    let black = screen([0, 0, 0, 255]);
+    assert_eq!(
+        glyph_and_colors(&runtime, 0, 0),
+        ("▄".into(), screen(RED), black)
+    );
+    assert_eq!(
+        glyph_and_colors(&runtime, 1, 0),
+        ("▀".into(), screen(RED), black)
+    );
+    assert_eq!(glyph_and_colors(&runtime, 2, 0).0, " ");
+}
+
+#[test]
+fn a_covering_image_shows_its_centered_crop() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(1));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image_fit(image, ImageFit::Cover).unwrap();
+    doc.set_image(image, pixels(1, 4, &[RED, GREEN, BLUE, WHITE]))
+        .unwrap();
+    let mut runtime = half_block_runtime(&doc, 1, 1);
+    runtime.render().unwrap();
+
+    assert_eq!(
+        glyph_and_colors(&runtime, 0, 0),
+        ("▀".into(), screen(GREEN), screen(BLUE))
+    );
+}
+
+#[test]
+fn a_scrolled_image_shows_only_what_the_viewport_does() {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.height(Length::Cells(1));
+    style.width(Length::Cells(3));
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let image = doc.create_image().unwrap();
+    let mut style = Style::new();
+    style.flex_shrink(0.0);
+    style.width(Length::Cells(1));
+    style.height(Length::Cells(2));
+    doc.set_style(image, &style).unwrap();
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, pixels(1, 4, &[RED, GREEN, BLUE, WHITE]))
+        .unwrap();
+    doc.append_child(container, image).unwrap();
+
+    let mut runtime = half_block_runtime(&doc, 3, 2);
+    runtime.render().unwrap();
+    doc.scroll_to(container, 0, 1).unwrap();
+    runtime.render().unwrap();
+
+    assert_eq!(
+        glyph_and_colors(&runtime, 0, 0),
+        ("▀".into(), screen(BLUE), screen(WHITE))
+    );
+    assert_eq!(glyph_and_colors(&runtime, 0, 1).0, " ");
+}
+
+#[test]
+fn a_sibling_with_a_higher_z_index_draws_over_an_image() {
+    let doc = Document::new().unwrap();
+    let overlay = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x: 1, y: 0 });
+    style.z_index(1);
+    doc.set_style(overlay, &style).unwrap();
+    let text = doc.create_text("X").unwrap();
+    doc.append_child(overlay, text).unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, pixels(3, 2, &[RED, RED, RED, BLUE, BLUE, BLUE]))
+        .unwrap();
+    let mut runtime = half_block_runtime(&doc, 3, 1);
+    runtime.render().unwrap();
+    assert_eq!(row_text(&runtime, 0, 3), "▀X▀");
+}
+
+#[test]
+fn half_block_cells_are_reused_until_the_image_or_its_size_changes() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(2));
+    });
+    doc.set_image(image, pixels(2, 2, &[RED, GREEN, BLUE, WHITE]))
+        .unwrap();
+    let mut runtime = half_block_runtime(&doc, 4, 2);
+    let cells = |doc: &Document| {
+        lock::mutex(&doc.inner.half_block_images)
+            .get(&image)
+            .map(|entry| entry.cells().clone())
+            .unwrap()
+    };
+
+    runtime.render().unwrap();
+    let first = cells(&doc);
+    doc.update_style(image, |style| style.background(Color::black()))
+        .unwrap();
+    runtime.render().unwrap();
+    assert!(Arc::ptr_eq(&first, &cells(&doc)));
+
+    doc.update_style(image, |style| style.width(Length::Cells(4)))
+        .unwrap();
+    runtime.render().unwrap();
+    assert!(!Arc::ptr_eq(&first, &cells(&doc)));
+
+    doc.remove_child(doc.root(), image).unwrap();
+    runtime.render().unwrap();
+    assert!(lock::mutex(&doc.inner.half_block_images).is_empty());
+}
+
 /// A canvas filling the screen that redraws itself full of `#` at every size it reports.
 fn self_sizing_canvas() -> Document {
     let doc = Document::new().unwrap();

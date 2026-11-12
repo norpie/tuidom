@@ -12,7 +12,7 @@ use crate::animation::driver::AnimationDriver;
 use crate::document::selection::SelectionState;
 use crate::event::{FocusKeys, Listener, ScrollKeys, TargetedEventKind};
 use crate::id::{NodeId, NodeMap, NodeSet};
-use crate::image::ImageProtocol;
+use crate::image::{HalfBlockImage, ImageProtocol};
 use crate::layout::LayoutEngine;
 use crate::node::{NodeData, NodeLayout, ScrollOffset};
 use crate::performance::{PerformanceState, StyleCounters};
@@ -277,6 +277,10 @@ pub(crate) struct DocumentInner {
     /// The content size last reported for each node with a size-change listener, as width
     /// and height. `None` until its first report.
     pub reported_sizes: Mutex<NodeMap<Option<(u16, u16)>>>,
+
+    /// Each image node's last half-block cells, kept while its image and fitted size hold so
+    /// an unchanged image is not resampled every frame. Only paint touches it.
+    pub half_block_images: Mutex<NodeMap<HalfBlockImage>>,
 
     /// Current scroll offset per scroll container. Absent means `(0, 0)`.
     pub scroll_offsets: Mutex<NodeMap<ScrollOffset>>,

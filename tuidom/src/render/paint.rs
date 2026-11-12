@@ -1,6 +1,7 @@
 //! Tree → grid painting using z-index sorted sibling subtrees.
 
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -10,6 +11,7 @@ use crate::canvas::CanvasBuffer;
 use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
 use crate::id::{NodeId, NodeMap};
+use crate::image::{ImageDrawing, ImageFitting};
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
 };
@@ -87,6 +89,12 @@ pub(crate) fn paint(
     };
     let grid_time = grid_start.elapsed();
 
+    let half_blocks = doc.image_drawing() == ImageDrawing::HalfBlock;
+    if !half_blocks {
+        doc.clear_half_block_images();
+    }
+    let cell_pixels = doc.cell_pixels();
+
     let paint_start = Instant::now();
     let mut cursor = None;
     for entry in &entries {
@@ -95,11 +103,25 @@ pub(crate) fn paint(
             paint_scrollbar(grid, entry, bar, rgb_cache, &mut profile);
             continue;
         }
+        let image = match &entry.kind {
+            NodeKindView::Image { data, fit } if half_blocks => {
+                let content = entry.layout.content_rect(&entry.resolved);
+                doc.half_block_image(
+                    entry.id,
+                    data,
+                    *fit,
+                    (content.width, content.height),
+                    cell_pixels,
+                )
+            }
+            _ => None,
+        };
         if let Some(entry_cursor) = paint_entry(
             grid,
             entry,
             focused,
             selection.get(&entry.id),
+            image.as_ref(),
             rgb_cache,
             &mut profile,
             clear_result.skipped_background,
@@ -128,6 +150,7 @@ fn paint_entry(
     node: &PaintEntry,
     focused: Option<crate::id::NodeId>,
     selected: Option<&Range<usize>>,
+    image: Option<&(ImageFitting, Arc<CanvasBuffer>)>,
     rgb_cache: &mut RgbCache,
     profile: &mut PaintProfile,
     skipped_background: Option<NodeId>,
@@ -153,10 +176,27 @@ fn paint_entry(
     paint_half_block_edges(grid, node, alpha, rgb_cache, profile);
 
     let cursor = match &node.kind {
-        NodeKindView::Box | NodeKindView::Image { .. } => None,
+        NodeKindView::Box => None,
 
         NodeKindView::Canvas { buffer } => {
-            paint_canvas(grid, node, buffer, fg_rgb, alpha, rgb_cache, profile);
+            paint_cells(
+                grid,
+                node,
+                buffer,
+                (0, 0),
+                fg_rgb,
+                alpha,
+                rgb_cache,
+                profile,
+            );
+            None
+        }
+
+        NodeKindView::Image { .. } => {
+            if let Some((fitting, cells)) = image {
+                let offset = (fitting.x, fitting.y);
+                paint_cells(grid, node, cells, offset, fg_rgb, alpha, rgb_cache, profile);
+            }
             None
         }
 
@@ -346,19 +386,25 @@ fn paint_text(
 ///
 /// Only the window both the crop and the clip leave writable is walked, so a large buffer in a
 /// small box costs only what shows.
-fn paint_canvas(
+/// Draw a cell buffer from `offset` cells into the node's content box, cropped to it. Canvases
+/// and half-block images both paint through here.
+#[allow(clippy::too_many_arguments)]
+fn paint_cells(
     grid: &mut Grid,
     node: &PaintEntry,
     buffer: &CanvasBuffer,
+    offset: (u16, u16),
     fg_rgb: Rgb,
     alpha: f64,
     rgb_cache: &mut RgbCache,
     profile: &mut PaintProfile,
 ) {
     let content = node.layout.content_rect(&node.resolved);
-    let width = content.width.min(buffer.width());
-    let height = content.height.min(buffer.height());
-    let (x, y) = (i64::from(content.x), i64::from(content.y));
+    let width = content.width.saturating_sub(offset.0).min(buffer.width());
+    let height = content.height.saturating_sub(offset.1).min(buffer.height());
+    let origin_x = content.x.saturating_add(i32::from(offset.0));
+    let origin_y = content.y.saturating_add(i32::from(offset.1));
+    let (x, y) = (i64::from(origin_x), i64::from(origin_y));
     grid.set_clip(
         node.clip
             .bound_x(x, x + i64::from(width))
@@ -367,7 +413,7 @@ fn paint_canvas(
 
     let write_start = profile.enabled.then(Instant::now);
     let mut glyphs = 0;
-    if let Some((left, top, right, bottom)) = grid.clip_rect(content.x, content.y, width, height) {
+    if let Some((left, top, right, bottom)) = grid.clip_rect(origin_x, origin_y, width, height) {
         let node_attrs = cell_attrs(node);
         for row in top..bottom {
             let buffer_y = (row as i64 - y) as u16;
@@ -614,7 +660,8 @@ fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
     }
 
     match &entry.kind {
-        NodeKindView::Box | NodeKindView::Image { .. } => true,
+        NodeKindView::Box => true,
+        NodeKindView::Image { data, .. } => data.width() == 0 || data.height() == 0,
         NodeKindView::Canvas { buffer } => buffer.width() == 0 || buffer.height() == 0,
         NodeKindView::Text { content } => content.is_empty(),
         NodeKindView::Input { .. } => false,

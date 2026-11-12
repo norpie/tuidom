@@ -279,6 +279,7 @@ impl Document {
         lock::mutex(&self.inner.targeted_listeners).retain(|(node, _), _| *node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
         lock::mutex(&self.inner.reported_sizes).remove(&id);
+        lock::mutex(&self.inner.half_block_images).remove(&id);
         lock::mutex(&self.inner.scroll_offsets).remove(&id);
         lock::mutex(&self.inner.scroll_activity).remove(&id);
         {

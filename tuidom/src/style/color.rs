@@ -109,9 +109,19 @@ impl ResolvedColor {
 
     /// Create a [`ResolvedColor`] from sRGB components.
     pub(crate) fn from_srgb(r: u8, g: u8, b: u8) -> Self {
+        Self::from_srgba(r, g, b, 255)
+    }
+
+    /// Create a [`ResolvedColor`] from sRGB components and an alpha byte.
+    pub(crate) fn from_srgba(r: u8, g: u8, b: u8, a: u8) -> Self {
         let srgb: Srgb = Srgb::new(r, g, b).into_format();
         let oklch: Oklch = srgb.into_color();
-        Self::new(oklch.l, oklch.chroma, oklch.hue.into_degrees(), 1.0)
+        Self::new(
+            oklch.l,
+            oklch.chroma,
+            oklch.hue.into_degrees(),
+            f32::from(a) / 255.0,
+        )
     }
 
     /// Whether this color has no meaningful hue, so mixing must borrow the other color's.

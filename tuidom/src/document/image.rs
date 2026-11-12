@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use crate::canvas::CanvasBuffer;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
-use crate::image::{ASSUMED_CELL_PIXELS, ImageData, ImageDrawing, ImageFit, ImageProtocol};
+use crate::image::{
+    ASSUMED_CELL_PIXELS, HalfBlockImage, ImageData, ImageDrawing, ImageFit, ImageFitting,
+    ImageProtocol, fit_image,
+};
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
 
@@ -111,6 +115,32 @@ impl Document {
                 }
             }
         }
+    }
+
+    /// The half-block cells an image node shows in a content box of `content` cells, made
+    /// fresh only when its image, fitted size or crop changed since the last frame.
+    pub(crate) fn half_block_image(
+        &self,
+        node: NodeId,
+        image: &Arc<ImageData>,
+        fit: ImageFit,
+        content: (u16, u16),
+        cell: (u16, u16),
+    ) -> Option<(ImageFitting, Arc<CanvasBuffer>)> {
+        let mut cache = lock::mutex(&self.inner.half_block_images);
+        let Some(fitting) = fit_image((image.width(), image.height()), cell, content, fit) else {
+            cache.remove(&node);
+            return None;
+        };
+        let entry = HalfBlockImage::for_fitting(cache.get(&node), image, fitting);
+        let cells = entry.cells().clone();
+        cache.insert(node, entry);
+        Some((fitting, cells))
+    }
+
+    /// Drop every cached half-block image, for frames that draw images another way.
+    pub(crate) fn clear_half_block_images(&self) {
+        lock::mutex(&self.inner.half_block_images).clear();
     }
 
     /// One cell's size in pixels: the terminal's where it reported one, assumed otherwise.
