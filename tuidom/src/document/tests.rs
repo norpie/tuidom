@@ -7872,6 +7872,115 @@ fn a_color_variable_can_derive_from_the_terminal_background() {
 }
 
 #[test]
+fn resolve_color_reads_the_nodes_variable_scope() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--primary", Color::red());
+    doc.set_color_var("--accent", Color::red());
+
+    let parent = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    let mut parent_style = Style::new();
+    parent_style.color_var("--accent", Color::green());
+    doc.set_style(parent, &parent_style).unwrap();
+
+    let child = doc.create_box().unwrap();
+    doc.append_child(parent, child).unwrap();
+    let mut child_style = Style::new();
+    child_style.color_var("--accent", Color::blue());
+    doc.set_style(child, &child_style).unwrap();
+
+    let accent = Color::var("--accent");
+    assert_eq!(
+        doc.resolve_color(parent, &accent).unwrap(),
+        Some(ResolvedColor::green())
+    );
+    assert_eq!(
+        doc.resolve_color(child, &accent).unwrap(),
+        Some(ResolvedColor::blue())
+    );
+    assert_eq!(
+        doc.resolve_color(child, &Color::var("--primary")).unwrap(),
+        Some(ResolvedColor::red())
+    );
+}
+
+#[test]
+fn resolve_color_takes_current_bg_and_fg_from_the_node() {
+    let doc = Document::new().unwrap();
+    doc.set_terminal_background(Color::oklch(0.2, 0.0, 0.0));
+
+    let parent = doc.create_box().unwrap();
+    doc.append_child(doc.root(), parent).unwrap();
+    let mut parent_style = Style::new();
+    parent_style.background(Color::oklch(0.4, 0.1, 200.0));
+    doc.set_style(parent, &parent_style).unwrap();
+
+    let plain = doc.create_box().unwrap();
+    doc.append_child(parent, plain).unwrap();
+    let painted = doc.create_box().unwrap();
+    doc.append_child(parent, painted).unwrap();
+    let mut painted_style = Style::new();
+    painted_style.background(Color::oklch(0.6, 0.1, 30.0));
+    painted_style.color(Color::blue());
+    doc.set_style(painted, &painted_style).unwrap();
+
+    assert_eq!(
+        doc.resolve_color(plain, &Color::CurrentBg).unwrap(),
+        Some(ResolvedColor::oklch(0.4, 0.1, 200.0))
+    );
+    assert_eq!(
+        doc.resolve_color(painted, &Color::CurrentBg).unwrap(),
+        Some(ResolvedColor::oklch(0.6, 0.1, 30.0))
+    );
+    assert_eq!(
+        doc.resolve_color(painted, &Color::CurrentFg).unwrap(),
+        Some(ResolvedColor::blue())
+    );
+    assert_eq!(
+        doc.resolve_color(doc.root(), &Color::CurrentBg).unwrap(),
+        Some(ResolvedColor::oklch(0.2, 0.0, 0.0))
+    );
+}
+
+#[test]
+fn resolve_color_applies_derivations() {
+    let doc = Document::new().unwrap();
+    doc.set_color_var("--accent", Color::oklch(0.5, 0.1, 180.0));
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    assert_eq!(
+        doc.resolve_color(node, &Color::var("--accent").darken(0.25))
+            .unwrap(),
+        Some(ResolvedColor::oklch(0.25, 0.1, 180.0))
+    );
+}
+
+#[test]
+fn resolve_color_is_none_for_a_variable_out_of_scope() {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    assert_eq!(
+        doc.resolve_color(node, &Color::var("--nope").darken(0.1))
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn resolve_color_on_a_missing_node_is_an_error() {
+    let doc = Document::new().unwrap();
+    let missing = NodeId::new(999);
+
+    assert_eq!(
+        doc.resolve_color(missing, &Color::red()).unwrap_err(),
+        TuidomError::NodeNotFound { id: missing }
+    );
+}
+
+#[test]
 fn an_unset_color_takes_the_document_default() {
     let doc = Document::new().unwrap();
     let plain = doc.create_text("plain").unwrap();

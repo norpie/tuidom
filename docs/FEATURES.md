@@ -252,6 +252,7 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Reference in styles: `color: Color::var("--primary")`
   - [x] Redeclaring shadows for the subtree; a declaration resolves against the parent's scope, so cycles cannot be written
   - [x] An undefined name falls back to the property's default rather than half-applying a derivation
+  - [x] `resolve_color` evaluates a color at a node from code, for colors a style cannot reach
 - [x] Derived color operations (work on OKLCH):
   - [x] `lighten(amount)`, `darken(amount)` — absolute steps, since OKLCH lightness is perceptually uniform
   - [x] `with_hue(h)`, `with_chroma(c)`, `with_lightness(l)`

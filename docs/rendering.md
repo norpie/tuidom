@@ -162,6 +162,11 @@ The frame that changes the size waits for that handler before it paints, so the 
 shows in the same frame, never the old one cropped or with space left over. Because the
 buffer is no minimum, a canvas drawn for a larger box can still shrink and be told so.
 
+**Theme colors.** A buffer holds resolved colors, so a canvas does not follow variables the way
+a style does. Resolve the colors at the canvas node with
+[`resolve_color`](colors.md#evaluating-a-color-from-code) when drawing, and draw again when the
+variables they come from change.
+
 ## Images
 
 An **image** node shows decoded pixels. The app gives it an `ImageData`, RGBA bytes at a width

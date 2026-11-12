@@ -61,6 +61,25 @@ impl Document {
         self.inner.notify.notify_one();
     }
 
+    /// Evaluate `color` as a color property of `node` would: its variables are the node's
+    /// scope, and `CurrentBg` and `CurrentFg` are the node's effective background and resolved
+    /// `color`.
+    ///
+    /// For code that needs a concrete color where a style cannot reach, such as the cells of a
+    /// canvas. The result does not follow later changes; evaluate again when the variables or
+    /// styles it depends on change.
+    ///
+    /// Returns `Ok(None)` when the expression names a variable not in scope, and
+    /// [`TuidomError::NodeNotFound`] if `node` does not exist.
+    pub fn resolve_color(&self, node: NodeId, color: &Color) -> Result<Option<ResolvedColor>> {
+        let resolved = self.resolved_style_arc(node)?;
+        Ok(color.eval(&ColorContext {
+            vars: &resolved.color_vars,
+            current_bg: resolved.effective_background,
+            current_fg: resolved.color,
+        }))
+    }
+
     // ------------------------------------------------------------------
     // Terminal background
     // ------------------------------------------------------------------

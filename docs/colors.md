@@ -235,6 +235,22 @@ button.color_var("--foreground", Color::var("--primary-foreground"));
 Where the expression does not resolve, the node falls back to white. A `color` that is set
 but does not resolve falls back to the default foreground.
 
+## Evaluating a color from code
+
+Some colors are needed outside a style, such as the cells of a canvas, which hold resolved
+colors. `resolve_color` evaluates a `Color` as a color property of the given node would: in its
+variable scope, with `CurrentBg` as its effective background and `CurrentFg` as its resolved
+`color`:
+
+```rust
+let line = doc.resolve_color(chart, &Color::var("--chart-1"))?
+    .unwrap_or(doc.resolved_style(chart)?.color);
+```
+
+It returns `None` where a style property would fall back to its default, when the expression
+names a variable not in scope, and leaves the fallback to the caller. The result is a value
+taken once, so a caller drawing with it resolves again when the theme changes.
+
 ## Alpha and blending
 
 Alpha is a component of every color, and blending happens at render time:
