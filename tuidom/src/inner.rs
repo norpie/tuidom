@@ -273,6 +273,10 @@ pub(crate) struct DocumentInner {
     /// Latest published layout snapshot, updated atomically after layout computation.
     pub layout_snapshot: RwLock<NodeMap<NodeLayout>>,
 
+    /// The content size last reported for each node with a size-change listener, as width
+    /// and height. `None` until its first report.
+    pub reported_sizes: Mutex<NodeMap<Option<(u16, u16)>>>,
+
     /// Current scroll offset per scroll container. Absent means `(0, 0)`.
     pub scroll_offsets: Mutex<NodeMap<ScrollOffset>>,
 

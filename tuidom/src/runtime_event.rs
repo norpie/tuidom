@@ -64,6 +64,12 @@ pub(crate) enum RuntimeEvent {
     },
     /// A scroll offset a relayout re-clamped, queued by the render task for scroll dispatch.
     ScrollClamped { node: NodeId, offset: ScrollOffset },
+    /// A node's content size changed, queued by the render task for size change dispatch.
+    SizeChange {
+        node: NodeId,
+        width: u16,
+        height: u16,
+    },
     /// A request to run the registered flush hook on the event task.
     ///
     /// Enqueued from any thread by [`Document::request_runtime_flush`](crate::Document::request_runtime_flush)
@@ -339,6 +345,13 @@ pub(crate) fn process_runtime_event(
         // dispatch is naturally a no-op.
         RuntimeEvent::ScrollClamped { node, offset } => {
             doc.dispatch_scroll_to(node, &mut ScrollEvent::new(offset.x, offset.y));
+        }
+        RuntimeEvent::SizeChange {
+            node,
+            width,
+            height,
+        } => {
+            doc.dispatch_size_change_to(node, width, height);
         }
         RuntimeEvent::TransitionEnd { node, property } => {
             doc.dispatch_transition_end_to(node, property);

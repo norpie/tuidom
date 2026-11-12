@@ -137,6 +137,7 @@ impl Document {
                 manual_now: Mutex::new(None),
                 layout: Mutex::new(LayoutEngine::new()),
                 layout_snapshot: RwLock::new(NodeMap::default()),
+                reported_sizes: Mutex::new(NodeMap::default()),
                 scroll_offsets: Mutex::new(NodeMap::default()),
                 scroll_activity: Mutex::new(NodeMap::default()),
                 scrollbar_grab: Mutex::new(None),

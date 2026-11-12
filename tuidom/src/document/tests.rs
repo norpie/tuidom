@@ -9,7 +9,7 @@ use crate::TuidomError;
 use crate::animation::{Easing, TransitionConfig};
 use crate::event::{
     DragPhase, EventPhase, FocusEventRelation, FocusKeys, KeyCode, KeyEvent, KeyModifiers,
-    MouseButton, MouseEvent, ResizeEvent, WheelEvent,
+    ListenerHandle, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
 use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
@@ -2888,6 +2888,151 @@ fn a_frames_reclamp_is_queued_rather_than_dispatched() {
         process_runtime_event(&doc, event, &mut state);
     }
     assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+type SizeLog = Arc<Mutex<Vec<(u16, u16)>>>;
+
+/// A 6x3 box with a single border and one cell of padding on the left, under the root, plus
+/// a log of the sizes its `on_size_change` listener saw.
+fn sized_box() -> (Document, NodeId, SizeLog, ListenerHandle) {
+    let doc = Document::new().unwrap();
+    let node = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.width(Length::Cells(6));
+    style.height(Length::Cells(3));
+    style.border(Border::new(BorderCharset::single()));
+    style.padding(EdgeInsets::new(0, 0, 0, 1));
+    doc.set_style(node, &style).unwrap();
+    doc.append_child(doc.root(), node).unwrap();
+
+    let sizes = Arc::new(Mutex::new(Vec::new()));
+    let log = sizes.clone();
+    let handle = doc
+        .on_size_change(node, move |event| {
+            log.lock().unwrap().push((event.width, event.height));
+        })
+        .unwrap();
+    (doc, node, sizes, handle)
+}
+
+#[test]
+fn size_change_reports_the_content_box_on_first_layout() {
+    let (doc, node, sizes, _) = sized_box();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(*sizes.lock().unwrap(), [(3, 1)]);
+
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(
+        sizes.lock().unwrap().len(),
+        1,
+        "an unchanged frame reports nothing"
+    );
+
+    let second = Arc::new(Mutex::new(Vec::new()));
+    let log = second.clone();
+    doc.on_size_change(node, move |event| {
+        log.lock().unwrap().push((event.width, event.height));
+    })
+    .unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(*second.lock().unwrap(), [(3, 1)]);
+    assert_eq!(*sizes.lock().unwrap(), [(3, 1), (3, 1)]);
+}
+
+#[test]
+fn size_change_fires_once_per_new_size() {
+    let (doc, node, sizes, _) = sized_box();
+    doc.compute_layout(10, 4).unwrap();
+
+    doc.update_style(node, |style| style.width(Length::Cells(8)))
+        .unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(*sizes.lock().unwrap(), [(3, 1), (5, 1)]);
+}
+
+#[test]
+fn moving_a_node_does_not_fire_size_change() {
+    let (doc, node, sizes, _) = sized_box();
+    doc.compute_layout(10, 4).unwrap();
+
+    doc.update_style(node, |style| style.margin(EdgeInsets::new(0, 0, 0, 2)))
+        .unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(doc.get_node(node).unwrap().layout.unwrap().rect.x, 2);
+    assert_eq!(*sizes.lock().unwrap(), [(3, 1)]);
+}
+
+#[test]
+fn a_node_leaving_layout_reports_zero() {
+    let (doc, node, sizes, _) = sized_box();
+    doc.compute_layout(10, 4).unwrap();
+
+    doc.update_style(node, |style| style.display(Display::None))
+        .unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(*sizes.lock().unwrap(), [(3, 1), (0, 0)]);
+}
+
+#[test]
+fn removing_the_size_listener_or_the_node_stops_reports() {
+    let (doc, node, sizes, handle) = sized_box();
+    doc.compute_layout(10, 4).unwrap();
+    assert!(doc.remove_listener(handle));
+    assert!(doc.inner.reported_sizes.lock().unwrap().is_empty());
+
+    doc.update_style(node, |style| style.width(Length::Cells(8)))
+        .unwrap();
+    doc.compute_layout(10, 4).unwrap();
+    assert_eq!(*sizes.lock().unwrap(), [(3, 1)]);
+
+    let (doc, node, _, _) = sized_box();
+    doc.compute_layout(10, 4).unwrap();
+    doc.remove_child(doc.root(), node).unwrap();
+    assert!(doc.inner.reported_sizes.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_size_listener_added_after_layout_is_reported_by_the_next_frame() {
+    let doc = Document::new().unwrap();
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 4);
+    runtime.render().unwrap();
+
+    let sizes = Arc::new(Mutex::new(Vec::new()));
+    let log = sizes.clone();
+    doc.on_size_change(doc.root(), move |event| {
+        log.lock()
+            .unwrap()
+            .push((event.target(), event.width, event.height));
+    })
+    .unwrap();
+    // Nothing about layout changed, so this frame skips its layout pass.
+    let events = doc.compute_layout_for_frame(10, 4).unwrap();
+    assert!(
+        sizes.lock().unwrap().is_empty(),
+        "a frame queues, never dispatches"
+    );
+    assert!(matches!(
+        events.as_slice(),
+        [RuntimeEvent::SizeChange { node, width: 10, height: 4 }] if *node == doc.root()
+    ));
+
+    // Already reported by the frame above, so the runtime's next frame has nothing to say.
+    runtime.render().unwrap();
+    assert!(sizes.lock().unwrap().is_empty());
+
+    let mut state = RuntimeEventState::default();
+    for event in events {
+        process_runtime_event(&doc, event, &mut state);
+    }
+    assert_eq!(*sizes.lock().unwrap(), [(doc.root(), 10, 4)]);
+
+    runtime.resize(12, 4);
+    runtime.render().unwrap();
+    assert_eq!(
+        *sizes.lock().unwrap(),
+        [(doc.root(), 10, 4), (doc.root(), 12, 4)]
+    );
 }
 
 #[test]

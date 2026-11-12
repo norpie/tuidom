@@ -7,8 +7,8 @@ use crate::error::{Result, TuidomError};
 use crate::event::{
     AnimationEndEvent, AnimationIterationEvent, DragEvent, EventPhase, FocusEvent, InputEvent,
     KeyEvent, Listener, ListenerHandle, ListenerKind, MouseEvent, PostFrameEvent, ResizeEvent,
-    ScrollEvent, SelectionChangeEvent, TargetedEvent, TargetedEventKind, TerminalInfoEvent,
-    TransitionEndEvent, WheelEvent, WindowBlurEvent, WindowFocusEvent,
+    ScrollEvent, SelectionChangeEvent, SizeChangeEvent, TargetedEvent, TargetedEventKind,
+    TerminalInfoEvent, TransitionEndEvent, WheelEvent, WindowBlurEvent, WindowFocusEvent,
 };
 use crate::id::NodeId;
 use crate::lock;
@@ -189,6 +189,28 @@ impl Document {
             TargetedEventKind::Scroll,
             ListenerKind::Scroll(Arc::new(handler)),
         )
+    }
+
+    /// Register a size change listener on a node.
+    ///
+    /// Fires when the node's content box, inside its border and padding, changes size, and
+    /// once on the first layout after the listener is added. That first report goes to every
+    /// listener on the node, so adding one repeats the current size to the others. Moving
+    /// fires nothing, and the event does not bubble. See [`SizeChangeEvent`].
+    /// Returns a handle that can be passed to [`remove_listener`](Self::remove_listener).
+    pub fn on_size_change<F>(&self, node: NodeId, handler: F) -> Result<ListenerHandle>
+    where
+        F: Fn(&mut SizeChangeEvent) + Send + Sync + 'static,
+    {
+        let handle = self.register_targeted_listener(
+            node,
+            TargetedEventKind::SizeChange,
+            ListenerKind::SizeChange(Arc::new(handler)),
+        )?;
+        lock::mutex(&self.inner.reported_sizes).insert(node, None);
+        // The first report comes from a frame, and nothing else may have asked for one.
+        self.inner.notify.notify_one();
+        Ok(handle)
     }
 
     /// Register a value change listener on an `Input` node.
@@ -482,6 +504,8 @@ impl Document {
                 removed |= listeners.len() != old_len;
             }
             targeted.retain(|_, listeners| !listeners.is_empty());
+            lock::mutex(&self.inner.reported_sizes)
+                .retain(|node, _| targeted.contains_key(&(*node, TargetedEventKind::SizeChange)));
         }
 
         for store in [
@@ -690,6 +714,26 @@ impl Document {
             let panicked = catch_handler_panic(|| {
                 if let ListenerKind::Scroll(handler) = &listener.kind {
                     handler(event);
+                }
+            });
+
+            if panicked {
+                tracing::error!("event listener {} panicked", listener.id);
+            }
+        }
+    }
+
+    pub(crate) fn dispatch_size_change_to(&self, target: NodeId, width: u16, height: u16) {
+        let listeners = lock::mutex(&self.inner.targeted_listeners)
+            .get(&(target, TargetedEventKind::SizeChange))
+            .cloned()
+            .unwrap_or_default();
+        let mut event = SizeChangeEvent::new(width, height);
+        event.set_dispatch_state(target, target, EventPhase::Target);
+        for listener in listeners {
+            let panicked = catch_handler_panic(|| {
+                if let ListenerKind::SizeChange(handler) = &listener.kind {
+                    handler(&mut event);
                 }
             });
 

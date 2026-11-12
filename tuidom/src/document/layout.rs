@@ -23,19 +23,27 @@ impl Document {
     /// sizes, and stores the results on each node. Nodes with `display: None`
     /// are skipped.
     ///
-    /// A scroll offset the new layout re-clamps is reported to its `on_scroll` listeners before
-    /// this returns.
+    /// A scroll offset the new layout re-clamps is reported to its `on_scroll` listeners, and a
+    /// changed content size to its `on_size_change` listeners, before this returns.
     pub fn compute_layout(&self, screen_width: u16, screen_height: u16) -> Result<()> {
         for event in self.compute_layout_for_frame(screen_width, screen_height)? {
-            if let RuntimeEvent::ScrollClamped { node, offset } = event {
-                self.dispatch_scroll_to(node, &mut ScrollEvent::new(offset.x, offset.y));
+            match event {
+                RuntimeEvent::ScrollClamped { node, offset } => {
+                    self.dispatch_scroll_to(node, &mut ScrollEvent::new(offset.x, offset.y));
+                }
+                RuntimeEvent::SizeChange {
+                    node,
+                    width,
+                    height,
+                } => self.dispatch_size_change_to(node, width, height),
+                _ => {}
             }
         }
         Ok(())
     }
 
-    /// Compute layout for a frame, returning the scroll events its re-clamps owe instead of
-    /// dispatching them, since a frame is laid out on the render task, which never runs user
+    /// Compute layout for a frame, returning the scroll and size change events it owes instead
+    /// of dispatching them, since a frame is laid out on the render task, which never runs user
     /// code.
     pub(crate) fn compute_layout_for_frame(
         &self,
@@ -44,10 +52,62 @@ impl Document {
     ) -> Result<Vec<RuntimeEvent>> {
         self.sync_animating_layout_styles();
         let reclamped = compute_document_layout(self, screen_width, screen_height)?;
-        Ok(reclamped
+        let mut events: Vec<RuntimeEvent> = reclamped
             .into_iter()
             .map(|(node, offset)| RuntimeEvent::ScrollClamped { node, offset })
-            .collect())
+            .collect();
+        events.extend(self.size_changes());
+        Ok(events)
+    }
+
+    /// Compare each listened node's content size against the one last reported for it.
+    ///
+    /// Runs even when layout skipped its pass, so a listener added since the last frame gets
+    /// its first report. A node outside the snapshot measures zero by zero.
+    fn size_changes(&self) -> Vec<RuntimeEvent> {
+        let reported: Vec<(NodeId, Option<(u16, u16)>)> = lock::mutex(&self.inner.reported_sizes)
+            .iter()
+            .map(|(node, size)| (*node, *size))
+            .collect();
+        if reported.is_empty() {
+            return Vec::new();
+        }
+        let rects: Vec<Option<LayoutRect>> = {
+            let snapshot = lock::rw_read(&self.inner.layout_snapshot);
+            reported
+                .iter()
+                .map(|(node, _)| snapshot.get(node).map(|layout| layout.rect))
+                .collect()
+        };
+
+        let mut changed = Vec::new();
+        for ((node, last), rect) in reported.into_iter().zip(rects) {
+            let size = rect
+                .and_then(|rect| {
+                    let resolved = self.resolved_style_arc(node).ok()?;
+                    let content = rect.content_rect(&resolved);
+                    Some((content.width, content.height))
+                })
+                .unwrap_or((0, 0));
+            if last != Some(size) {
+                changed.push((node, size));
+            }
+        }
+
+        let mut reported = lock::mutex(&self.inner.reported_sizes);
+        changed
+            .into_iter()
+            .filter_map(|(node, (width, height))| {
+                // A listener removed while this ran leaves nothing to report to.
+                let entry = reported.get_mut(&node)?;
+                *entry = Some((width, height));
+                Some(RuntimeEvent::SizeChange {
+                    node,
+                    width,
+                    height,
+                })
+            })
+            .collect()
     }
 
     /// Feed the interpolated style of every layout-animating node to the layout
@@ -213,6 +273,7 @@ impl Document {
         self.remove_focus_side_state(id);
         lock::mutex(&self.inner.targeted_listeners).retain(|(node, _), _| *node != id);
         lock::mutex(&self.inner.animation).remove_node(id);
+        lock::mutex(&self.inner.reported_sizes).remove(&id);
         lock::mutex(&self.inner.scroll_offsets).remove(&id);
         lock::mutex(&self.inner.scroll_activity).remove(&id);
         {

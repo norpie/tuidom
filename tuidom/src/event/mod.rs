@@ -506,6 +506,38 @@ impl ScrollEvent {
     }
 }
 
+/// A node's content box changed size.
+///
+/// The content box is what is left inside the border and padding, the area a node draws its
+/// own content into. Fires on the node once it is first laid out after a listener is added,
+/// then whenever that size changes. A node out of layout, hidden or not yet attached,
+/// reports zero by zero. A move alone fires nothing. It does not bubble, and it is delivered after
+/// the frame that changed the size, so whatever a listener changes in response shows from the
+/// next frame.
+#[derive(Debug, Clone)]
+pub struct SizeChangeEvent {
+    /// The content box's new width in terminal cells.
+    pub width: u16,
+    /// The content box's new height in terminal cells.
+    pub height: u16,
+    metadata: TargetedMetadata,
+}
+
+impl SizeChangeEvent {
+    pub(crate) fn new(width: u16, height: u16) -> Self {
+        Self {
+            width,
+            height,
+            metadata: TargetedMetadata::pending(),
+        }
+    }
+
+    /// The node whose size changed.
+    pub fn target(&self) -> NodeId {
+        self.metadata.target
+    }
+}
+
 /// An `Input` node's value changed.
 ///
 /// Fires on the input after a key press default action changes its value, and bubbles
@@ -903,6 +935,17 @@ impl TargetedEvent for ScrollEvent {
     }
 }
 
+impl TargetedEvent for SizeChangeEvent {
+    fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
+        self.metadata
+            .set_dispatch_state(target, current_target, phase);
+    }
+
+    fn propagation_stopped(&self) -> bool {
+        false
+    }
+}
+
 impl TargetedEvent for DragEvent {
     fn set_dispatch_state(&mut self, target: NodeId, current_target: NodeId, phase: EventPhase) {
         self.metadata
@@ -965,6 +1008,7 @@ pub(crate) type MouseEventHandler = Arc<dyn Fn(&mut MouseEvent) + Send + Sync + 
 pub(crate) type DragEventHandler = Arc<dyn Fn(&mut DragEvent) + Send + Sync + 'static>;
 pub(crate) type WheelEventHandler = Arc<dyn Fn(&mut WheelEvent) + Send + Sync + 'static>;
 pub(crate) type ScrollEventHandler = Arc<dyn Fn(&mut ScrollEvent) + Send + Sync + 'static>;
+pub(crate) type SizeChangeEventHandler = Arc<dyn Fn(&mut SizeChangeEvent) + Send + Sync + 'static>;
 pub(crate) type InputEventHandler = Arc<dyn Fn(&mut InputEvent) + Send + Sync + 'static>;
 pub(crate) type TransitionEndEventHandler =
     Arc<dyn Fn(&mut TransitionEndEvent) + Send + Sync + 'static>;
@@ -994,6 +1038,7 @@ pub(crate) enum TargetedEventKind {
     Drag,
     Wheel,
     Scroll,
+    SizeChange,
     Input,
     TransitionEnd,
     AnimationEnd,
@@ -1023,6 +1068,8 @@ pub(crate) enum ListenerKind {
     Wheel(WheelEventHandler),
     /// Scroll offset change listener.
     Scroll(ScrollEventHandler),
+    /// Content size change listener.
+    SizeChange(SizeChangeEventHandler),
     /// Input value change listener.
     Input(InputEventHandler),
     /// Transition end listener.
