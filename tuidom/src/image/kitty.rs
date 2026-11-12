@@ -5,13 +5,9 @@
 //! so sending it at the placement's exact shape is what lets `Fill` stretch and `Cover` crop.
 
 use std::collections::HashSet;
-use std::io::Write;
 use std::sync::Arc;
 
-use flate2::Compression;
-use flate2::write::ZlibEncoder;
-
-use super::{ImageData, ImageFitting};
+use super::{ImageData, ImageFitting, base64, compress};
 
 /// Base64 bytes per command; kitty takes at most 4096, and every chunk but the last must be a
 /// multiple of four.
@@ -116,42 +112,9 @@ fn emit(out: &mut Vec<u8>, sequence: &str, tmux: bool) {
     }
 }
 
-fn compress(bytes: &[u8]) -> Option<Vec<u8>> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(bytes).ok()?;
-    encoder.finish().ok()
-}
-
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for group in bytes.chunks(3) {
-        let [a, b, c] = [0, 1, 2].map(|i| group.get(i).copied().unwrap_or(0));
-        let bits = u32::from(a) << 16 | u32::from(b) << 8 | u32::from(c);
-        for (position, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            if position <= group.len() {
-                out.push(char::from(ALPHABET[(bits >> shift & 0x3F) as usize]));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base64_pads_to_whole_groups() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64(&[0xFF, 0xEF]), "/+8=");
-    }
 
     fn shown(id: u32) -> KittyShown {
         KittyShown {

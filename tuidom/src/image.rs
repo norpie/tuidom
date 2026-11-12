@@ -1,10 +1,15 @@
 //! Decoded pixels for an image node to show.
 
 use std::fmt;
+use std::io::Write;
 use std::sync::Arc;
+
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 
 use crate::canvas::{CanvasBuffer, CanvasStyle};
 
+pub(crate) mod iterm2;
 pub(crate) mod kitty;
 pub(crate) mod placeholder;
 pub(crate) mod sixel;
@@ -374,6 +379,29 @@ fn spans(start: u32, length: u32, target: u32) -> Vec<Vec<(u32, f64)>> {
         .collect()
 }
 
+pub(crate) fn compress(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+    encoder.write_all(bytes).ok()?;
+    encoder.finish().ok()
+}
+
+pub(crate) fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for group in bytes.chunks(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| group.get(i).copied().unwrap_or(0));
+        let bits = u32::from(a) << 16 | u32::from(b) << 8 | u32::from(c);
+        for (position, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if position <= group.len() {
+                out.push(char::from(ALPHABET[(bits >> shift & 0x3F) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 fn pixel_color([r, g, b, a]: [u8; 4]) -> ResolvedColor {
     ResolvedColor::from_srgba(r, g, b, a)
 }
@@ -391,6 +419,16 @@ mod tests {
     }
 
     const CELL: (u16, u16) = (8, 16);
+
+    #[test]
+    fn base64_pads_to_whole_groups() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xFF, 0xEF]), "/+8=");
+    }
 
     #[test]
     fn contain_keeps_the_aspect_ratio_and_centers_with_the_odd_cell_last() {
