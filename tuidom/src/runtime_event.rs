@@ -80,12 +80,18 @@ pub(crate) enum RuntimeEvent {
 
 /// Collapse redundant runs in a drained batch, leaving order otherwise intact.
 ///
-/// Only *adjacent* events merge, and only the two kinds where every value but the
-/// last is dead weight: pointer movement and resize. Everything else — keys,
-/// presses, releases, wheel ticks, frame and animation events — passes through
-/// untouched, because each one carries information the next does not.
+/// Only three kinds merge, the ones where every value but the last is dead weight:
+/// pointer movement, resize, and terminal info. Everything else — keys, presses,
+/// releases, wheel ticks, frame and animation events — passes through untouched,
+/// because each one carries information the next does not.
 ///
-/// Adjacency is the load-bearing rule. Hover-to-focus makes the pointer's position
+/// Pointer movement merges only with the move right after it. Resize and terminal
+/// info both report the terminal's state, and a resize queues a pixel-size update
+/// right behind it, so each merges with a later one of its own kind across any run
+/// of the two — otherwise the alternation would keep a dragged resize from ever
+/// collapsing.
+///
+/// Adjacency is the load-bearing rule for input. Hover-to-focus makes the pointer's position
 /// decide which node a key press targets, so merging movement *across* a key would
 /// deliver that key to the wrong node. A press between two runs is a boundary for
 /// the same reason: a drag starts where the button went down, not where the pointer
@@ -101,7 +107,7 @@ pub(crate) fn coalesce(batch: &mut Vec<RuntimeEvent>) {
 
     let mut kept = 0;
     for index in 0..batch.len() {
-        if index + 1 < batch.len() && superseded_by(&batch[index], &batch[index + 1]) {
+        if superseded(&batch[index], &batch[index + 1..]) {
             continue;
         }
         batch.swap(kept, index);
@@ -110,15 +116,24 @@ pub(crate) fn coalesce(batch: &mut Vec<RuntimeEvent>) {
     batch.truncate(kept);
 }
 
-/// Whether `event` carries nothing that `next` does not already say.
-fn superseded_by(event: &RuntimeEvent, next: &RuntimeEvent) -> bool {
-    match (event, next) {
+/// Whether `event` carries nothing that the events queued after it do not already say.
+fn superseded(event: &RuntimeEvent, later: &[RuntimeEvent]) -> bool {
+    match event {
         // A drag and a hover are different gestures, so a change of held button
         // ends the run even though both are movement.
-        (RuntimeEvent::MouseMove { held: from, .. }, RuntimeEvent::MouseMove { held: to, .. }) => {
-            from == to
-        }
-        (RuntimeEvent::Resize(_), RuntimeEvent::Resize(_)) => true,
+        RuntimeEvent::MouseMove { held: from, .. } => matches!(
+            later.first(),
+            Some(RuntimeEvent::MouseMove { held: to, .. }) if to == from
+        ),
+        RuntimeEvent::Resize(_) | RuntimeEvent::TerminalInfo(_) => later
+            .iter()
+            .take_while(|next| {
+                matches!(
+                    next,
+                    RuntimeEvent::Resize(_) | RuntimeEvent::TerminalInfo(_)
+                )
+            })
+            .any(|next| std::mem::discriminant(next) == std::mem::discriminant(event)),
         _ => false,
     }
 }
@@ -613,6 +628,60 @@ mod tests {
             RuntimeEvent::Resize(resize) => assert_eq!(resize.width, 120),
             other => panic!("expected a resize, got {other:?}"),
         }
+    }
+
+    fn info(cell_width: u16) -> RuntimeEvent {
+        RuntimeEvent::TerminalInfo(Box::new(TerminalInfo {
+            pixel_size: Some(crate::terminal::PixelSize {
+                width: 0,
+                height: 0,
+                cell_width,
+                cell_height: 0,
+            }),
+            ..TerminalInfo::default()
+        }))
+    }
+
+    fn summary(events: &[RuntimeEvent]) -> Vec<String> {
+        events
+            .iter()
+            .map(|event| match event {
+                RuntimeEvent::Resize(resize) => format!("resize {}", resize.width),
+                RuntimeEvent::TerminalInfo(info) => {
+                    format!("info {}", info.pixel_size.map_or(0, |size| size.cell_width))
+                }
+                RuntimeEvent::KeyPress(_) => "key".to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resizes_and_terminal_info_collapse_across_each_other() {
+        let batch = coalesced(vec![
+            resized(80),
+            info(8),
+            resized(100),
+            info(9),
+            resized(120),
+            info(10),
+        ]);
+        assert_eq!(summary(&batch), ["resize 120", "info 10"]);
+    }
+
+    #[test]
+    fn a_key_ends_a_run_of_resizes_and_terminal_info() {
+        let batch = coalesced(vec![
+            resized(80),
+            info(8),
+            RuntimeEvent::KeyPress(KeyEvent::new(KeyCode::Char('a'))),
+            resized(100),
+            info(9),
+        ]);
+        assert_eq!(
+            summary(&batch),
+            ["resize 80", "info 8", "key", "resize 100", "info 9"]
+        );
     }
 
     #[test]
