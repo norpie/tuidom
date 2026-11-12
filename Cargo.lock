@@ -1313,6 +1313,8 @@ name = "tuidom-charts"
 version = "0.1.0"
 dependencies = [
  "tuidom",
+ "tuidom-components",
+ "tuidom-ui",
  "unicode-segmentation",
  "unicode-width",
 ]

@@ -11,7 +11,17 @@ description = "Charts for tuidom, drawn into canvas buffers"
 # Per docs/STYLE.md the crate carries no doc tests. Tests live in-crate next to the code.
 doctest = false
 
+[features]
+default = ["components"]
+# Chart components on tuidom-ui, colored by the tuidom-components theme.
+components = ["dep:tuidom-ui", "dep:tuidom-components"]
+
 [dependencies]
 tuidom = { path = "../tuidom" }
+tuidom-ui = { path = "../tuidom-ui", optional = true }
+tuidom-components = { path = "../tuidom-components", optional = true }
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
+
+[dev-dependencies]
+tuidom-ui = { path = "../tuidom-ui", features = ["testing"] }
