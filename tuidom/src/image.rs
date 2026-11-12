@@ -7,6 +7,7 @@ use crate::canvas::{CanvasBuffer, CanvasStyle};
 
 pub(crate) mod kitty;
 pub(crate) mod placeholder;
+pub(crate) mod sixel;
 use crate::style::ResolvedColor;
 use crate::{Result, TuidomError};
 
