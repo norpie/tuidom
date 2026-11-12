@@ -160,6 +160,8 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Drag** — A press taken by the nearest node with an `on_drag` listener, which then receives every held pointer move and the release, wherever the pointer goes. Starts at the first move; leaves the selection alone and ends in no click. See [dragging](events.md#dragging).
 
+**Size Change Event** — A node's content box changed size, reported by `on_size_change` after the layout that changed it, and once on the first layout after a listener is added. Moves alone fire nothing. Does not bubble. See [events that report what the engine did](events.md#events-that-report-what-the-engine-did).
+
 **Post-Frame Event** — Document-level notification that a frame finished, carrying its metrics. See [post-frame](events.md#post-frame).
 
 **Window Focus** — Whether the *terminal window* holds OS focus, not DOM focus. Never moves the focused node. See [window focus](events.md#window-focus).
@@ -223,6 +225,10 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 **WideContinuation** — Marker for the second cell of a width-2 glyph. Never printed directly; the glyph head prints the character. See [the grid](rendering.md#the-grid).
 
 **Grid** — The 2D buffer of cells a frame is painted into, carrying the active clip. See [the grid](rendering.md#the-grid).
+
+**Canvas** — A node showing cells the app draws, held as a buffer the app pushes with `set_canvas`; the engine never calls back to draw. Sized by its buffer where its style leaves an axis unset, though it can shrink below it. Takes no children. See [canvas](rendering.md#canvas).
+
+**Canvas Buffer** — The grid of cells a canvas shows, each a grapheme plus a `CanvasStyle`. Drawn from the canvas's content origin and cropped to its content box. See [canvas](rendering.md#canvas).
 
 **Culling** — Render-time drop of a node whose translated rect lies wholly outside its clip. Paint-only: culled nodes stay in the DOM and in layout. See [culling](scrolling.md#culling).
 

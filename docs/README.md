@@ -61,8 +61,8 @@ until a given guide exists.
   caches, and anchoring
 - [**Animation**](animation.md) — transitions, keyframe animations, frames nodes, and the
   tick that only exists while something moves
-- [**Rendering**](rendering.md) — paint order and z-index, the cell grid, diffing, and the
-  cursor
+- [**Rendering**](rendering.md) — paint order and z-index, the cell grid, canvases, diffing,
+  and the cursor
 - [**Testing**](testing.md) — the headless runtime, frozen time, simulated input, and
   screen inspection
 

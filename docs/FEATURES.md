@@ -7,18 +7,23 @@
 - [x] Thread-safe interior mutability — all methods take `&self`, `Document` is `Send + Sync`
 - [x] Permanent document root node — created by `Document::new()`, always exists, cannot be reparented or removed
 - [x] `NodeId` is a lightweight, `Copy` integer handle
-- [ ] Node kinds:
+- [x] Node kinds:
   - [x] Box (generic container, div equivalent)
   - [x] Text (static text content)
   - [x] Frames (cycles through content on a timer — for spinners, ASCII animations)
     - [x] Current frame is a function of elapsed time — no per-flip mutation
     - [x] Measured on the largest frame, so cycling never reflows surrounding content
     - [x] Self-paced: a lone frames node renders at its interval, not the animation tick
-  - [ ] Canvas (downstream-controlled rendering region)
-    - [ ] Participates in layout like any Box
-    - [ ] Cell buffer mode: callback fills 2D grid of cells (char, fg, bg, attrs)
-    - [ ] Raw mode: callback writes arbitrary escape sequences (for kitty/sixel images)
-    - [ ] Enables: custom graphics, charts, half-block images, native image protocols
+  - [x] Canvas (cells the app draws itself)
+    - [x] The app pushes a `CanvasBuffer` with `set_canvas`; nothing calls back during
+          paint, and an equal buffer schedules nothing
+    - [x] Cells hold a grapheme, optional fg and bg, bold, italic and underline; wide
+          graphemes take two cells
+    - [x] Sized by its buffer on axes its style leaves unset, as a preferred size flex can
+          shrink below; takes no children
+    - [x] Drawn from the content origin, cropped to the content box and clip; colors and
+          opacity blend, unset fg takes the node's color, unset bg shows what is behind
+  - [ ] Image (kitty Unicode placeholders, half-block fallback, sixel, iTerm2)
 - [x] Typed style struct for known properties + raw custom style properties
 - [x] Attributes stored as `HashMap<String, String>`
 - [x] Public attributes API: set/get/remove
@@ -358,6 +363,9 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
     - [x] Hover-to-focus applies to unpressed movement only, so a drag never drags focus
           along with it
   - [x] Scroll: `on_scroll` fires on overflow containers when scroll position changes (target only, no bubble — like the DOM's)
+  - [x] Size: `on_size_change` reports a node's content box after a layout that resizes it,
+        and once on the first layout after a listener is added (target only, no bubble —
+        like ResizeObserver); moves alone fire nothing
   - [x] Input: `on_input` fires on an `Input` node when its value changes (target, then
         bubbles — like the DOM's, so a form-shaped container observes every field)
     - [x] Real changes only: a keystroke that edits nothing, and cursor or selection
@@ -546,6 +554,7 @@ What stays true here regardless of the macro:
 - [x] `view!` template macro
   - [x] Literal values applied once, other expressions bound reactively
   - [x] `if`, `match`, keyed and unkeyed `each`, view holes, `frames`, `portal`
+  - [x] `canvas` with a reactive `buffer:`, and `on_size_change` on every element
   - [x] `ref:` and `trap_focus:` attributes
 - [x] `#[component]` with props arriving as signals
   - [x] Optional props through `#[prop(default)]`, `#[prop(default = expr)]` and `Option<T>`

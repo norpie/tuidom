@@ -242,6 +242,10 @@ which does both in the layout pass rather than a frame later.
 Rectangles may be negative or extend past the terminal. Layout does not clamp; clipping to
 the visible grid is a render concern.
 
+These are reads of the last frame. To act when a node's size changes rather than checking it,
+listen with [`on_size_change`](events.md#events-that-report-what-the-engine-did), which
+reports the content box after each layout that resizes it.
+
 ## Centering in discrete cells
 
 Centering is where terminal cells stop being a detail. Leftover space is often odd, and

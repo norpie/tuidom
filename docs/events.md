@@ -161,7 +161,7 @@ dedicated events instead of expecting you to infer them.
 
 ## Events that report what the engine did
 
-Four events exist for exactly this reason. Each fires *after* a change the engine already
+These events exist for exactly this reason. Each fires *after* a change the engine already
 made:
 
 **`on_input`** — an Input's value changed. Carries the new value, targets the input, and
@@ -183,6 +183,23 @@ the change is `prevent_default()` on the key press.
 
 **`on_scroll`** — a container's scroll offset changed, however it changed: wheel, `scroll_to`,
 `scroll_by`, or a scrollbar drag.
+
+**`on_size_change`** — a node's content box, inside border and padding, changed size after
+layout:
+
+```rust
+doc.on_size_change(chart, |event| {
+    println!("{} × {}", event.width, event.height);
+})?;
+```
+
+It also fires once on the first layout after a listener is added, so the listener learns the
+starting size without asking. That first report goes to every listener on the node, so adding
+one repeats the current size to the others. A node out of layout, hidden or not yet attached,
+reports zero by zero. A move alone fires nothing, since scrolling would otherwise fire it on
+every wheel tick. It does not bubble. Layout happens while a frame is drawn, so the event
+arrives after that frame; whatever a listener changes in response shows in the next one. A
+[canvas](rendering.md#canvas) uses it to draw at the size it is given.
 
 **`on_focus` / `on_blur`** — focus moved. These carry a `relation`, distinguishing "I am the
 node that gained focus" from "a descendant of mine did":

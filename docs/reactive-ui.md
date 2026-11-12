@@ -157,7 +157,7 @@ let ui = view! {
 ```
 
 Inside braces sit attributes (`key: value`) and children, separated by commas. The elements
-are `box` and `input`; `text(..)` is a text node, `frames(..)` cycles text for a spinner, and
+are `box`, `input` and `canvas`; `text(..)` is a text node, `frames(..)` cycles text for a spinner, and
 `{ expr }` drops in anything that converts to a `View`. `fragment` turns several views into
 one with no wrapper node. The macro's rustdoc has the full grammar.
 
@@ -166,6 +166,23 @@ expression becomes its own effect, so it reapplies whenever a signal it read cha
 `text("count: ")` is fixed and `text(count.get())` follows `count`. Style keys always bind
 reactively, and event attributes take their closure as the handler. A text node inherits
 nothing from its box, so color or bold for text goes on the text: `text(..) { style: s }`.
+
+A `canvas` shows cells the app draws (see [canvas](rendering.md#canvas)). Its `buffer:` is
+always bound, so recording the size `on_size_change` reports in a signal the buffer reads
+keeps the drawing fitted to the box:
+
+```rust
+let size = state((0, 0));
+view! {
+    canvas {
+        style: style! { flex_grow: 1.0 },
+        on_size_change: move |ev| size.set((ev.width, ev.height)),
+        buffer: draw(size.get()),
+    }
+}
+```
+
+A canvas takes no children, and `buffer:` on any other element is a compile error.
 
 An attribute key the macro does not know becomes a string attribute on the node, which is
 how tests tag nodes (`test_id: "save"`). A misspelled typed key lands there too, silently;

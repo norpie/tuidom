@@ -1,7 +1,7 @@
 # Rendering
 
-How a laid-out tree becomes bytes on a terminal: paint order, the cell grid, diffing, and
-the cursor.
+How a laid-out tree becomes bytes on a terminal: paint order, the cell grid, canvases,
+diffing, and the cursor.
 
 Most of this is machinery you never touch — it is here because paint order is genuinely
 part of the API surface, and because knowing what the diff does explains several
@@ -99,6 +99,68 @@ if let Some(cell) = rt.get_cell(4, 2) {
 ```
 
 See [testing](testing.md) for the rest of that surface.
+
+## Canvas
+
+A **canvas** is a node whose content is cells the app draws itself, for charts, plots, or
+anything text and boxes cannot lay out. The app fills a `CanvasBuffer` and hands it over:
+
+```rust
+use tuidom::canvas::{CanvasBuffer, CanvasStyle};
+use tuidom::style::ResolvedColor;
+
+let canvas = doc.create_canvas()?;
+doc.append_child(doc.root(), canvas)?;
+
+let mut buffer = CanvasBuffer::new(20, 5);
+let red = CanvasStyle { fg: Some(ResolvedColor::red()), ..CanvasStyle::default() };
+buffer.text(0, 0, "peak", red);
+buffer.set(4, 2, "•", CanvasStyle::default());
+doc.set_canvas(canvas, buffer)?;
+```
+
+**The app pushes; the engine never calls back.** A frame is laid out and painted on the render
+task, which never runs user code, so there is no draw callback. `set_canvas` stores the buffer
+and schedules a frame, and paint copies whatever was stored last. Setting a buffer equal to
+the stored one does nothing, so redrawing from a handler that runs every frame does not keep
+frames coming.
+
+**Where it draws.** Buffer cell `(0, 0)` lands at the top-left of the content box, inside
+border and padding. The buffer is cropped to the content box and to the node's clip, so a
+canvas in a scroll container scrolls like anything else. The node's own background, border
+and half-block edges paint first; the buffer goes on top.
+
+**How a cell draws.**
+
+- An empty cell (never written, or cleared) leaves what is under it showing.
+- An unset `fg` takes the node's resolved `color`, as text does. An unset `bg` leaves the
+  node's background, or what the node sits on.
+- Colors blend like any other: their alpha and the node's opacity apply.
+- Bold, italic and underline add to the node's own. A cell cannot turn off bold the node has.
+- A wide grapheme takes two cells. One that does not fit before the buffer's right edge is not
+  written; one cut by the crop or clip is dropped whole. Writing over either half of one
+  empties the other half.
+- Canvas cells are not part of text selection.
+
+**Sizing.** An axis the canvas's style leaves unset takes the buffer's size, as an HTML
+`<canvas>` does. That size is preferred, not a minimum: flex can shrink a canvas below its
+buffer, cropping it, unless `flex_shrink` is zero. A canvas takes no children; adding one
+returns `NodeCannotHaveChildren`.
+
+**Drawing to the size it gets.** A canvas that should fill its space sets `flex_grow` (or a
+size) and redraws when [`on_size_change`](events.md#events-that-report-what-the-engine-did)
+reports its content box:
+
+```rust
+let d = doc.clone();
+doc.on_size_change(canvas, move |event| {
+    let _ = d.set_canvas(canvas, draw(event.width, event.height));
+})?;
+```
+
+The event arrives after the frame that changed the size, so that frame still shows the old
+buffer, cropped or with space left over, and the redraw shows in the next one. Because the
+buffer is no minimum, a canvas drawn for a larger box can still shrink and be told so.
 
 ## Culling
 
