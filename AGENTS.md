@@ -17,8 +17,8 @@ Read on demand, not auto-loaded:
 - `docs/README.md` — index of the guides, and the rule dividing them from the glossary.
 - The guides themselves: `architecture`, `getting-started`, `layout`, `styling`, `colors`,
   `events`, `focus-and-selection`, `scrolling`, `virtualization`, `animation`,
-  `rendering`, `testing`, and for the framework crates `reactive-ui`, `components` and
-  `routing`.
+  `rendering`, `testing`, and for the framework crates `reactive-ui`, `components`,
+  `routing` and `charts`.
 
 The glossary defines terms and links to the guide that explains each one. Follow the link
 when you need the reasoning; the definition alone is usually enough to work from.
@@ -55,6 +55,10 @@ tuidom-components/ themed component library on tuidom-ui
   src/<component>/    one module per component, its tests beside it
   examples/           showcase.rs (each component alone) and tracker.rs (an app built from them)
 tuidom-router/  layout chains on tuidom-ui's public API alone; examples/mail.rs is a routed app
+tuidom-charts/  charts drawn into canvas buffers, on the engine alone
+  src/                scale, dots, fill, axes, plot, bars, sparkline: the draw functions
+  src/components/     chart components on tuidom-components, behind the default `components` feature
+  examples/           dashboard.rs, charts over live data
 docs/           guides, glossary, features, style
 .plans/         plans + roadmaps (gitignored)
 ```
