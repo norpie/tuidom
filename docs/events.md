@@ -441,8 +441,13 @@ Despite the shared word this is not DOM focus. It names no node, and gaining or 
 never moves the focused node or disturbs the focus stack — alt-tabbing away and back
 returns the user to exactly the node they left.
 
+The document also keeps the state: `doc.window_focused()` is set before the listeners run,
+so they read the new value. What it does change is the cursor, which is
+[drawn differently](rendering.md#the-cursor) while the window is unfocused and blinks for a
+moment when focus comes back.
+
 Terminals that do not support focus reporting simply never send it. There is no capability
-check to write; the events just stay silent.
+check to write; the events just stay silent, and `window_focused()` stays true.
 
 ## Terminal info
 

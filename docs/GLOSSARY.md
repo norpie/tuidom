@@ -164,7 +164,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Post-Frame Event** — Document-level notification that a frame finished, carrying its metrics. See [post-frame](events.md#post-frame).
 
-**Window Focus** — Whether the *terminal window* holds OS focus, not DOM focus. Never moves the focused node. See [window focus](events.md#window-focus).
+**Window Focus** — Whether the *terminal window* holds OS focus, not DOM focus. Stored by the document and read with `window_focused()`; never moves the focused node, but changes how the cursor is drawn. See [window focus](events.md#window-focus).
 
 **Input Coalescing** — Collapsing runs of pointer movement, resize and terminal info in an already-queued batch, never across other input; the queue's only bound, since it applies no backpressure. See [input coalescing](events.md#input-coalescing).
 
@@ -252,7 +252,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Terminal Probe** — The queries `run()` sends once raw mode is on and before any task reads input, ending with DA1, whose reply means the terminal has answered everything it will. See [what the terminal is](rendering.md#what-the-terminal-is).
 
-**Render Cursor** — Cursor metadata produced alongside a frame — position, shape, color, clipped visibility — without mutating cell content. See [the cursor](rendering.md#the-cursor).
+**Render Cursor** — Cursor metadata produced alongside a frame — position, shape, color, clipped visibility, whether the terminal draws it, and whether it is blinking — without mutating cell content. See [the cursor](rendering.md#the-cursor).
 
 ## Reactive UI
 

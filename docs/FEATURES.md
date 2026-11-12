@@ -66,7 +66,6 @@
     - [x] A single-line input declines Enter; a multiline one inserts a line break
   - [x] `multiline: bool` (default false) — single-line vs textarea
   - [x] `mask: Option<char>` (default None) — for password fields
-  - [ ] `show_cursor: Always | WhenFocused | Never` (default WhenFocused)
   - [x] Focusable by default
   - [x] `on_input` fires on value change — the edit is a key *default action* that runs
         after listeners, so nothing outside could otherwise observe a keystroke
@@ -77,6 +76,13 @@
 - [x] Cursor style metadata (document-wide default, per-node override):
   - [x] Shape: block, underline, bar
   - [x] Cursor color follows the focused node's resolved foreground color
+- [x] The cursor follows the terminal window's focus:
+  - [x] A block is painted as an inverted cell while the window is focused, and left to the
+        terminal while it is not, which most terminals draw hollow
+  - [x] Bar and underline are always the terminal's own cursor
+  - [x] Blinks for 3 seconds when the window regains focus: a painted block on the engine's
+        timer, bar and underline in the terminal's blinking style. A key the input handles
+        ends it
 - [x] Multiple cursors are **not built in**: downstream syncs several through events
 
 ## Focus Management
@@ -400,6 +406,8 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
     - [x] Document-level like resize: no target node, no bubbling
     - [x] Never touches DOM focus or the focus stack — alt-tabbing back returns the
           user to the node they left
+    - [x] `doc.window_focused()` — stored, assumed true until the terminal reports
+          otherwise, and set before the listeners run
     - [x] Terminals without focus reporting simply never send it; no capability check
 - [x] Listener registration returns handle for removal
 - [x] `prevent_default()` exists only where a document-level default action does: key presses (input edit, focus, keyboard scroll), wheel (default scroll), and mouse down (selection start)

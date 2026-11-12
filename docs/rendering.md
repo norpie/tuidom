@@ -364,6 +364,35 @@ cell's contents, so diffing a frame where only the cursor moved changes no cells
 Cursor color follows the focused node's resolved foreground, so a cursor in a themed input
 is visible without separate configuration.
 
+### Painted or native
+
+A cursor is either painted into the grid or drawn by the terminal. Painting only changes a
+cell's colors, which works for a block: the cell under it is inverted, its character intact.
+A bar, an underline or a hollow block would need a glyph of their own, replacing the
+character, so those are left to the terminal. Which one draws the cursor depends on its
+shape and on [window focus](events.md#window-focus):
+
+| Window | Block | Bar, underline |
+|---|---|---|
+| Focused | Painted | Terminal |
+| Unfocused | Terminal | Terminal |
+
+An unfocused window's block goes to the terminal because most terminals draw an unfocused
+window's cursor hollow, which a painted cell cannot be. How an unfocused bar or underline
+looks is the terminal's choice too. A terminal that does not report focus never blurs, so its
+block stays painted.
+
+When the window regains focus, the cursor blinks for three seconds, half a second on and half
+off, and ends shown. A painted block blinks on the engine's clock, which wakes the render task
+at each flip and goes idle again when the blink is over. The terminal's cursor gets the
+terminal's own blinking style for the same three seconds, at the terminal's own rate. A key
+the focused input handles ends the blink at once, so typing never happens into a blinking
+cursor.
+
+Headless tests read all of this from `cursor()`: `native` says whether the terminal would
+draw the cursor and `blinking` whether it is in the blink. A painted block shows on the
+screen itself, inverted only in the blink's on phases.
+
 ## Terminal lifecycle
 
 `doc.run()` enters the alternate screen, enables raw mode, and restores everything on exit.
