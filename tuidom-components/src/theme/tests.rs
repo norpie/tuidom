@@ -151,6 +151,41 @@ fn without_a_theme_the_shape_is_the_default() {
     assert_eq!(h.row(0).trim_end(), "Comfortable");
 }
 
+#[component]
+fn ShowPalette() -> View {
+    let palette = use_palette();
+    view! {
+        box {
+            text(if palette.get() == Palette::light() { "light" } else { "dark" })
+        }
+    }
+}
+
+#[test]
+fn use_palette_follows_the_nearest_theme() {
+    let slot: Arc<Mutex<Option<Signal<Theme>>>> = Arc::default();
+    let handle = Arc::clone(&slot);
+    let mut h = Harness::new(8, 2, move || {
+        *handle.lock().unwrap() = Some(install_theme(Theme::dark()));
+        view! {
+            box {
+                style: column(),
+                ShowPalette {},
+                ThemeScope { theme: Theme::light(), ShowPalette {} },
+            }
+        }
+    });
+    assert_eq!(h.row(0).trim_end(), "dark");
+    assert_eq!(h.row(1).trim_end(), "light");
+
+    let theme = slot.lock().unwrap().unwrap();
+    theme.set(Theme::light());
+    assert_eq!(h.row(0).trim_end(), "light");
+
+    let mut h = Harness::new(8, 1, || view! { ShowPalette {} });
+    assert_eq!(h.row(0).trim_end(), "dark");
+}
+
 fn column() -> Style {
     let mut style = Style::new();
     style.flex_direction(FlexDirection::Column);

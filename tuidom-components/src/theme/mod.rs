@@ -110,6 +110,17 @@ pub fn use_shape() -> Derived<Shape> {
     }
 }
 
+/// The nearest theme's palette, or the default palette when no theme is installed above.
+///
+/// Components reference the palette through its color variables. Read this where a color has to
+/// be evaluated in code, such as for a canvas, to evaluate it again when the theme changes.
+pub fn use_palette() -> Derived<Palette> {
+    match use_context::<ThemeContext>() {
+        Some(ThemeContext(theme)) => derived(move || theme.get().palette),
+        None => derived(Palette::default),
+    }
+}
+
 /// The nearest theme, for content a portal mounts outside the tree that declares its palette.
 pub(crate) fn use_theme() -> Option<Signal<Theme>> {
     use_context::<ThemeContext>().map(|ThemeContext(theme)| theme)

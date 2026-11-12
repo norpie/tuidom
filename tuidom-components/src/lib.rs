@@ -56,7 +56,7 @@ pub use tabs::{Tabs, TabsProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use theme::{
     Density, FocusMark, Palette, RootBackground, Shape, Surface, Theme, ThemeScope,
-    ThemeScopeProps, install_theme, use_shape,
+    ThemeScopeProps, install_theme, use_palette, use_shape,
 };
 pub use toast::{Toast, Toaster, ToasterHandle, ToasterProps, use_toaster};
 pub use tone::Tone;
