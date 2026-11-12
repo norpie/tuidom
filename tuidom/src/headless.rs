@@ -7,6 +7,7 @@ use crate::error::Result;
 use crate::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
+use crate::image::kitty::KittyUploads;
 use crate::lock;
 use crate::performance::{FlushMode, RenderMetrics};
 use crate::render::diff::diff_profiled_with_hints;
@@ -38,6 +39,7 @@ pub struct HeadlessRuntime {
     cursor: Option<RenderCursor>,
     rgb_cache: RgbCache,
     event_state: RuntimeEventState,
+    kitty_uploads: KittyUploads,
 }
 
 /// Reports the harness's configuration, not its buffers.
@@ -72,6 +74,7 @@ impl HeadlessRuntime {
             spare_grid: None,
             flush_clear_base: None,
             flush_output: Vec::new(),
+            kitty_uploads: KittyUploads::default(),
             cursor: None,
             rgb_cache: RgbCache::new(),
             event_state: RuntimeEventState::default(),
@@ -255,11 +258,24 @@ impl HeadlessRuntime {
 
         let bell = self.doc.take_pending_bell();
         let flush_start = Instant::now();
+        let graphics = self
+            .kitty_uploads
+            .commands(&output.kitty, self.doc.kitty_through_tmux());
         match (&changes, full_redraw) {
-            (Some(changes), false) => {
-                flush_changes_into(&mut self.flush_output, changes, self.cursor, bell)?
-            }
-            _ => flush_full_into(&mut self.flush_output, &new_grid, self.cursor, bell)?,
+            (Some(changes), false) => flush_changes_into(
+                &mut self.flush_output,
+                changes,
+                &graphics,
+                self.cursor,
+                bell,
+            )?,
+            _ => flush_full_into(
+                &mut self.flush_output,
+                &new_grid,
+                &graphics,
+                self.cursor,
+                bell,
+            )?,
         }
         metrics.flush_time = flush_start.elapsed();
 

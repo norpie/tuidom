@@ -12,6 +12,7 @@ pub(crate) use terminal::Terminal;
 pub(crate) use terminal::{flush_changes_into, flush_full_into, restore_for_panic};
 
 use crate::document::Document;
+use crate::image::kitty::{KittyShown, KittyUploads};
 use crate::lock;
 use crate::performance::{DiffProfile, FlushMode, PaintProfile, RenderMetrics};
 use crate::render::paint::FrameClearBase;
@@ -55,6 +56,8 @@ pub(crate) struct RenderGridOutput {
     pub clear_base: FrameClearBase,
     /// Timings for backend-neutral grid rendering.
     pub stats: GridRenderStats,
+    /// Images drawn as kitty placeholders.
+    pub kitty: Vec<KittyShown>,
 }
 
 /// Paint a laid-out document into an existing grid without flushing to a terminal.
@@ -81,6 +84,7 @@ fn render_grid(
 
     RenderGridOutput {
         cursor: dom_output.cursor,
+        kitty: dom_output.kitty,
         clear_base: dom_output.stats.clear_base,
         stats: GridRenderStats {
             grid_time: dom_output.stats.grid_time,
@@ -107,6 +111,10 @@ pub(crate) struct Renderer {
     new_grid: grid::Grid,
     old_clear_base: FrameClearBase,
     rgb_cache: RgbCache,
+    uploads: KittyUploads,
+    /// Whether kitty commands went through tmux on the last frame, kept for the deletes sent
+    /// on drop.
+    kitty_through_tmux: bool,
 }
 
 impl Renderer {
@@ -118,7 +126,14 @@ impl Renderer {
             new_grid: grid::Grid::new(width, height),
             old_clear_base: FrameClearBase::default(),
             rgb_cache: RgbCache::new(),
+            uploads: KittyUploads::default(),
+            kitty_through_tmux: false,
         }
+    }
+
+    fn kitty_commands(&mut self, doc: &Document, shown: &[KittyShown]) -> Vec<u8> {
+        self.kitty_through_tmux = doc.kitty_through_tmux();
+        self.uploads.commands(shown, self.kitty_through_tmux)
     }
 
     /// Paint the laid-out document into the frame being built.
@@ -156,10 +171,13 @@ impl Renderer {
         let full_redraw = should_flush_full(changes.len(), total_cells);
         let bell = doc.take_pending_bell();
         let flush_start = std::time::Instant::now();
+        let graphics = self.kitty_commands(doc, &output.kitty);
         if full_redraw {
-            self.terminal.flush_full(&self.new_grid, cursor, bell)?;
+            self.terminal
+                .flush_full(&self.new_grid, &graphics, cursor, bell)?;
         } else {
-            self.terminal.flush_changes(&changes, cursor, bell)?;
+            self.terminal
+                .flush_changes(&changes, &graphics, cursor, bell)?;
         }
         let flush_time = flush_start.elapsed();
         let cells_flushed = if full_redraw {
@@ -208,7 +226,9 @@ impl Renderer {
 
         let bell = doc.take_pending_bell();
         let flush_start = std::time::Instant::now();
-        self.terminal.flush_full(&self.new_grid, cursor, bell)?;
+        let graphics = self.kitty_commands(doc, &output.kitty);
+        self.terminal
+            .flush_full(&self.new_grid, &graphics, cursor, bell)?;
         let flush_time = flush_start.elapsed();
 
         let cells = (self.new_grid.width as usize) * (self.new_grid.height as usize);
@@ -227,5 +247,16 @@ impl Renderer {
             diff_profile: DiffProfile::default(),
             flush_time,
         })
+    }
+}
+
+/// Images the terminal still holds would outlive the app on its screen, so they are deleted
+/// before the terminal is restored.
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        let deletes = self.uploads.delete_all(self.kitty_through_tmux);
+        if !deletes.is_empty() {
+            let _ = self.terminal.write_raw(&deletes);
+        }
     }
 }

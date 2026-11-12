@@ -11,6 +11,7 @@ use crate::canvas::CanvasBuffer;
 use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
 use crate::id::{NodeId, NodeMap};
+use crate::image::kitty::KittyShown;
 use crate::image::{ImageDrawing, ImageFitting, fit_image, placeholder};
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
@@ -48,12 +49,14 @@ pub(crate) struct DomPaintStats {
 }
 
 /// DOM painting output.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct DomPaintOutput {
     /// DOM painting timings.
     pub stats: DomPaintStats,
     /// Cursor metadata produced by the focused input, if any.
     pub cursor: Option<RenderCursor>,
+    /// Images drawn as kitty placeholders, which the terminal needs uploaded.
+    pub kitty: Vec<KittyShown>,
 }
 
 /// Paint the visible portion of the DOM tree into the grid.
@@ -98,6 +101,7 @@ pub(crate) fn paint(
 
     let paint_start = Instant::now();
     let mut cursor = None;
+    let mut kitty = Vec::new();
     for entry in &entries {
         grid.set_clip(entry.clip);
         if let Some(bar) = &entry.scrollbar {
@@ -114,9 +118,15 @@ pub(crate) fn paint(
                         .map(|(fitting, cells)| ImagePaint::HalfBlock(fitting, cells)),
                     ImageDrawing::Placeholders => {
                         fit_image((data.width(), data.height()), cell_pixels, content, *fit).map(
-                            |fitting| ImagePaint::Placeholders {
-                                fitting,
-                                id: doc.kitty_image_id(entry.id, data),
+                            |fitting| {
+                                let id = doc.kitty_image_id(entry.id, data, &fitting, cell_pixels);
+                                kitty.push(KittyShown {
+                                    id,
+                                    image: data.clone(),
+                                    fitting,
+                                    cell: cell_pixels,
+                                });
+                                ImagePaint::Placeholders { fitting, id }
                             },
                         )
                     }
@@ -149,6 +159,7 @@ pub(crate) fn paint(
             profile,
         },
         cursor,
+        kitty,
     }
 }
 

@@ -105,20 +105,28 @@ impl Terminal {
     pub fn flush_changes(
         &mut self,
         changes: &[CellChange],
+        graphics: &[u8],
         cursor: Option<RenderCursor>,
         bell: bool,
     ) -> io::Result<()> {
-        flush_changes_into(&mut self.stdout, changes, cursor, bell)
+        flush_changes_into(&mut self.stdout, changes, graphics, cursor, bell)
     }
 
     /// Flush the entire grid — used on resize.
     pub fn flush_full(
         &mut self,
         grid: &Grid,
+        graphics: &[u8],
         cursor: Option<RenderCursor>,
         bell: bool,
     ) -> io::Result<()> {
-        flush_full_into(&mut self.stdout, grid, cursor, bell)
+        flush_full_into(&mut self.stdout, grid, graphics, cursor, bell)
+    }
+
+    /// Write bytes that are not a frame, such as image deletes on the way out.
+    pub fn write_raw(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.stdout.write_all(bytes)?;
+        self.stdout.flush()
     }
 }
 
@@ -140,15 +148,19 @@ fn queue_bell<W: Write>(out: &mut W, bell: bool) -> io::Result<()> {
 /// what makes the flush side measurable and assertable without a tty.
 ///
 /// Both flushes wrap the frame in a synchronized update, so a terminal that supports it shows
-/// the frame only once all of it has arrived, and others ignore it.
+/// the frame only once all of it has arrived, and others ignore it. `graphics`, the image
+/// commands the frame needs, goes first inside it, so an image is uploaded before the cells
+/// that show it.
 pub(crate) fn flush_changes_into<W: Write>(
     out: &mut W,
     changes: &[CellChange],
+    graphics: &[u8],
     cursor: Option<RenderCursor>,
     bell: bool,
 ) -> io::Result<()> {
     queue_bell(out, bell)?;
     queue!(out, BeginSynchronizedUpdate)?;
+    out.write_all(graphics)?;
     // Attributes are sticky, so each flush starts from a known state and then emits only
     // transitions. `Attribute::Reset` also resets colors, which is harmless here because
     // every cell write re-specifies its own fg and bg.
@@ -170,16 +182,14 @@ pub(crate) fn flush_changes_into<W: Write>(
 pub(crate) fn flush_full_into<W: Write>(
     out: &mut W,
     grid: &Grid,
+    graphics: &[u8],
     cursor: Option<RenderCursor>,
     bell: bool,
 ) -> io::Result<()> {
     queue_bell(out, bell)?;
-    queue!(
-        out,
-        BeginSynchronizedUpdate,
-        Hide,
-        SetAttribute(Attribute::Reset)
-    )?;
+    queue!(out, BeginSynchronizedUpdate)?;
+    out.write_all(graphics)?;
+    queue!(out, Hide, SetAttribute(Attribute::Reset))?;
     let mut current_attrs = CellAttrs::default();
 
     for (y, row) in grid.cells.iter().enumerate() {
@@ -541,14 +551,14 @@ mod tests {
 
     fn full_bytes(bell: bool) -> String {
         let mut out = Vec::new();
-        flush_full_into(&mut out, &Grid::new(4, 2), None, bell)
+        flush_full_into(&mut out, &Grid::new(4, 2), &[], None, bell)
             .expect("writing to a Vec cannot fail");
         String::from_utf8(out).expect("flush output is valid utf-8")
     }
 
     fn changes_bytes(bell: bool) -> String {
         let mut out = Vec::new();
-        flush_changes_into(&mut out, &[], None, bell).expect("writing to a Vec cannot fail");
+        flush_changes_into(&mut out, &[], &[], None, bell).expect("writing to a Vec cannot fail");
         String::from_utf8(out).expect("flush output is valid utf-8")
     }
 

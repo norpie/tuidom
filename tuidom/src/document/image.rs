@@ -9,6 +9,7 @@ use crate::image::{
 };
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
+use crate::terminal::MultiplexerKind;
 
 use super::Document;
 
@@ -138,13 +139,24 @@ impl Document {
         Some((fitting, cells))
     }
 
-    /// The kitty image id `node` shows `image` under, handing out a new one when the image is
-    /// not the one the node last showed. Ids are 24-bit and never zero.
-    pub(crate) fn kitty_image_id(&self, node: NodeId, image: &Arc<ImageData>) -> u32 {
+    /// The kitty image id `node` shows `image` under at `fitting`, handing out a new one when
+    /// the image, its fitted size, its crop or the cell size is not what the node last showed.
+    /// Ids are 24-bit and never zero.
+    pub(crate) fn kitty_image_id(
+        &self,
+        node: NodeId,
+        image: &Arc<ImageData>,
+        fitting: &ImageFitting,
+        cell: (u16, u16),
+    ) -> u32 {
+        let size = (fitting.width, fitting.height);
         let mut guard = lock::mutex(&self.inner.kitty_images);
         let (images, last) = &mut *guard;
         if let Some(entry) = images.get(&node)
             && Arc::ptr_eq(&entry.image, image)
+            && entry.size == size
+            && entry.source == fitting.source
+            && entry.cell == cell
         {
             return entry.id;
         }
@@ -154,10 +166,21 @@ impl Document {
             node,
             KittyImage {
                 image: image.clone(),
+                size,
+                source: fitting.source,
+                cell,
                 id,
             },
         );
         id
+    }
+
+    /// Whether kitty graphics commands have to be wrapped for tmux passthrough.
+    pub(crate) fn kitty_through_tmux(&self) -> bool {
+        lock::mutex(&self.inner.terminal_info)
+            .as_ref()
+            .and_then(|info| info.multiplexer.as_ref())
+            .is_some_and(|multiplexer| multiplexer.kind == MultiplexerKind::Tmux)
     }
 
     /// Drop every cached half-block image, for frames that draw images another way.

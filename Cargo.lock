@@ -1292,6 +1292,7 @@ dependencies = [
  "criterion",
  "crossterm",
  "dashmap",
+ "flate2",
  "image",
  "palette",
  "rustc-hash",

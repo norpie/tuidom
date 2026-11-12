@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::canvas::{CanvasBuffer, CanvasStyle};
 
+pub(crate) mod kitty;
 pub(crate) mod placeholder;
 use crate::style::ResolvedColor;
 use crate::{Result, TuidomError};
@@ -139,11 +140,16 @@ fn pixels(value: f64, limit: u32) -> u32 {
     (value.round() as u32).clamp(1, limit)
 }
 
-/// The kitty image id a node's current image is shown under. A new image gets a new id, so its
-/// cells change color and are rewritten, and the old upload can be deleted by its own id.
+/// The kitty image id a node's image is shown under, and what it was uploaded as. An id names
+/// one image at one fitted size, crop and cell size; when any of them changes the node gets a
+/// new id, so its cells change color and are rewritten, and the old upload is deleted by its
+/// own id.
 #[derive(Debug)]
 pub(crate) struct KittyImage {
     pub image: Arc<ImageData>,
+    pub size: (u16, u16),
+    pub source: (u32, u32, u32, u32),
+    pub cell: (u16, u16),
     pub id: u32,
 }
 

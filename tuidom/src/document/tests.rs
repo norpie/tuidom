@@ -24,7 +24,7 @@ use crate::style::{
     CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position,
     ResolvedColor, ScrollbarShow, Sides, Style, StyleValue,
 };
-use crate::terminal::{PixelSize, TerminalInfo};
+use crate::terminal::{Multiplexer, MultiplexerKind, PixelSize, TerminalInfo};
 use crate::virtualize::Virtualizer;
 
 #[test]
@@ -699,6 +699,252 @@ fn a_new_image_gets_a_new_id_and_a_removed_node_drops_its_own() {
 
     doc.remove_child(doc.root(), image).unwrap();
     assert!(lock::mutex(&doc.inner.kitty_images).0.is_empty());
+}
+
+/// A kitty graphics command from flushed output: its keys and its payload.
+#[derive(Debug)]
+struct GraphicsCommand {
+    keys: HashMap<String, String>,
+    payload: String,
+}
+
+/// Every kitty graphics command in `bytes`, unwrapping tmux passthrough.
+fn graphics_commands(bytes: &[u8]) -> Vec<GraphicsCommand> {
+    let text = String::from_utf8_lossy(bytes)
+        .replace("\x1bPtmux;", "")
+        .replace("\x1b\x1b", "\x1b");
+    text.split("\x1b_G")
+        .skip(1)
+        .map(|rest| {
+            let body = &rest[..rest.find("\x1b\\").unwrap()];
+            let (keys, payload) = body.split_once(';').unwrap_or((body, ""));
+            GraphicsCommand {
+                keys: keys
+                    .split(',')
+                    .map(|pair| {
+                        let (key, value) = pair.split_once('=').unwrap();
+                        (key.to_string(), value.to_string())
+                    })
+                    .collect(),
+                payload: payload.to_string(),
+            }
+        })
+        .collect()
+}
+
+fn decode_upload(commands: &[GraphicsCommand]) -> Vec<u8> {
+    use std::io::Read;
+
+    let encoded: String = commands
+        .iter()
+        .map(|command| command.payload.as_str())
+        .collect();
+    let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut compressed = Vec::new();
+    for group in encoded.as_bytes().chunks(4) {
+        let values: Vec<u32> = group
+            .iter()
+            .filter(|&&byte| byte != b'=')
+            .map(|&byte| alphabet.find(char::from(byte)).unwrap() as u32)
+            .collect();
+        let bits =
+            values.iter().fold(0u32, |bits, value| bits << 6 | value) << (6 * (4 - values.len()));
+        compressed.extend_from_slice(&bits.to_be_bytes()[1..values.len()]);
+    }
+    let mut pixels = Vec::new();
+    flate2::read::ZlibDecoder::new(compressed.as_slice())
+        .read_to_end(&mut pixels)
+        .unwrap();
+    pixels
+}
+
+fn deleted_ids(commands: &[GraphicsCommand]) -> Vec<u32> {
+    commands
+        .iter()
+        .filter(|command| command.keys.get("a").map(String::as_str) == Some("d"))
+        .map(|command| command.keys["i"].parse().unwrap())
+        .collect()
+}
+
+fn uploaded_ids(commands: &[GraphicsCommand]) -> Vec<u32> {
+    commands
+        .iter()
+        .filter(|command| command.keys.get("a").map(String::as_str) == Some("T"))
+        .map(|command| command.keys["i"].parse().unwrap())
+        .collect()
+}
+
+/// A kitty-drawn image filling `columns` by `rows` cells at the root's top left.
+fn kitty_image(doc: &Document, columns: u16, rows: u16, data: Arc<ImageData>) -> NodeId {
+    let image = image_at_start(doc, |style| {
+        style.width(Length::Cells(columns));
+        style.height(Length::Cells(rows));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, data).unwrap();
+    doc.set_image_protocol(ImageProtocol::Kitty);
+    image
+}
+
+#[test]
+fn an_image_is_uploaded_at_its_fitted_pixel_size_before_its_cells() {
+    let doc = Document::new().unwrap();
+    let image = kitty_image(&doc, 2, 1, pixels(2, 2, &[RED, GREEN, BLUE, WHITE]));
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 1);
+    runtime.render_flushed().unwrap();
+
+    let output = runtime.flush_output();
+    let commands = graphics_commands(output);
+    assert_eq!(commands.len(), 1);
+    let keys = &commands[0].keys;
+    let id = kitty_id(&doc, image);
+    for (key, value) in [
+        ("a", "T"),
+        ("U", "1"),
+        ("f", "32"),
+        ("o", "z"),
+        ("s", "16"),
+        ("v", "16"),
+        ("c", "2"),
+        ("r", "1"),
+        ("q", "2"),
+        ("m", "0"),
+    ] {
+        assert_eq!(keys[key], value, "{key}");
+    }
+    assert_eq!(keys["i"], id.to_string());
+
+    let pixels = decode_upload(&commands);
+    assert_eq!(pixels.len(), 16 * 16 * 4);
+    let at = |x: usize, y: usize| &pixels[(y * 16 + x) * 4..][..4];
+    assert_eq!(at(0, 0), RED);
+    assert_eq!(at(15, 0), GREEN);
+    assert_eq!(at(0, 15), BLUE);
+    assert_eq!(at(15, 15), WHITE);
+
+    let text = String::from_utf8_lossy(output);
+    let begin_sync = text.find("\x1b[?2026h").unwrap();
+    let command = text.find("\x1b_G").unwrap();
+    let first_cell = text.find('\u{10EEEE}').unwrap();
+    assert!(begin_sync < command && command < first_cell);
+}
+
+#[test]
+fn a_large_upload_is_sent_in_chunks_kitty_accepts() {
+    let mut state = 1u32;
+    let noise: Vec<[u8; 4]> = (0..64 * 64)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let [r, g, b, _] = state.to_be_bytes();
+            [r, g, b, 255]
+        })
+        .collect();
+    let doc = Document::new().unwrap();
+    kitty_image(&doc, 8, 4, pixels(64, 64, &noise));
+    let mut runtime = HeadlessRuntime::new(doc, 8, 4);
+    runtime.render_flushed().unwrap();
+
+    let commands = graphics_commands(runtime.flush_output());
+    assert!(commands.len() > 1);
+    let (last, rest) = commands.split_last().unwrap();
+    for command in rest {
+        assert_eq!(command.keys["m"], "1");
+        assert_eq!(command.payload.len(), 4096);
+    }
+    assert_eq!(last.keys["m"], "0");
+    assert!(last.payload.len() <= 4096);
+    for command in &commands[1..] {
+        let mut keys: Vec<&str> = command.keys.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["m", "q"]);
+    }
+    assert_eq!(decode_upload(&commands).len(), 64 * 64 * 4);
+}
+
+#[test]
+fn an_unchanged_image_is_not_uploaded_again() {
+    let doc = Document::new().unwrap();
+    let image = kitty_image(&doc, 2, 1, solid_image(4, 4));
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 1);
+    runtime.render_flushed().unwrap();
+
+    doc.update_style(image, |style| style.background(Color::black()))
+        .unwrap();
+    runtime.render_flushed().unwrap();
+    assert!(graphics_commands(runtime.flush_output()).is_empty());
+}
+
+#[test]
+fn a_resized_image_is_uploaded_under_a_new_id_and_the_old_one_deleted() {
+    let doc = Document::new().unwrap();
+    let image = kitty_image(&doc, 2, 1, solid_image(4, 4));
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 4, 2);
+    runtime.render_flushed().unwrap();
+    let first = kitty_id(&doc, image);
+
+    doc.update_style(image, |style| style.width(Length::Cells(3)))
+        .unwrap();
+    runtime.render_flushed().unwrap();
+    let second = kitty_id(&doc, image);
+    assert_ne!(first, second);
+
+    let commands = graphics_commands(runtime.flush_output());
+    assert_eq!(deleted_ids(&commands), [first]);
+    assert_eq!(uploaded_ids(&commands), [second]);
+    assert_eq!(commands[1].keys["c"], "3");
+}
+
+#[test]
+fn an_image_no_longer_drawn_as_placeholders_is_deleted() {
+    let doc = Document::new().unwrap();
+    let image = kitty_image(&doc, 2, 1, solid_image(4, 4));
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 3, 1);
+    runtime.render_flushed().unwrap();
+    let id = kitty_id(&doc, image);
+
+    doc.set_image_protocol(ImageProtocol::HalfBlock);
+    runtime.render_flushed().unwrap();
+    assert_eq!(
+        deleted_ids(&graphics_commands(runtime.flush_output())),
+        [id]
+    );
+
+    doc.set_image_protocol(ImageProtocol::Kitty);
+    runtime.render_flushed().unwrap();
+    assert_eq!(
+        uploaded_ids(&graphics_commands(runtime.flush_output())),
+        [id]
+    );
+
+    doc.remove_child(doc.root(), image).unwrap();
+    runtime.render_flushed().unwrap();
+    assert_eq!(
+        deleted_ids(&graphics_commands(runtime.flush_output())),
+        [id]
+    );
+}
+
+#[test]
+fn inside_tmux_image_commands_are_wrapped_for_passthrough() {
+    let doc = Document::new().unwrap();
+    kitty_image(&doc, 2, 1, solid_image(4, 4));
+    let mut runtime = HeadlessRuntime::new(doc, 3, 1);
+    runtime.set_terminal_info(TerminalInfo {
+        multiplexer: Some(Multiplexer {
+            kind: MultiplexerKind::Tmux,
+            version: None,
+            passthrough: true,
+        }),
+        ..TerminalInfo::default()
+    });
+    runtime.render_flushed().unwrap();
+
+    let text = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+    assert!(text.contains("\x1bPtmux;\x1b\x1b_Ga=T,"), "{text:?}");
+    assert!(
+        !text.replace("\x1b\x1b_G", "").contains("\x1b_G"),
+        "every command is wrapped: {text:?}"
+    );
 }
 
 /// A canvas filling the screen that redraws itself full of `#` at every size it reports.
