@@ -51,6 +51,7 @@ impl Document {
         screen_height: u16,
     ) -> Result<Vec<RuntimeEvent>> {
         self.sync_animating_layout_styles();
+        self.sync_cell_pixels()?;
         let reclamped = compute_document_layout(self, screen_width, screen_height)?;
         let mut events: Vec<RuntimeEvent> = reclamped
             .into_iter()
@@ -58,6 +59,10 @@ impl Document {
             .collect();
         events.extend(self.size_changes());
         Ok(events)
+    }
+
+    fn sync_cell_pixels(&self) -> Result<()> {
+        lock::mutex(&self.inner.layout).set_cell_pixels(self.cell_pixels())
     }
 
     /// Compare each listened node's content size against the one last reported for it.

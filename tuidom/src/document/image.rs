@@ -1,9 +1,85 @@
-use crate::image::{ImageDrawing, ImageProtocol};
+use std::sync::Arc;
+
+use crate::error::{Result, TuidomError};
+use crate::id::NodeId;
+use crate::image::{ASSUMED_CELL_PIXELS, ImageData, ImageDrawing, ImageFit, ImageProtocol};
 use crate::lock;
+use crate::node::{NodeData, NodeKind};
 
 use super::Document;
 
 impl Document {
+    /// Create a new image node, detached from the tree.
+    ///
+    /// An axis its style leaves unset is sized by the image: its pixels divided by the
+    /// terminal's cell size, or an assumed 8 by 16 pixel cell where the terminal has not
+    /// reported one. When the style sets just one axis, the other keeps the image's aspect
+    /// ratio. Like a canvas, it can shrink below that size, takes no children, and starts
+    /// with an empty image.
+    ///
+    /// Returns the [`NodeId`] of the created node.
+    pub fn create_image(&self) -> Result<NodeId> {
+        let id = self.inner.alloc(NodeData::image());
+        if let Err(err) = self.register_layout_node(id) {
+            self.inner.nodes.remove(&id);
+            return Err(err);
+        }
+        Ok(id)
+    }
+
+    /// Replace an image node's image.
+    ///
+    /// The same `Arc` as the node already has is a no-op, decided without comparing pixels,
+    /// so keep the `Arc` to show one image again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not an image node.
+    pub fn set_image(&self, node: NodeId, image: Arc<ImageData>) -> Result<()> {
+        let resized = {
+            let Some(mut data) = self.inner.nodes.get_mut(&node) else {
+                return Err(TuidomError::NodeNotFound { id: node });
+            };
+            let NodeKind::Image { data: current, .. } = &mut data.kind else {
+                return Err(TuidomError::NodeNotImage { id: node });
+            };
+            if Arc::ptr_eq(current, &image) {
+                return Ok(());
+            }
+            let resized = (current.width(), current.height()) != (image.width(), image.height());
+            *current = image;
+            resized
+        };
+
+        if resized {
+            self.register_layout_node(node)?;
+        }
+        self.inner.notify.notify_one();
+        Ok(())
+    }
+
+    /// Set how an image node's image fills its content box. [`ImageFit::Contain`] by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node` does not exist or is not an image node.
+    pub fn set_image_fit(&self, node: NodeId, fit: ImageFit) -> Result<()> {
+        {
+            let Some(mut data) = self.inner.nodes.get_mut(&node) else {
+                return Err(TuidomError::NodeNotFound { id: node });
+            };
+            let NodeKind::Image { fit: current, .. } = &mut data.kind else {
+                return Err(TuidomError::NodeNotImage { id: node });
+            };
+            if *current == fit {
+                return Ok(());
+            }
+            *current = fit;
+        }
+        self.inner.notify.notify_one();
+        Ok(())
+    }
+
     /// Choose how images are drawn. [`ImageProtocol::Auto`] by default.
     pub fn set_image_protocol(&self, protocol: ImageProtocol) {
         let mut current = lock::mutex(&self.inner.image_protocol);
@@ -35,5 +111,15 @@ impl Document {
                 }
             }
         }
+    }
+
+    /// One cell's size in pixels: the terminal's where it reported one, assumed otherwise.
+    pub(crate) fn cell_pixels(&self) -> (u16, u16) {
+        lock::mutex(&self.inner.terminal_info)
+            .as_ref()
+            .and_then(|info| info.pixel_size)
+            .map(|size| (size.cell_width, size.cell_height))
+            .filter(|&(width, height)| width > 0 && height > 0)
+            .unwrap_or(ASSUMED_CELL_PIXELS)
     }
 }

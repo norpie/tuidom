@@ -149,14 +149,11 @@ impl Document {
             return Err(TuidomError::TreeCycle { parent, child });
         }
 
-        // A canvas is sized by its buffer through taffy's measure function, which taffy only
-        // calls for nodes without children.
-        if self
-            .inner
-            .nodes
-            .get(&parent)
-            .is_some_and(|data| matches!(data.kind, NodeKind::Canvas { .. }))
-        {
+        // A canvas or image is sized through taffy's measure function, which taffy only calls
+        // for nodes without children.
+        if self.inner.nodes.get(&parent).is_some_and(|data| {
+            matches!(data.kind, NodeKind::Canvas { .. } | NodeKind::Image { .. })
+        }) {
             return Err(TuidomError::NodeCannotHaveChildren { id: parent });
         }
 

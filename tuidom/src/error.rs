@@ -91,6 +91,13 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// A node exists but is not an image.
+    #[error("node {id:?} is not an image")]
+    NodeNotImage {
+        /// The node that is not an image.
+        id: NodeId,
+    },
+
     /// A node that takes no children was given one.
     #[error("node {id:?} cannot have children")]
     NodeCannotHaveChildren {

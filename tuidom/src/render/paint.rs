@@ -153,7 +153,7 @@ fn paint_entry(
     paint_half_block_edges(grid, node, alpha, rgb_cache, profile);
 
     let cursor = match &node.kind {
-        NodeKindView::Box => None,
+        NodeKindView::Box | NodeKindView::Image { .. } => None,
 
         NodeKindView::Canvas { buffer } => {
             paint_canvas(grid, node, buffer, fg_rgb, alpha, rgb_cache, profile);
@@ -614,7 +614,7 @@ fn entry_has_no_self_paint(entry: &PaintEntry) -> bool {
     }
 
     match &entry.kind {
-        NodeKindView::Box => true,
+        NodeKindView::Box | NodeKindView::Image { .. } => true,
         NodeKindView::Canvas { buffer } => buffer.width() == 0 || buffer.height() == 0,
         NodeKindView::Text { content } => content.is_empty(),
         NodeKindView::Input { .. } => false,
@@ -785,6 +785,7 @@ fn node_kind_label(kind: &NodeKindView) -> &'static str {
         NodeKindView::Input { .. } => "input",
         NodeKindView::Frames { .. } => "frames",
         NodeKindView::Canvas { .. } => "canvas",
+        NodeKindView::Image { .. } => "image",
     }
 }
 

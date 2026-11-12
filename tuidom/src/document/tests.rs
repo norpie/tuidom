@@ -13,7 +13,7 @@ use crate::event::{
     ListenerHandle, MouseButton, MouseEvent, ResizeEvent, WheelEvent,
 };
 use crate::headless::{HeadlessRuntime, ScreenCell, ScreenColor};
-use crate::image::{ImageDrawing, ImageProtocol};
+use crate::image::{ImageData, ImageDrawing, ImageFit, ImageProtocol};
 use crate::node::{LayoutRect, NodeKindView, NodeLayout};
 use crate::paint_order::paint_order;
 use crate::performance::PerformanceDetail;
@@ -24,7 +24,7 @@ use crate::style::{
     CursorShape, Display, EdgeInsets, FlexDirection, FlexGap, FlexWrap, Length, Overflow, Position,
     ResolvedColor, ScrollbarShow, Sides, Style, StyleValue,
 };
-use crate::terminal::TerminalInfo;
+use crate::terminal::{PixelSize, TerminalInfo};
 use crate::virtualize::Virtualizer;
 
 #[test]
@@ -167,6 +167,173 @@ fn a_canvas_can_shrink_below_its_buffer() {
         .unwrap();
     doc.compute_layout(4, 1).unwrap();
     assert_eq!(width(&doc), 6);
+}
+
+fn solid_image(width: u32, height: u32) -> Arc<ImageData> {
+    Arc::new(
+        ImageData::from_rgba(
+            width,
+            height,
+            vec![255; width as usize * height as usize * 4],
+        )
+        .unwrap(),
+    )
+}
+
+fn with_cell_pixels(cell_width: u16, cell_height: u16) -> TerminalInfo {
+    TerminalInfo {
+        pixel_size: Some(PixelSize {
+            width: cell_width * 20,
+            height: cell_height * 10,
+            cell_width,
+            cell_height,
+        }),
+        ..TerminalInfo::default()
+    }
+}
+
+/// An image node at the root's top left, sized by nothing but its image unless `style` says.
+fn image_at_start(doc: &Document, style: impl FnOnce(&mut Style)) -> NodeId {
+    let image = doc.create_image().unwrap();
+    let mut node_style = Style::new();
+    node_style.align_self(AlignSelf::FlexStart);
+    node_style.flex_shrink(0.0);
+    style(&mut node_style);
+    doc.set_style(image, &node_style).unwrap();
+    doc.append_child(doc.root(), image).unwrap();
+    image
+}
+
+fn size_of(doc: &Document, node: NodeId) -> (u16, u16) {
+    let rect = doc.get_node(node).unwrap().layout.unwrap().rect;
+    (rect.width, rect.height)
+}
+
+#[test]
+fn an_image_node_starts_empty_and_takes_no_children() {
+    let doc = Document::new().unwrap();
+    let image = doc.create_image().unwrap();
+    assert!(matches!(
+        doc.get_node(image).unwrap().kind,
+        NodeKindView::Image { data, fit: ImageFit::Contain } if data.width() == 0 && data.height() == 0
+    ));
+
+    let child = doc.create_box().unwrap();
+    assert_eq!(
+        doc.append_child(image, child).unwrap_err(),
+        TuidomError::NodeCannotHaveChildren { id: image }
+    );
+
+    doc.set_image_fit(image, ImageFit::Cover).unwrap();
+    assert!(matches!(
+        doc.get_node(image).unwrap().kind,
+        NodeKindView::Image {
+            fit: ImageFit::Cover,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn image_setters_on_another_kind_of_node_error() {
+    let doc = Document::new().unwrap();
+    let text = doc.create_text("a").unwrap();
+    assert_eq!(
+        doc.set_image(text, solid_image(1, 1)).unwrap_err(),
+        TuidomError::NodeNotImage { id: text }
+    );
+    assert_eq!(
+        doc.set_image_fit(text, ImageFit::Fill).unwrap_err(),
+        TuidomError::NodeNotImage { id: text }
+    );
+}
+
+#[tokio::test]
+async fn setting_the_same_image_again_does_not_notify_render() {
+    let doc = Document::new().unwrap();
+    let image = doc.create_image().unwrap();
+    let data = solid_image(2, 2);
+
+    let notified = doc.inner.notify.notified();
+    doc.set_image(image, data.clone()).unwrap();
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    let notified = doc.inner.notify.notified();
+    doc.set_image(image, data).unwrap();
+    doc.set_image_fit(image, ImageFit::Contain).unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .is_err()
+    );
+}
+
+#[test]
+fn an_image_measures_as_its_pixels_over_the_cell_size() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |_| {});
+    doc.set_image(image, solid_image(80, 64)).unwrap();
+    doc.compute_layout(40, 20).unwrap();
+    assert_eq!(size_of(&doc, image), (10, 4), "assumed 8 by 16 cells");
+
+    // Same size, new pixels: nothing for layout to redo.
+    doc.set_image(image, solid_image(80, 64)).unwrap();
+    assert!(!lock::mutex(&doc.inner.layout).needs_compute(40, 20));
+
+    let mut runtime = HeadlessRuntime::new(doc.clone(), 40, 20);
+    runtime.set_terminal_info(with_cell_pixels(10, 20));
+    runtime.render().unwrap();
+    assert_eq!(size_of(&doc, image), (8, 4), "a partial cell rounds up");
+}
+
+#[test]
+fn an_image_with_one_axis_set_keeps_its_aspect_ratio() {
+    let doc = Document::new().unwrap();
+    let wide = image_at_start(&doc, |style| {
+        style.width(Length::Cells(20));
+    });
+    let tall = image_at_start(&doc, |style| {
+        style.height(Length::Cells(2));
+    });
+    let both = image_at_start(&doc, |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(3));
+    });
+    for node in [wide, tall, both] {
+        doc.set_image(node, solid_image(80, 64)).unwrap();
+    }
+    doc.compute_layout(60, 20).unwrap();
+
+    assert_eq!(size_of(&doc, wide), (20, 8));
+    assert_eq!(size_of(&doc, tall), (5, 2));
+    assert_eq!(size_of(&doc, both), (3, 3));
+}
+
+#[test]
+fn an_image_can_shrink_or_stretch_without_changing_its_other_axis() {
+    let doc = Document::new().unwrap();
+    let image = doc.create_image().unwrap();
+    doc.append_child(doc.root(), image).unwrap();
+    doc.set_image(image, solid_image(80, 64)).unwrap();
+
+    doc.compute_layout(6, 20).unwrap();
+    assert_eq!(
+        size_of(&doc, image),
+        (6, 20),
+        "shrunk across, stretched down"
+    );
+
+    let mut column = Style::new();
+    column.flex_direction(FlexDirection::Column);
+    doc.set_style(doc.root(), &column).unwrap();
+    doc.compute_layout(30, 3).unwrap();
+    assert_eq!(
+        size_of(&doc, image),
+        (30, 3),
+        "stretched across, shrunk down"
+    );
 }
 
 /// A canvas filling the screen that redraws itself full of `#` at every size it reports.
@@ -7338,7 +7505,7 @@ fn auto_draws_images_with_placeholders_only_where_the_terminal_supports_them() {
 }
 
 #[tokio::test]
-async fn terminal_info_that_changes_how_images_draw_notifies_render() {
+async fn terminal_info_that_changes_how_images_draw_or_measure_notifies_render() {
     let doc = Document::new().unwrap();
     let mut runtime = HeadlessRuntime::new(doc.clone(), 10, 3);
     runtime.render().unwrap();
@@ -7353,6 +7520,13 @@ async fn terminal_info_that_changes_how_images_draw_notifies_render() {
 
     let mut placeholders = kitty_terminal();
     placeholders.graphics.placeholders = true;
+    let notified = doc.inner.notify.notified();
+    runtime.set_terminal_info(placeholders.clone());
+    tokio::time::timeout(Duration::from_millis(100), notified)
+        .await
+        .unwrap();
+
+    placeholders.pixel_size = with_cell_pixels(10, 20).pixel_size;
     let notified = doc.inner.notify.notified();
     runtime.set_terminal_info(placeholders);
     tokio::time::timeout(Duration::from_millis(100), notified)

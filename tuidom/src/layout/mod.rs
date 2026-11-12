@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::document::Document;
 use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
+use crate::image::{ASSUMED_CELL_PIXELS, intrinsic_cells};
 use crate::lock;
 use crate::node::{LayoutRect, NodeKind, NodeLayout, ScrollOffset};
 use crate::style::resolution::ResolvedStyle;
@@ -48,6 +49,8 @@ pub(crate) struct LayoutEngine {
     last_dimensions: Option<(u16, u16)>,
     /// Whether the published snapshot placed any anchored node.
     has_anchored: bool,
+    /// One cell's size in pixels, which images are measured by.
+    cell_pixels: (u16, u16),
 }
 
 // Taffy stores compact length values in tagged raw pointers, which prevents
@@ -73,6 +76,7 @@ impl LayoutEngine {
             dirty: true,
             last_dimensions: None,
             has_anchored: false,
+            cell_pixels: ASSUMED_CELL_PIXELS,
         }
     }
 
@@ -91,6 +95,31 @@ impl LayoutEngine {
         if self.has_anchored {
             self.dirty = true;
         }
+    }
+
+    /// Change the cell size images are measured by. Taffy caches measurements, so every image
+    /// leaf is marked for remeasuring.
+    pub fn set_cell_pixels(&mut self, cell: (u16, u16)) -> Result<()> {
+        if self.cell_pixels == cell {
+            return Ok(());
+        }
+        self.cell_pixels = cell;
+        let images: Vec<_> = self
+            .mapping
+            .values()
+            .copied()
+            .filter(|&id| {
+                matches!(
+                    self.taffy.get_node_context(id),
+                    Some(MeasureContext::Image { .. })
+                )
+            })
+            .collect();
+        for id in images {
+            self.dirty = true;
+            self.taffy.mark_dirty(id)?;
+        }
+        Ok(())
     }
 
     /// The screen size the published snapshot was computed for.
@@ -203,8 +232,14 @@ impl LayoutEngine {
             height: AvailableSpace::Definite(screen_height as f32),
         };
 
-        self.taffy
-            .compute_layout_with_measure(taffy_root, available, measure_fn)?;
+        let cell = self.cell_pixels;
+        self.taffy.compute_layout_with_measure(
+            taffy_root,
+            available,
+            |known, available, _, context, style| {
+                measure_fn(known, available, context, style, cell)
+            },
+        )?;
 
         let mut layouts = Vec::new();
         self.collect_absolute_layouts(root, visible_children, 0.0, 0.0, &mut layouts)?;
@@ -308,6 +343,8 @@ enum MeasureContext {
     Frames { frames: Vec<String> },
     /// A canvas: its buffer's size, in cells.
     Canvas { width: u16, height: u16 },
+    /// An image's size in pixels, turned into cells by the cell size at measure time.
+    Image { width: u32, height: u32 },
 }
 
 /// The measurement context a node kind carries into taffy, if any.
@@ -325,6 +362,10 @@ fn measure_context_for(kind: &NodeKind) -> Option<MeasureContext> {
         NodeKind::Canvas { buffer } => Some(MeasureContext::Canvas {
             width: buffer.width(),
             height: buffer.height(),
+        }),
+        NodeKind::Image { data, .. } => Some(MeasureContext::Image {
+            width: data.width(),
+            height: data.height(),
         }),
         NodeKind::Box => None,
     }
@@ -472,9 +513,9 @@ fn collect_visible_tree(
 fn measure_fn(
     known_dimensions: Size<Option<f32>>,
     available_space: Size<AvailableSpace>,
-    _node_id: taffy::prelude::NodeId,
     context: Option<&mut MeasureContext>,
-    _style: &Style,
+    style: &Style,
+    cell: (u16, u16),
 ) -> Size<f32> {
     match context {
         Some(MeasureContext::Text { content }) => measure_natural(
@@ -498,9 +539,44 @@ fn measure_fn(
         // the preferred size but no minimum: a canvas holding a buffer drawn for a larger box can
         // still shrink and report the smaller size to be redrawn for.
         Some(MeasureContext::Canvas { width, height }) => Size {
-            width: canvas_axis(known_dimensions.width, available_space.width, *width),
-            height: canvas_axis(known_dimensions.height, available_space.height, *height),
+            width: canvas_axis(
+                known_dimensions.width,
+                available_space.width,
+                f32::from(*width),
+            ),
+            height: canvas_axis(
+                known_dimensions.height,
+                available_space.height,
+                f32::from(*height),
+            ),
         },
+        // An axis the style leaves unset follows the aspect ratio when the style sets the other.
+        // Only a style-set axis counts: a size known from stretching or shrinking would grow or
+        // collapse the other axis with it.
+        Some(MeasureContext::Image { width, height }) => {
+            let (natural_width, natural_height) = intrinsic_cells((*width, *height), cell);
+            let ratio = image_cell_ratio((*width, *height), cell);
+            let set_width = known_dimensions
+                .width
+                .filter(|_| !style.size.width.is_auto());
+            let set_height = known_dimensions
+                .height
+                .filter(|_| !style.size.height.is_auto());
+            Size {
+                width: match (set_width, set_height, ratio) {
+                    (None, Some(height), Some(ratio)) => (height / ratio).round(),
+                    _ => canvas_axis(known_dimensions.width, available_space.width, natural_width),
+                },
+                height: match (set_width, set_height, ratio) {
+                    (Some(width), None, Some(ratio)) => (width * ratio).round(),
+                    _ => canvas_axis(
+                        known_dimensions.height,
+                        available_space.height,
+                        natural_height,
+                    ),
+                },
+            }
+        }
         None => Size::ZERO,
     }
 }
@@ -529,12 +605,22 @@ fn natural_text_size(content: &str) -> Size<f32> {
     Size { width, height }
 }
 
-fn canvas_axis(known: Option<f32>, available: AvailableSpace, buffer: u16) -> f32 {
+fn canvas_axis(known: Option<f32>, available: AvailableSpace, natural: f32) -> f32 {
     match (known, available) {
         (Some(known), _) => known,
         (None, AvailableSpace::MinContent) => 0.0,
-        (None, available) => resolve_measured_axis(None, available, f32::from(buffer)),
+        (None, available) => resolve_measured_axis(None, available, natural),
     }
+}
+
+/// Rows per column of an image drawn at its own aspect ratio, or `None` for an empty one.
+fn image_cell_ratio(image: (u32, u32), cell: (u16, u16)) -> Option<f32> {
+    if image.0 == 0 || image.1 == 0 {
+        return None;
+    }
+    let rows_per_column = (f64::from(image.1) * f64::from(cell.0.max(1)))
+        / (f64::from(image.0) * f64::from(cell.1.max(1)));
+    Some(rows_per_column as f32)
 }
 
 fn resolve_measured_axis(known: Option<f32>, available: AvailableSpace, natural: f32) -> f32 {

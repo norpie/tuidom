@@ -11,6 +11,7 @@ use crate::animation::TransitionConfig;
 use crate::animation::TransitionProperty;
 use crate::canvas::CanvasBuffer;
 use crate::id::NodeId;
+use crate::image::{ImageData, ImageFit};
 use crate::style::resolution::ResolvedStyle;
 use crate::style::{EdgeInsets, Style};
 
@@ -270,6 +271,8 @@ pub(crate) enum NodeKind {
     /// Cells the app draws itself. Shared so cloning the kind, which layout and paint do,
     /// never copies the cells.
     Canvas { buffer: Arc<CanvasBuffer> },
+    /// Decoded pixels, shared the same way.
+    Image { data: Arc<ImageData>, fit: ImageFit },
 }
 
 /// The frame index a frames node shows at `now`.
@@ -349,6 +352,22 @@ impl NodeData {
         Self {
             kind: NodeKind::Input {
                 state: InputState::new(content),
+            },
+            parent: None,
+            children: Vec::new(),
+            style: Style::default(),
+            resolved_style: RwLock::new(None),
+            transition_configs: HashMap::new(),
+            attrs: HashMap::new(),
+        }
+    }
+
+    /// Create a new image node with an empty image.
+    pub fn image() -> Self {
+        Self {
+            kind: NodeKind::Image {
+                data: Arc::new(ImageData::default()),
+                fit: ImageFit::default(),
             },
             parent: None,
             children: Vec::new(),
@@ -454,6 +473,13 @@ pub enum NodeKindView {
         /// The buffer last given to [`Document::set_canvas`](crate::Document::set_canvas).
         buffer: Arc<CanvasBuffer>,
     },
+    /// Decoded pixels.
+    Image {
+        /// The image last given to [`Document::set_image`](crate::Document::set_image).
+        data: Arc<ImageData>,
+        /// How it fills the content box.
+        fit: ImageFit,
+    },
 }
 
 impl NodeKind {
@@ -487,6 +513,10 @@ impl NodeKind {
             },
             NodeKind::Canvas { buffer } => NodeKindView::Canvas {
                 buffer: buffer.clone(),
+            },
+            NodeKind::Image { data, fit } => NodeKindView::Image {
+                data: data.clone(),
+                fit: *fit,
             },
         }
     }

@@ -27,10 +27,118 @@ pub(crate) enum ImageDrawing {
     HalfBlock,
 }
 
+/// How an image fills its node's content box.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ImageFit {
+    /// The whole image as large as fits with its aspect ratio kept, centered. The node's
+    /// background shows in the space left over.
+    #[default]
+    Contain,
+    /// The image keeps its aspect ratio and covers the whole box, cropped evenly on the
+    /// sides that overflow.
+    Cover,
+    /// The whole image stretched to the box.
+    Fill,
+}
+
+/// The cell size assumed when the terminal has not reported one, in pixels.
+pub(crate) const ASSUMED_CELL_PIXELS: (u16, u16) = (8, 16);
+
+/// Where an image lands in a content box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ImageFitting {
+    /// Cells from the content box's left edge.
+    pub x: u16,
+    /// Cells from the content box's top edge.
+    pub y: u16,
+    /// Width in cells.
+    pub width: u16,
+    /// Height in cells.
+    pub height: u16,
+    /// The part of the image shown, in pixels: x, y, width, height.
+    pub source: (u32, u32, u32, u32),
+}
+
+/// Place an image of `image` pixels in a content box of `content` cells, each `cell` pixels.
+/// `None` when either is empty, since nothing is drawn.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn fit_image(
+    image: (u32, u32),
+    cell: (u16, u16),
+    content: (u16, u16),
+    fit: ImageFit,
+) -> Option<ImageFitting> {
+    let (image_width, image_height) = image;
+    let (columns, rows) = content;
+    if image_width == 0 || image_height == 0 || columns == 0 || rows == 0 {
+        return None;
+    }
+    let cell_width = f64::from(cell.0.max(1));
+    let cell_height = f64::from(cell.1.max(1));
+    let box_width = f64::from(columns) * cell_width;
+    let box_height = f64::from(rows) * cell_height;
+    let horizontal = box_width / f64::from(image_width);
+    let vertical = box_height / f64::from(image_height);
+    let whole = (0, 0, image_width, image_height);
+
+    Some(match fit {
+        ImageFit::Fill => ImageFitting {
+            x: 0,
+            y: 0,
+            width: columns,
+            height: rows,
+            source: whole,
+        },
+        ImageFit::Contain => {
+            let scale = horizontal.min(vertical);
+            let width = cells(f64::from(image_width) * scale / cell_width, columns);
+            let height = cells(f64::from(image_height) * scale / cell_height, rows);
+            ImageFitting {
+                x: (columns - width) / 2,
+                y: (rows - height) / 2,
+                width,
+                height,
+                source: whole,
+            }
+        }
+        ImageFit::Cover => {
+            let scale = horizontal.max(vertical);
+            let shown_width = pixels(box_width / scale, image_width);
+            let shown_height = pixels(box_height / scale, image_height);
+            ImageFitting {
+                x: 0,
+                y: 0,
+                width: columns,
+                height: rows,
+                source: (
+                    (image_width - shown_width) / 2,
+                    (image_height - shown_height) / 2,
+                    shown_width,
+                    shown_height,
+                ),
+            }
+        }
+    })
+}
+
+/// An image's size in cells at its own resolution, rounded up so no pixel is cut.
+pub(crate) fn intrinsic_cells(image: (u32, u32), cell: (u16, u16)) -> (f32, f32) {
+    let axis = |pixels: u32, cell: u16| (f64::from(pixels) / f64::from(cell.max(1))).ceil() as f32;
+    (axis(image.0, cell.0), axis(image.1, cell.1))
+}
+
+fn cells(value: f64, limit: u16) -> u16 {
+    (value.round() as u16).clamp(1, limit)
+}
+
+fn pixels(value: f64, limit: u32) -> u32 {
+    (value.round() as u32).clamp(1, limit)
+}
+
 /// An image as RGBA pixels, eight bits per channel, rows top to bottom.
 ///
 /// A zero-sized image is allowed and shows nothing.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ImageData {
     width: u32,
     height: u32,
@@ -168,6 +276,57 @@ mod tests {
 
     fn image(width: u32, height: u32, pixels: &[[u8; 4]]) -> ImageData {
         ImageData::from_rgba(width, height, pixels.concat()).unwrap()
+    }
+
+    const CELL: (u16, u16) = (8, 16);
+
+    #[test]
+    fn contain_keeps_the_aspect_ratio_and_centers_with_the_odd_cell_last() {
+        let wide = fit_image((160, 32), CELL, (10, 10), ImageFit::Contain).unwrap();
+        assert_eq!((wide.x, wide.y, wide.width, wide.height), (0, 4, 10, 1));
+        assert_eq!(wide.source, (0, 0, 160, 32));
+
+        let tall = fit_image((8, 160), CELL, (5, 5), ImageFit::Contain).unwrap();
+        assert_eq!((tall.x, tall.y, tall.width, tall.height), (2, 0, 1, 5));
+    }
+
+    #[test]
+    fn fill_stretches_the_whole_image_over_the_box() {
+        let fitting = fit_image((160, 32), CELL, (4, 7), ImageFit::Fill).unwrap();
+        assert_eq!(
+            fitting,
+            ImageFitting {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 7,
+                source: (0, 0, 160, 32),
+            }
+        );
+    }
+
+    #[test]
+    fn cover_fills_the_box_with_a_centered_crop() {
+        let fitting = fit_image((160, 160), CELL, (10, 2), ImageFit::Cover).unwrap();
+        assert_eq!(
+            (fitting.x, fitting.y, fitting.width, fitting.height),
+            (0, 0, 10, 2)
+        );
+        assert_eq!(fitting.source, (0, 48, 160, 64));
+    }
+
+    #[test]
+    fn nothing_fits_an_empty_image_or_box() {
+        for fit in [ImageFit::Contain, ImageFit::Cover, ImageFit::Fill] {
+            assert_eq!(fit_image((0, 10), CELL, (4, 4), fit), None);
+            assert_eq!(fit_image((10, 10), CELL, (4, 0), fit), None);
+        }
+    }
+
+    #[test]
+    fn intrinsic_size_rounds_partial_cells_up() {
+        assert_eq!(intrinsic_cells((80, 64), CELL), (10.0, 4.0));
+        assert_eq!(intrinsic_cells((81, 65), CELL), (11.0, 5.0));
     }
 
     #[test]
