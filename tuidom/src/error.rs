@@ -98,6 +98,19 @@ pub enum TuidomError {
         id: NodeId,
     },
 
+    /// RGBA bytes do not match the image size they were given with.
+    #[error("image data has {actual} bytes, expected {expected} for its size")]
+    InvalidImageData {
+        /// Width times height times four.
+        expected: usize,
+        /// The bytes given.
+        actual: usize,
+    },
+
+    /// Image bytes could not be decoded.
+    #[error("image could not be decoded: {0}")]
+    ImageDecode(String),
+
     /// An attribute key is invalid.
     #[error("attribute key cannot be empty")]
     InvalidAttributeKey,

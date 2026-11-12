@@ -27,6 +27,7 @@ pub mod geometry;
 pub mod headless;
 /// Node handle types.
 mod id;
+pub mod image;
 /// Internal document state.
 mod inner;
 /// Taffy-based flexbox layout.
