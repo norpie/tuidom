@@ -195,3 +195,42 @@ fn both_palettes_set_cards_and_popovers_apart_from_the_background() {
         assert_ne!(literal(&palette.popover), background);
     }
 }
+
+#[test]
+fn a_scope_shadows_the_chart_colors() {
+    let mut h = Harness::new(8, 2, || {
+        install_theme(Theme::dark());
+        view! {
+            box {
+                style: column(),
+                box { test_id: "outer" },
+                ThemeScope { theme: Theme::light(), box { test_id: "inner" } },
+            }
+        }
+    });
+    let outer = h.find_attr("test_id", "outer").unwrap();
+    let inner = h.find_attr("test_id", "inner").unwrap();
+    let chart_1 = |node| {
+        h.document()
+            .resolve_color(node, &Color::var("--chart-1"))
+            .unwrap()
+    };
+    assert_eq!(chart_1(outer), Some(literal(&Palette::dark().chart_1)));
+    assert_eq!(chart_1(inner), Some(literal(&Palette::light().chart_1)));
+}
+
+#[test]
+fn both_palettes_have_five_distinct_chart_colors() {
+    for palette in [Palette::dark(), Palette::light()] {
+        let charts = [
+            &palette.chart_1,
+            &palette.chart_2,
+            &palette.chart_3,
+            &palette.chart_4,
+            &palette.chart_5,
+        ];
+        for (index, color) in charts.iter().enumerate() {
+            assert!(!charts[index + 1..].contains(color));
+        }
+    }
+}

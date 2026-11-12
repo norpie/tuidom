@@ -47,6 +47,16 @@ pub struct Palette {
     pub input: Color,
     /// `--ring`: the focus indicator.
     pub ring: Color,
+    /// `--chart-1`: the first chart series.
+    pub chart_1: Color,
+    /// `--chart-2`: the second chart series.
+    pub chart_2: Color,
+    /// `--chart-3`: the third chart series.
+    pub chart_3: Color,
+    /// `--chart-4`: the fourth chart series.
+    pub chart_4: Color,
+    /// `--chart-5`: the fifth chart series.
+    pub chart_5: Color,
 }
 
 impl Palette {
@@ -73,6 +83,11 @@ impl Palette {
             border: Color::oklcha(1.0, 0.0, 0.0, 0.1),
             input: Color::oklcha(1.0, 0.0, 0.0, 0.15),
             ring: Color::oklch(0.556, 0.0, 0.0),
+            chart_1: Color::oklch(0.488, 0.243, 264.376),
+            chart_2: Color::oklch(0.696, 0.17, 162.48),
+            chart_3: Color::oklch(0.769, 0.188, 70.08),
+            chart_4: Color::oklch(0.627, 0.265, 303.9),
+            chart_5: Color::oklch(0.645, 0.246, 16.439),
         }
     }
 
@@ -101,11 +116,16 @@ impl Palette {
             border: Color::oklch(0.922, 0.0, 0.0),
             input: Color::oklch(0.922, 0.0, 0.0),
             ring: Color::oklch(0.708, 0.0, 0.0),
+            chart_1: Color::oklch(0.646, 0.222, 41.116),
+            chart_2: Color::oklch(0.6, 0.118, 184.704),
+            chart_3: Color::oklch(0.398, 0.07, 227.392),
+            chart_4: Color::oklch(0.828, 0.189, 84.429),
+            chart_5: Color::oklch(0.769, 0.188, 70.08),
         }
     }
 
     /// Each variable name with its color.
-    pub fn vars(&self) -> [(&'static str, &Color); 20] {
+    pub fn vars(&self) -> [(&'static str, &Color); 25] {
         [
             ("--background", &self.background),
             ("--foreground", &self.foreground),
@@ -127,6 +147,11 @@ impl Palette {
             ("--border", &self.border),
             ("--input", &self.input),
             ("--ring", &self.ring),
+            ("--chart-1", &self.chart_1),
+            ("--chart-2", &self.chart_2),
+            ("--chart-3", &self.chart_3),
+            ("--chart-4", &self.chart_4),
+            ("--chart-5", &self.chart_5),
         ]
     }
 

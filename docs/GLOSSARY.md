@@ -306,7 +306,7 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Theme** — A palette, a shape, and whether the root is painted. Installed once with `install_theme`, whose returned signal switches it in place. See [installing a theme](components.md#installing-a-theme).
 
-**Palette** — The twenty colors a theme declares as color variables, named after shadcn's (`--primary`, `--muted`, `--ring`, …). Components reference only these. See [what a theme holds](components.md#what-a-theme-holds).
+**Palette** — The twenty-five colors a theme declares as color variables, named after shadcn's (`--primary`, `--muted`, `--ring`, `--chart-1`, …). Components reference only these. See [what a theme holds](components.md#what-a-theme-holds).
 
 **Shape** — The non-color half of a theme: border charset, a surface each for buttons, fields and containers, density, and focus mark. See [what a theme holds](components.md#what-a-theme-holds).
 
