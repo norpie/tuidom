@@ -59,8 +59,8 @@ pub mod __private {
 pub use tuidom_ui_macros::{component, view};
 pub use view::{
     Children, Element, Frames, Mounted, NodeRef, Text, View, VirtualList, VirtualListRef, boxed,
-    component, dyn_text, dynamic, fragment, frames, input, keyed, mount, node_ref, on_mount,
-    portal, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
+    canvas, component, dyn_text, dynamic, fragment, frames, input, keyed, mount, node_ref,
+    on_mount, portal, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
 };
 
 /// A [`Derived`] computing `expr`: shorthand for `derived(move || expr)`.

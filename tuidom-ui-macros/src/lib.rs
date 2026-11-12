@@ -53,8 +53,9 @@ use syn::{
 ///
 /// # Grammar
 ///
-/// - **Elements** — `box { … }` and `input { … }`. Braces hold a comma-separated mix of
-///   attributes and children; a nested element or `text(..)` is a child.
+/// - **Elements** — `box { … }`, `input { … }` and `canvas { … }`. Braces hold a
+///   comma-separated mix of attributes and children; a nested element or `text(..)` is a child.
+///   A `canvas` takes no children.
 /// - **Text** — `text("literal")` is a static node; `text(expr)` is a reactive hole updated in
 ///   place (`expr` is stringified through `Display`). A bare `"literal"` child is static text.
 ///   `text(..) { style: s }` styles the node, always reactively. A text node inherits nothing
@@ -69,6 +70,7 @@ use syn::{
 ///   - On `input` only: `value:` (stringified through `ToString`), `bind_value:` (a
 ///     `Signal<String>`, bound both ways), and `mask:` (an `Option<char>`). These and
 ///     `multiline:` are compile errors on `box`.
+///   - On `canvas` only: `buffer:` — a `CanvasBuffer`, always bound reactively.
 ///   - `ref:` — a `NodeRef`, filled with the element's node while it is mounted.
 ///   - `transitions:` — an iterable of `TransitionConfig`, evaluated once when the element is
 ///     built. A signal read there does not update the transitions, and inside an `if` or
@@ -991,6 +993,17 @@ impl Parse for Node {
                         format!("`{}` applies only to `input`, not `{name}`", attr.name),
                     ));
                 }
+                if name != "canvas"
+                    && let Some(attr) = attrs.iter().find(|a| a.name == "buffer")
+                {
+                    return Err(syn::Error::new(
+                        attr.name.span(),
+                        format!("`buffer` applies only to `canvas`, not `{name}`"),
+                    ));
+                }
+                if name == "canvas" && !children.is_empty() {
+                    return Err(syn::Error::new(name.span(), "`canvas` takes no children"));
+                }
                 Ok(Node::Element {
                     name,
                     attrs,
@@ -1191,6 +1204,7 @@ const KNOWN_EVENTS: &[&str] = &[
     "on_drag",
     "on_wheel",
     "on_scroll",
+    "on_size_change",
     "on_input",
     "on_transition_end",
     "on_animation_end",
@@ -1469,6 +1483,7 @@ impl Attr {
                 }
             }
             "bind_value" => quote! { .bind_value(#value) },
+            "buffer" => quote! { .dyn_buffer(move || #value) },
             "ref" => quote! { .node_ref(#value) },
             // Evaluated once as the element is built, so a signal read here is not tracked by the
             // element. Inside an `if`/`match`, it would subscribe the enclosing dynamic block.
@@ -1549,6 +1564,7 @@ fn element_ctor(name: &Ident) -> TokenStream2 {
     match name.to_string().as_str() {
         "box" => quote! { ::tuidom_ui::boxed() },
         "input" => quote! { ::tuidom_ui::input() },
+        "canvas" => quote! { ::tuidom_ui::canvas() },
         other => {
             let message = format!("unknown element `{other}`");
             quote_spanned! { name.span() => compile_error!(#message) }

@@ -1,0 +1,5 @@
+error: `buffer` applies only to `canvas`, not `box`
+ --> tests/ui/buffer_on_box.rs:5:15
+  |
+5 |         box { buffer: todo!() }
+  |               ^^^^^^

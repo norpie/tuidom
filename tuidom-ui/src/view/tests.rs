@@ -8,6 +8,7 @@ use std::time::Duration;
 use tuidom::animation::{
     AnimatableProperty, Easing, KeyframeAnimation, TransitionConfig, TransitionProperty,
 };
+use tuidom::canvas::{CanvasBuffer, CanvasStyle};
 use tuidom::event::{KeyCode, MouseButton};
 use tuidom::headless::{HeadlessRuntime, ScreenColor};
 use tuidom::style::{
@@ -16,8 +17,8 @@ use tuidom::style::{
 use tuidom::{Document, NodeId};
 
 use super::{
-    Children, View, VirtualListRef, boxed, component, dyn_text, dynamic, fragment, keyed, mount,
-    node_ref, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
+    Children, View, VirtualListRef, boxed, canvas, component, dyn_text, dynamic, fragment, keyed,
+    mount, node_ref, text, use_document, virtual_list, virtual_list_measured, virtual_list_ref,
 };
 use crate::testing::Harness;
 use crate::{Callback, Signal, state};
@@ -2695,8 +2696,23 @@ fn every_element_event_is_accepted_and_freed_on_unmount() {
     // still holds. This `view!` also pins the macro's event list to the builder's methods: a
     // name the macro accepts but `Element` lacks fails to compile here.
     let probe = Arc::new(());
-    let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13] =
-        std::array::from_fn(|_| probe.clone());
+    let [
+        p0,
+        p1,
+        p2,
+        p3,
+        p4,
+        p5,
+        p6,
+        p7,
+        p8,
+        p9,
+        p10,
+        p11,
+        p12,
+        p13,
+        p14,
+    ] = std::array::from_fn(|_| probe.clone());
     let view = crate::view! {
         box {
             on_click: move || { let _ = &p0; },
@@ -2713,14 +2729,91 @@ fn every_element_event_is_accepted_and_freed_on_unmount() {
             on_animation_iteration: move || { let _ = &p11; },
             on_press_outside: move || { let _ = &p12; },
             on_drag: move || { let _ = &p13; },
+            on_size_change: move || { let _ = &p14; },
         }
     };
     let doc = Document::new().unwrap();
     let mounted = mount(&doc, doc.root(), view).unwrap();
-    assert_eq!(Arc::strong_count(&probe), 15);
+    assert_eq!(Arc::strong_count(&probe), 16);
 
     mounted.unmount();
     assert_eq!(Arc::strong_count(&probe), 1);
+}
+
+// ---- Canvas -----------------------------------------------------------------------------
+
+fn filled(width: u16, height: u16, symbol: &str) -> CanvasBuffer {
+    let mut buffer = CanvasBuffer::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            buffer.set(x, y, symbol, CanvasStyle::default());
+        }
+    }
+    buffer
+}
+
+#[test]
+fn a_canvas_shows_its_buffer_and_redraws_when_a_signal_changes() {
+    let label = state(String::from("one"));
+    let mut h = Harness::new(8, 1, move || {
+        crate::view! {
+            canvas {
+                buffer: {
+                    let label = label.get();
+                    let mut buffer = CanvasBuffer::new(label.len() as u16, 1);
+                    buffer.text(0, 0, &label, CanvasStyle::default());
+                    buffer
+                },
+            }
+        }
+    });
+    assert_eq!(h.row(0), "one");
+
+    label.set(String::from("three"));
+    assert_eq!(h.row(0), "three");
+}
+
+#[test]
+fn a_canvas_drawn_to_its_reported_size_fills_its_box_through_resizes() {
+    let size = state((0u16, 0u16));
+    let mut h = Harness::new(4, 2, move || {
+        crate::view! {
+            canvas {
+                style: tuidom::style! { flex_grow: 1.0 },
+                on_size_change: move |ev| size.set((ev.width, ev.height)),
+                buffer: {
+                    let (width, height) = size.get();
+                    filled(width, height, "#")
+                },
+            }
+        }
+    });
+    assert_eq!(h.screen(), "####\n####");
+
+    h.resize(6, 3);
+    assert_eq!(h.screen(), "######\n######\n######");
+
+    h.resize(3, 1);
+    assert_eq!(h.screen(), "###");
+    assert_eq!(size.get(), (3, 1));
+}
+
+#[test]
+fn a_buffer_on_a_box_is_ignored() {
+    let view = boxed().buffer(filled(2, 1, "x"));
+    let doc = Document::new().unwrap();
+    mount(&doc, doc.root(), view).unwrap();
+    let mut rt = HeadlessRuntime::new(doc, 2, 1);
+    rt.render().unwrap();
+    assert_eq!(read_row(&rt, 0, 2), "  ");
+}
+
+#[test]
+fn children_on_a_canvas_fail_the_mount() {
+    let view = canvas().child(text("no"));
+    let doc = Document::new().unwrap();
+    assert!(mount(&doc, doc.root(), view).is_err());
+    assert!(doc.get_children(doc.root()).is_empty());
 }
 
 #[test]

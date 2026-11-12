@@ -1,0 +1,5 @@
+error: `canvas` takes no children
+ --> tests/ui/canvas_with_children.rs:5:9
+  |
+5 |         canvas { text("no") }
+  |         ^^^^^^

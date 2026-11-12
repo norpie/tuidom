@@ -59,9 +59,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tuidom::animation::TransitionConfig;
+use tuidom::canvas::CanvasBuffer;
 use tuidom::event::{
     AnimationEndEvent, AnimationIterationEvent, DragEvent, FocusEvent, InputEvent, KeyEvent,
-    ListenerHandle, MouseEvent, ScrollEvent, TransitionEndEvent, WheelEvent,
+    ListenerHandle, MouseEvent, ScrollEvent, SizeChangeEvent, TransitionEndEvent, WheelEvent,
 };
 use tuidom::style::{FlexDirection, Length, Overflow, Position, Style};
 use tuidom::virtualize::Virtualizer;
@@ -265,12 +266,14 @@ impl<K: Eq + Hash + Clone + Send + Sync + 'static> DynKey for K {
 
 /// Which engine node an [`Element`] mounts as.
 ///
-/// Both share the same builder — style, attributes, focusability, listeners, and children —
+/// All share the same builder — style, attributes, focusability, listeners, and children —
 /// and differ only in the node the engine creates for them. An `Input` is an editable leaf,
-/// focusable by default; a `Box` is a plain container.
+/// focusable by default; a `Canvas` is a leaf showing a buffer of cells; a `Box` is a plain
+/// container.
 enum ElementKind {
     Box,
     Input,
+    Canvas,
 }
 
 /// An element description: a builder for its style, attributes, focusability, disabled state,
@@ -291,6 +294,7 @@ pub struct Element {
     transitions: Vec<TransitionConfig>,
     trap_focus: bool,
     input: InputProps,
+    buffer: Option<Source<CanvasBuffer>>,
     listeners: Vec<ListenerReg>,
     node_ref: Option<NodeRef>,
     children: Vec<View>,
@@ -793,7 +797,18 @@ pub fn input() -> Element {
     element(ElementKind::Input)
 }
 
-/// The shared empty builder both element constructors start from.
+/// Begin building a canvas element: a leaf showing the cells of a
+/// [`CanvasBuffer`] the app draws.
+///
+/// [`buffer`](Element::buffer) and [`dyn_buffer`](Element::dyn_buffer) set what it shows. A
+/// canvas takes no children; mounting one with children fails. To draw at the size layout gives
+/// it, record the size from [`on_size_change`](Element::on_size_change) in a signal the buffer
+/// closure reads.
+pub fn canvas() -> Element {
+    element(ElementKind::Canvas)
+}
+
+/// The shared empty builder every element constructor starts from.
 fn element(kind: ElementKind) -> Element {
     Element {
         kind,
@@ -808,6 +823,7 @@ fn element(kind: ElementKind) -> Element {
         transitions: Vec::new(),
         trap_focus: false,
         input: InputProps::default(),
+        buffer: None,
         listeners: Vec::new(),
         node_ref: None,
         children: Vec::new(),
@@ -1021,6 +1037,22 @@ impl Element {
         self
     }
 
+    /// Set a canvas's buffer once, at mount.
+    pub fn buffer(mut self, buffer: CanvasBuffer) -> Self {
+        self.buffer = Some(Source::Static(buffer));
+        self
+    }
+
+    /// Bind a canvas's buffer reactively: the closure reruns when a signal it read changes, and
+    /// a buffer equal to the one shown changes nothing.
+    pub fn dyn_buffer<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> CanvasBuffer + Send + Sync + 'static,
+    {
+        self.buffer = Some(Source::Reactive(Box::new(f)));
+        self
+    }
+
     /// Bind `node_ref` to this element's node while it is mounted. It fills once the element's
     /// children have mounted and empties when the element unmounts.
     pub fn node_ref(mut self, node_ref: NodeRef) -> Self {
@@ -1090,6 +1122,9 @@ element_events! {
     on_wheel: WheelEvent;
     /// Register a listener for this element's scroll offset changing.
     on_scroll: ScrollEvent;
+    /// Register a listener for this element's content box changing size. It also fires on the
+    /// first layout after mounting, and does not bubble.
+    on_size_change: SizeChangeEvent;
     /// Register a listener for an input's value changing from a key press. It bubbles, so a
     /// container sees every input inside it.
     on_input: InputEvent;
@@ -1234,6 +1269,7 @@ fn mount_view(
             let node = match element.kind {
                 ElementKind::Box => doc.create_box()?,
                 ElementKind::Input => doc.create_input("")?,
+                ElementKind::Canvas => doc.create_canvas()?,
             };
             place(doc, parent, node, before)?;
             register_remove(doc, parent, node, scope);
@@ -1294,10 +1330,22 @@ fn mount_view(
                 element.disabled_style,
                 |d, n, s: Style| d.set_disabled_style(n, &s),
             );
+            if !matches!(element.kind, ElementKind::Input) && !element.input.is_empty() {
+                tracing::warn!(
+                    ?node,
+                    "input-only properties set on another element; ignored"
+                );
+            }
+            if !matches!(element.kind, ElementKind::Canvas) && element.buffer.is_some() {
+                tracing::warn!(
+                    ?node,
+                    "a buffer set on an element that is not a canvas; ignored"
+                );
+            }
             match element.kind {
                 ElementKind::Input => bind_input(doc, node, element.input),
-                ElementKind::Box if !element.input.is_empty() => {
-                    tracing::warn!(?node, "input-only properties set on a box; ignored");
+                ElementKind::Canvas => {
+                    bind_node(doc, node, "buffer", element.buffer, Document::set_canvas);
                 }
                 ElementKind::Box => {}
             }
