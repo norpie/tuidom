@@ -551,6 +551,156 @@ fn half_block_cells_are_reused_until_the_image_or_its_size_changes() {
     assert!(lock::mutex(&doc.inner.half_block_images).is_empty());
 }
 
+/// A headless runtime drawing images as kitty placeholders.
+fn placeholder_runtime(doc: &Document, width: u16, height: u16) -> HeadlessRuntime {
+    doc.set_image_protocol(ImageProtocol::Kitty);
+    HeadlessRuntime::new(doc.clone(), width, height)
+}
+
+fn placeholder_text(row: u16, column: u16) -> String {
+    crate::image::placeholder::placeholder(row, column).unwrap()
+}
+
+fn kitty_id(doc: &Document, node: NodeId) -> u32 {
+    lock::mutex(&doc.inner.kitty_images)
+        .0
+        .get(&node)
+        .unwrap()
+        .id
+}
+
+fn id_screen_color(id: u32) -> Option<ScreenColor> {
+    let [_, r, g, b] = id.to_be_bytes();
+    Some(ScreenColor::from_rgb(r, g, b))
+}
+
+#[test]
+fn a_placeholder_image_numbers_each_cell_and_colors_it_with_its_id() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(2));
+        style.height(Length::Cells(2));
+        style.opacity(0.5);
+        style.bold(true);
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(4, 4)).unwrap();
+    // An id whose color is far from black, so blending it toward the background would show.
+    lock::mutex(&doc.inner.kitty_images).1 = 0x0080_C0FF;
+    let mut runtime = placeholder_runtime(&doc, 3, 2);
+    runtime.render().unwrap();
+
+    let id = kitty_id(&doc, image);
+    assert_eq!(id, 0x0080_C100);
+    for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+        let cell = runtime.get_cell(x, y).unwrap();
+        assert_eq!(cell.text, placeholder_text(y as u16, x as u16));
+        assert_eq!(cell.fg, id_screen_color(id), "opacity leaves the id alone");
+        assert!(!cell.bold);
+    }
+    assert_eq!(runtime.get_cell(2, 0).unwrap().text, " ");
+}
+
+#[test]
+fn a_contained_placeholder_image_starts_numbering_at_its_own_corner() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(4));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image(image, solid_image(16, 16)).unwrap();
+    let mut runtime = placeholder_runtime(&doc, 4, 1);
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, " ");
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, placeholder_text(0, 0));
+    assert_eq!(runtime.get_cell(2, 0).unwrap().text, placeholder_text(0, 1));
+    assert_eq!(runtime.get_cell(3, 0).unwrap().text, " ");
+}
+
+#[test]
+fn a_scrolled_placeholder_image_keeps_its_row_numbers() {
+    let doc = Document::new().unwrap();
+    let container = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.flex_direction(FlexDirection::Column);
+    style.overflow_y(Overflow::Scroll);
+    style.height(Length::Cells(2));
+    style.width(Length::Cells(3));
+    doc.set_style(container, &style).unwrap();
+    doc.append_child(doc.root(), container).unwrap();
+
+    let image = doc.create_image().unwrap();
+    let mut style = Style::new();
+    style.flex_shrink(0.0);
+    style.width(Length::Cells(1));
+    style.height(Length::Cells(4));
+    doc.set_style(image, &style).unwrap();
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(1, 4)).unwrap();
+    doc.append_child(container, image).unwrap();
+
+    let mut runtime = placeholder_runtime(&doc, 3, 3);
+    runtime.render().unwrap();
+    doc.scroll_to(container, 0, 2).unwrap();
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, placeholder_text(2, 0));
+    assert_eq!(runtime.get_cell(0, 1).unwrap().text, placeholder_text(3, 0));
+    assert_eq!(runtime.get_cell(0, 2).unwrap().text, " ");
+}
+
+#[test]
+fn a_sibling_with_a_higher_z_index_draws_over_placeholder_cells() {
+    let doc = Document::new().unwrap();
+    let overlay = doc.create_box().unwrap();
+    let mut style = Style::new();
+    style.position(Position::Absolute { x: 1, y: 0 });
+    style.z_index(1);
+    doc.set_style(overlay, &style).unwrap();
+    let text = doc.create_text("X").unwrap();
+    doc.append_child(overlay, text).unwrap();
+    doc.append_child(doc.root(), overlay).unwrap();
+
+    let image = image_at_start(&doc, |style| {
+        style.width(Length::Cells(3));
+        style.height(Length::Cells(1));
+    });
+    doc.set_image_fit(image, ImageFit::Fill).unwrap();
+    doc.set_image(image, solid_image(3, 2)).unwrap();
+    let mut runtime = placeholder_runtime(&doc, 3, 1);
+    runtime.render().unwrap();
+
+    assert_eq!(runtime.get_cell(0, 0).unwrap().text, placeholder_text(0, 0));
+    assert_eq!(runtime.get_cell(1, 0).unwrap().text, "X");
+    assert_eq!(runtime.get_cell(2, 0).unwrap().text, placeholder_text(0, 2));
+}
+
+#[test]
+fn a_new_image_gets_a_new_id_and_a_removed_node_drops_its_own() {
+    let doc = Document::new().unwrap();
+    let image = image_at_start(&doc, |_| {});
+    let data = solid_image(8, 16);
+    doc.set_image(image, data.clone()).unwrap();
+    let mut runtime = placeholder_runtime(&doc, 2, 1);
+    runtime.render().unwrap();
+    let first = kitty_id(&doc, image);
+
+    doc.update_style(image, |style| style.background(Color::black()))
+        .unwrap();
+    runtime.render().unwrap();
+    assert_eq!(kitty_id(&doc, image), first);
+
+    doc.set_image(image, solid_image(8, 16)).unwrap();
+    runtime.render().unwrap();
+    let second = kitty_id(&doc, image);
+    assert_ne!(second, first);
+    assert_eq!(runtime.get_cell(0, 0).unwrap().fg, id_screen_color(second));
+
+    doc.remove_child(doc.root(), image).unwrap();
+    assert!(lock::mutex(&doc.inner.kitty_images).0.is_empty());
+}
+
 /// A canvas filling the screen that redraws itself full of `#` at every size it reports.
 fn self_sizing_canvas() -> Document {
     let doc = Document::new().unwrap();

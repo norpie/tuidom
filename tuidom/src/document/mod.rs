@@ -142,6 +142,7 @@ impl Document {
                 layout_snapshot: RwLock::new(NodeMap::default()),
                 reported_sizes: Mutex::new(NodeMap::default()),
                 half_block_images: Mutex::new(NodeMap::default()),
+                kitty_images: Mutex::new((NodeMap::default(), 0)),
                 scroll_offsets: Mutex::new(NodeMap::default()),
                 scroll_activity: Mutex::new(NodeMap::default()),
                 scrollbar_grab: Mutex::new(None),

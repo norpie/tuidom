@@ -5,7 +5,7 @@ use crate::error::{Result, TuidomError};
 use crate::id::NodeId;
 use crate::image::{
     ASSUMED_CELL_PIXELS, HalfBlockImage, ImageData, ImageDrawing, ImageFit, ImageFitting,
-    ImageProtocol, fit_image,
+    ImageProtocol, KittyImage, fit_image,
 };
 use crate::lock;
 use crate::node::{NodeData, NodeKind};
@@ -136,6 +136,28 @@ impl Document {
         let cells = entry.cells().clone();
         cache.insert(node, entry);
         Some((fitting, cells))
+    }
+
+    /// The kitty image id `node` shows `image` under, handing out a new one when the image is
+    /// not the one the node last showed. Ids are 24-bit and never zero.
+    pub(crate) fn kitty_image_id(&self, node: NodeId, image: &Arc<ImageData>) -> u32 {
+        let mut guard = lock::mutex(&self.inner.kitty_images);
+        let (images, last) = &mut *guard;
+        if let Some(entry) = images.get(&node)
+            && Arc::ptr_eq(&entry.image, image)
+        {
+            return entry.id;
+        }
+        *last = *last % 0x00FF_FFFF + 1;
+        let id = *last;
+        images.insert(
+            node,
+            KittyImage {
+                image: image.clone(),
+                id,
+            },
+        );
+        id
     }
 
     /// Drop every cached half-block image, for frames that draw images another way.

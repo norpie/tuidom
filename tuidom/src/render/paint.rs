@@ -11,14 +11,14 @@ use crate::canvas::CanvasBuffer;
 use crate::document::Document;
 use crate::document::selection::value_to_display_offset;
 use crate::id::{NodeId, NodeMap};
-use crate::image::{ImageDrawing, ImageFitting};
+use crate::image::{ImageDrawing, ImageFitting, fit_image, placeholder};
 use crate::node::{
     LayoutRect, NodeKindView, input_display_content, input_scrolled_display_content,
 };
 use crate::paint_order::{PaintEntry, ScrollbarPaint, paint_order};
 use crate::performance::{LargestFillProfile, PaintProfile};
 use crate::render::RenderCursor;
-use crate::render::grid::{Cell, CellAttrs, Grid, GridRect};
+use crate::render::grid::{Cell, CellAttrs, CellContent, Glyph, Grid, GridRect};
 use crate::style::color::{Rgb, RgbCache};
 use crate::style::{CursorShape, ResolvedColor};
 
@@ -90,8 +90,8 @@ pub(crate) fn paint(
     };
     let grid_time = grid_start.elapsed();
 
-    let half_blocks = doc.image_drawing() == ImageDrawing::HalfBlock;
-    if !half_blocks {
+    let drawing = doc.image_drawing();
+    if drawing != ImageDrawing::HalfBlock {
         doc.clear_half_block_images();
     }
     let cell_pixels = doc.cell_pixels();
@@ -105,15 +105,22 @@ pub(crate) fn paint(
             continue;
         }
         let image = match &entry.kind {
-            NodeKindView::Image { data, fit } if half_blocks => {
+            NodeKindView::Image { data, fit } => {
                 let content = entry.layout.content_rect(&entry.resolved);
-                doc.half_block_image(
-                    entry.id,
-                    data,
-                    *fit,
-                    (content.width, content.height),
-                    cell_pixels,
-                )
+                let content = (content.width, content.height);
+                match drawing {
+                    ImageDrawing::HalfBlock => doc
+                        .half_block_image(entry.id, data, *fit, content, cell_pixels)
+                        .map(|(fitting, cells)| ImagePaint::HalfBlock(fitting, cells)),
+                    ImageDrawing::Placeholders => {
+                        fit_image((data.width(), data.height()), cell_pixels, content, *fit).map(
+                            |fitting| ImagePaint::Placeholders {
+                                fitting,
+                                id: doc.kitty_image_id(entry.id, data),
+                            },
+                        )
+                    }
+                }
             }
             _ => None,
         };
@@ -151,7 +158,7 @@ fn paint_entry(
     node: &PaintEntry,
     focused: Option<crate::id::NodeId>,
     selected: Option<&Range<usize>>,
-    image: Option<&(ImageFitting, Arc<CanvasBuffer>)>,
+    image: Option<&ImagePaint>,
     rgb_cache: &mut RgbCache,
     profile: &mut PaintProfile,
     skipped_background: Option<NodeId>,
@@ -194,9 +201,15 @@ fn paint_entry(
         }
 
         NodeKindView::Image { .. } => {
-            if let Some((fitting, cells)) = image {
-                let offset = (fitting.x, fitting.y);
-                paint_cells(grid, node, cells, offset, fg_rgb, alpha, rgb_cache, profile);
+            match image {
+                Some(ImagePaint::HalfBlock(fitting, cells)) => {
+                    let offset = (fitting.x, fitting.y);
+                    paint_cells(grid, node, cells, offset, fg_rgb, alpha, rgb_cache, profile);
+                }
+                Some(ImagePaint::Placeholders { fitting, id }) => {
+                    paint_placeholders(grid, node, fitting, *id, profile);
+                }
+                None => {}
             }
             None
         }
@@ -433,6 +446,80 @@ fn paint_cells(
                     underline: node_attrs.underline || style.underline,
                 };
                 if grid.write_canvas_cell(col, row, &cell.content, Some(fg), bg, alpha, attrs) {
+                    glyphs += 1;
+                }
+            }
+        }
+    }
+    grid.set_clip(node.clip);
+
+    if let Some(start) = write_start {
+        profile.text_write_time += start.elapsed();
+        profile.glyphs_written += glyphs;
+    }
+}
+
+/// How an image node's cells are drawn this frame.
+enum ImagePaint {
+    HalfBlock(ImageFitting, Arc<CanvasBuffer>),
+    Placeholders { fitting: ImageFitting, id: u32 },
+}
+
+/// Write kitty placeholder cells over the fitted rectangle, cropped to the content box and the
+/// clip. Each cell is numbered by its place in the image, not on screen, so a scrolled image
+/// still shows the right part. Opacity and attributes are left off: the glyph color is the
+/// image id, and blending it would name another image.
+fn paint_placeholders(
+    grid: &mut Grid,
+    node: &PaintEntry,
+    fitting: &ImageFitting,
+    id: u32,
+    profile: &mut PaintProfile,
+) {
+    let content = node.layout.content_rect(&node.resolved);
+    let width = content
+        .width
+        .saturating_sub(fitting.x)
+        .min(fitting.width)
+        .min(placeholder::MAX_CELLS);
+    let height = content
+        .height
+        .saturating_sub(fitting.y)
+        .min(fitting.height)
+        .min(placeholder::MAX_CELLS);
+    let origin_x = content.x.saturating_add(i32::from(fitting.x));
+    let origin_y = content.y.saturating_add(i32::from(fitting.y));
+    let (x, y) = (i64::from(origin_x), i64::from(origin_y));
+    grid.set_clip(
+        node.clip
+            .bound_x(x, x + i64::from(width))
+            .bound_y(y, y + i64::from(height)),
+    );
+
+    let write_start = profile.enabled.then(Instant::now);
+    let mut glyphs = 0;
+    let color = placeholder::id_color(id);
+    if let Some((left, top, right, bottom)) = grid.clip_rect(origin_x, origin_y, width, height) {
+        for row in top..bottom {
+            let image_row = (row as i64 - y) as u16;
+            for col in left..right {
+                let Some(text) = placeholder::placeholder(image_row, (col as i64 - x) as u16)
+                else {
+                    continue;
+                };
+                let content = CellContent::Glyph {
+                    text: Glyph::new(&text),
+                    width: 1,
+                };
+                if grid.write_canvas_cell(
+                    col,
+                    row,
+                    &content,
+                    Some(color),
+                    None,
+                    1.0,
+                    CellAttrs::default(),
+                ) {
                     glyphs += 1;
                 }
             }
