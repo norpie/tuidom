@@ -157,7 +157,7 @@ let ui = view! {
 ```
 
 Inside braces sit attributes (`key: value`) and children, separated by commas. The elements
-are `box`, `input` and `canvas`; `text(..)` is a text node, `frames(..)` cycles text for a spinner, and
+are `box`, `input`, `canvas` and `image`; `text(..)` is a text node, `frames(..)` cycles text for a spinner, and
 `{ expr }` drops in anything that converts to a `View`. `fragment` turns several views into
 one with no wrapper node. The macro's rustdoc has the full grammar.
 
@@ -183,6 +183,25 @@ view! {
 ```
 
 A canvas takes no children, and `buffer:` on any other element is a compile error.
+
+An `image` shows decoded pixels (see [images](rendering.md#images)). Its `source:` is an
+`Arc<ImageData>` and its `fit:` an `ImageFit`, both always bound. Returning the `Arc` already
+shown changes nothing, so an image kept in a signal is not redrawn or uploaded again when
+something else the closure reads changes:
+
+```rust
+let photo = state(Arc::new(ImageData::from_bytes(&bytes)?));
+view! {
+    image {
+        style: style! { width: 40 },
+        fit: ImageFit::Cover,
+        source: photo.get(),
+    }
+}
+```
+
+An image takes no children either, and `source:` or `fit:` on another element is a compile
+error.
 
 An attribute key the macro does not know becomes a string attribute on the node, which is
 how tests tag nodes (`test_id: "save"`). A misspelled typed key lands there too, silently;

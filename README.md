@@ -107,6 +107,7 @@ different framework could be built the same way.
 **Core Primitives:**
 - Box, Text, Input, and Frames node types
 - Canvas nodes showing cells the app draws, for charts and custom graphics
+- Image nodes, drawn with kitty Unicode placeholders or half-block cells
 - Arena-based DOM with `NodeId` handles
 - Permanent document root node as the layout and rendering entry point
 - Async-first with Tokio runtime
@@ -158,6 +159,7 @@ Tests are the verification path for every crate; the examples are for trying it 
 cargo run -p tuidom --example demo                  # most of the engine in one file
 cargo run -p tuidom --example term_info             # what was detected about your terminal
 cargo run -p tuidom --example canvas                # a canvas redrawn to whatever size it gets
+cargo run -p tuidom --example image                 # an image in each fit and protocol
 cargo run -p tuidom-components --example showcase   # each component on its own
 cargo run -p tuidom-components --example tracker    # an app built from the components
 cargo run -p tuidom-router --example mail           # a routed app

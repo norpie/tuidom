@@ -7,7 +7,7 @@ directory explain — see [`README.md`](README.md) for how the two divide.
 
 *Explained in [architecture](architecture.md).*
 
-**Node** — Any item in the DOM tree (Box, Text, Input, Frames, Canvas). We don't use "element" — just "node".
+**Node** — Any item in the DOM tree (Box, Text, Input, Frames, Canvas, Image). We don't use "element" — just "node".
 
 **NodeId** — Lightweight, `Copy` integer handle referencing a node in one document's arena. See [the document model](architecture.md#the-document-model).
 
@@ -230,13 +230,23 @@ in [scrolling](scrolling.md), and stacking in [rendering](rendering.md).*
 
 **Canvas Buffer** — The grid of cells a canvas shows, each a grapheme plus a `CanvasStyle`. Drawn from the canvas's content origin and cropped to its content box. See [canvas](rendering.md#canvas).
 
+**Image** — A node showing decoded pixels, set with `set_image`. Sized by its pixels over the cell size where its style leaves an axis unset; takes no children. See [images](rendering.md#images).
+
+**Image Data** — RGBA pixels at a width and height, shared behind an `Arc` so setting the same image again is free. Decoded from PNG, JPEG, GIF or WebP behind the `decode` feature. See [images](rendering.md#images).
+
+**Image Fit** — How an image fills its content box: `Contain`, `Cover`, or `Fill`. See [images](rendering.md#images).
+
+**Image Protocol** — How the document draws images: `Auto`, `Kitty`, or `HalfBlock`. `Auto` uses kitty placeholders where the terminal is detected to support them. See [images](rendering.md#images).
+
+**Unicode Placeholder** — A cell holding `U+10EEEE` and two marks numbering its row and column, colored with a kitty image id, which kitty draws as that part of the image. Makes an image ordinary cells. See [kitty placeholders](rendering.md#kitty-placeholders).
+
 **Culling** — Render-time drop of a node whose translated rect lies wholly outside its clip. Paint-only: culled nodes stay in the DOM and in layout. See [culling](scrolling.md#culling).
 
 **Scrollbar** — Overlay strips on a scroll container's last viewport column and row, occupying no layout. See [scrollbars](scrolling.md#scrollbars).
 
 **WhenScrolling** — The auto-hiding scrollbar show mode: appears on offset change, holds, then fades. Scheduled rather than polled. See [`WhenScrolling`](scrolling.md#whenscrolling).
 
-**Terminal Info** — What is known about the terminal: name, multiplexer, color depth, image protocols, default colors, pixel size. Reported only; the engine draws the same whatever it says. See [what the terminal is](rendering.md#what-the-terminal-is).
+**Terminal Info** — What is known about the terminal: name, multiplexer, color depth, image protocols, default colors, pixel size. Reported, and read only by images, which it decides how to draw and how large. See [what the terminal is](rendering.md#what-the-terminal-is).
 
 **Terminal Probe** — The queries `run()` sends once raw mode is on and before any task reads input, ending with DA1, whose reply means the terminal has answered everything it will. See [what the terminal is](rendering.md#what-the-terminal-is).
 

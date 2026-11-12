@@ -162,6 +162,105 @@ The frame that changes the size waits for that handler before it paints, so the 
 shows in the same frame, never the old one cropped or with space left over. Because the
 buffer is no minimum, a canvas drawn for a larger box can still shrink and be told so.
 
+## Images
+
+An **image** node shows decoded pixels. The app gives it an `ImageData`, RGBA bytes at a width
+and height, behind an `Arc`:
+
+```rust
+use std::sync::Arc;
+use tuidom::image::{ImageData, ImageFit};
+
+let image = doc.create_image()?;
+doc.append_child(doc.root(), image)?;
+doc.set_image(image, Arc::new(ImageData::from_bytes(&std::fs::read("cat.png")?)?))?;
+doc.set_image_fit(image, ImageFit::Cover)?;
+```
+
+`ImageData::from_bytes` decodes PNG, JPEG, GIF (its first frame) and WebP through the `image`
+crate, behind the `decode` feature, which is on by default. Without it, `ImageData::from_rgba`
+takes pixels the app decoded itself. Setting the same `Arc` again does nothing, decided without
+comparing pixels, so an app that keeps its images in `Arc`s can set them freely.
+
+**Sizing.** An axis the style leaves unset takes the image's pixels divided by the cell's pixel
+size, rounded up. The cell size comes from [`TerminalInfo::pixel_size`](#what-the-terminal-is);
+where the terminal has not reported one, a cell is assumed to be 8 by 16 pixels. When the style
+sets one axis and not the other, the other follows the image's aspect ratio, as an HTML `<img>`
+does. Only a size the style sets counts: a width known because flex stretched or shrank the
+node leaves the height at the image's own, since following it would grow a stretched image off
+the screen. As with a canvas, that size is preferred rather than a minimum, and an image takes
+no children.
+
+**Fit.** The image is placed in the content box by its `ImageFit`:
+
+- `Contain`, the default, shows the whole image as large as fits with its aspect ratio kept,
+  centered. An odd leftover cell goes to the right or bottom. The node's background shows in
+  the space around it.
+- `Cover` fills the box with the aspect ratio kept, cropping evenly from the sides that
+  overflow.
+- `Fill` stretches the whole image over the box.
+
+Aspect ratios are worked out in pixels, so a cell's being taller than it is wide is accounted
+for.
+
+**How it is drawn** is one choice for the whole document, `doc.set_image_protocol(..)`:
+
+- `Auto`, the default, uses kitty placeholders where `TerminalInfo::graphics.placeholders` says
+  the terminal supports them, and half-blocks everywhere else, including before the probe has
+  answered and in headless runs that declare nothing.
+- `Kitty` always uses placeholders, for a terminal that supports them but is not detected.
+- `HalfBlock` always uses half-blocks.
+
+When the probe's answer changes what `Auto` resolves to, or changes the cell size, the next
+frame redraws.
+
+### Half-blocks
+
+Each cell shows two pixels: `▀` with the upper one as the glyph color and the lower one as
+the background. The image is resampled to that resolution by averaging the pixels each one
+covers, with color weighted by alpha so transparent pixels do not tint their neighbors. A fully
+transparent half leaves that half showing what is behind the cell, and a cell transparent in
+both stays empty. A partly transparent upper half blends over the lower half's color rather
+than over what is behind, since a cell has only two colors; it shows only on soft edges.
+
+The cells go through the same painting as a canvas, so clipping, scrolling, opacity and
+z-order all apply. They are made once per image and size and reused until either changes.
+
+### Kitty placeholders
+
+Kitty's graphics protocol can show an image through ordinary cells. Each covered cell holds the
+character `U+10EEEE` and two combining marks numbering its row and column within the image,
+and its glyph color is the image's id. The terminal draws the matching part of the uploaded
+image in that cell. Because the image is cells, clipping, scrolling, overlays and the diff all
+work unchanged: a scrolled image writes the cells still visible, numbered by their place in the
+image, and a node drawn over part of it simply replaces those cells.
+
+The pixels behind the ids are uploaded in the flush, before the cells that use them and inside
+the same synchronized update. An upload is the image already resampled to the pixels its cells
+cover, compressed and sent in chunks. Kitty fits an image into its placeholder rectangle
+keeping the aspect ratio, so sending it at exactly that shape is what lets `Fill` stretch and
+`Cover` crop. The cost is that an id names one image at one size: when the node's fitted size,
+crop or the cell size changes, the image is uploaded again under a new id and the old one is
+deleted. Ids a frame no longer draws are deleted too, and so is everything still held when the
+app exits normally; a panic exit leaves them to the terminal.
+
+Some limits follow from the cell encoding:
+
+- **Opacity is not applied.** Blending the glyph color would turn it into another image's id,
+  so a translucent node's image draws fully opaque.
+- **At most 297 cells** wide or tall, the number of marks kitty defines; beyond that the image
+  is cropped.
+- **Ids are 24-bit colors.** Like everything else the engine draws, they go out as truecolor; a
+  terminal or multiplexer that downsamples colors breaks them.
+
+Inside tmux, the upload and delete commands are wrapped for passthrough, which tmux forwards
+only with `allow-passthrough` on. The placeholder cells are plain text and need nothing.
+
+Not every terminal that speaks kitty graphics supports placeholders, and none says so when
+asked. WezTerm answers the kitty query without them, so `graphics.placeholders` is set only
+when the kitty query answered and the terminal is kitty or Ghostty. Sixel and iTerm2 images are
+not drawn yet.
+
 ## Culling
 
 Painting drops any node whose translated rectangle lies wholly outside its clip, and stops
@@ -287,10 +386,13 @@ How far each field goes:
 - `no_color` is the user's `NO_COLOR` preference, not something the terminal lacks.
 - `graphics.iterm2` has no query, so it comes from the terminal's name alone. Inside tmux,
   `graphics.kitty` does too.
+- `graphics.placeholders`, kitty graphics shown through placeholder cells, also goes by name:
+  no terminal answers a query for it.
 - `pixel_size` is re-read on every resize, and the event fires again when it changes.
 
-All of it is reported, and none of it changes how the engine draws. Colors still go out as
-24-bit RGB, and the background color math still uses the
+Images are the one thing that reads it: `graphics.placeholders` picks how they are drawn under
+`ImageProtocol::Auto`, and `pixel_size` sizes them. Nothing else changes how the engine draws.
+Colors still go out as 24-bit RGB, and the background color math still uses the
 [declared terminal background](colors.md#terminal-background-is-an-assumption).
 
 ## Performance metrics

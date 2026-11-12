@@ -23,7 +23,20 @@
           shrink below; takes no children
     - [x] Drawn from the content origin, cropped to the content box and clip; colors and
           opacity blend, unset fg takes the node's color, unset bg shows what is behind
-  - [ ] Image (kitty Unicode placeholders, half-block fallback, sixel, iTerm2)
+  - [x] Image (decoded pixels behind an `Arc`, set with `set_image`)
+    - [x] `ImageData` from RGBA, or from PNG, JPEG, GIF and WebP behind the default `decode`
+          feature
+    - [x] Sized by pixels over the cell size; one style-set axis derives the other from the
+          aspect ratio
+    - [x] `ImageFit::Contain`, `Cover` and `Fill`
+    - [x] `set_image_protocol`: `Auto` picks kitty placeholders where detected, half-blocks
+          elsewhere
+    - [x] Half-blocks: two pixels a cell, transparent halves show what is behind, cached per
+          image and size
+    - [x] Kitty Unicode placeholders: images as cells, uploaded fitted and compressed in the
+          flush before them, deleted when no longer drawn and on exit, tmux passthrough
+    - [ ] Sixel
+    - [ ] iTerm2 inline images
 - [x] Typed style struct for known properties + raw custom style properties
 - [x] Attributes stored as `HashMap<String, String>`
 - [x] Public attributes API: set/get/remove
@@ -317,13 +330,14 @@ Solves the "dropdown in modal" problem: a dropdown in one subtree shouldn't unex
   - [x] Per event, so a burst of input still lets frames in between
   - [x] Direct `Document` calls from other tasks each land whole, but a group of them is not
         held together
-- [x] Terminal info (`doc.terminal()`, `on_terminal_info`), reported and never acted on:
+- [x] Terminal info (`doc.terminal()`, `on_terminal_info`), reported, and read only by images:
   - [x] Environment guess (`TerminalInfo::from_env`): terminal, multiplexer, color depth,
         `NO_COLOR`, SSH
   - [x] Probe in `run()` before input is read: XTVERSION, OSC 10/11, kitty graphics, XTGETTCAP,
         DA1 as the end marker and sixel flag, with a deadline for terminals that ignore DA1
   - [x] Inside tmux: the attached terminal and `allow-passthrough` from `tmux display-message`;
         image protocols by that terminal's name, never by a passthrough query
+  - [x] Kitty placeholder support, by the kitty reply and the terminal's name
   - [x] Pixel size, re-read on resize
   - [x] Declared in headless with `HeadlessRuntime::set_terminal_info`
   - [ ] Queries outside Unix
@@ -556,6 +570,7 @@ What stays true here regardless of the macro:
   - [x] Literal values applied once, other expressions bound reactively
   - [x] `if`, `match`, keyed and unkeyed `each`, view holes, `frames`, `portal`
   - [x] `canvas` with a reactive `buffer:`, and `on_size_change` on every element
+  - [x] `image` with reactive `source:` and `fit:`
   - [x] `ref:` and `trap_focus:` attributes
 - [x] `#[component]` with props arriving as signals
   - [x] Optional props through `#[prop(default)]`, `#[prop(default = expr)]` and `Option<T>`
