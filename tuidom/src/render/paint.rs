@@ -127,7 +127,7 @@ pub(crate) fn paint(
                         *fit,
                     )
                     .map(|fitting| {
-                        let id = doc.image_id(entry.id, data, &fitting, cell_pixels);
+                        let id = doc.image_id(entry.id, data, &fitting, cell_pixels, drawing);
                         let top = entry
                             .layout
                             .content_rect(&entry.resolved)
@@ -162,7 +162,8 @@ pub(crate) fn paint(
                     ImageDrawing::Placeholders => {
                         fit_image((data.width(), data.height()), cell_pixels, content, *fit).map(
                             |fitting| {
-                                let id = doc.image_id(entry.id, data, &fitting, cell_pixels);
+                                let id =
+                                    doc.image_id(entry.id, data, &fitting, cell_pixels, drawing);
                                 kitty.push(KittyShown {
                                     id,
                                     image: data.clone(),

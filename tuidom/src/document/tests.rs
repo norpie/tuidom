@@ -1171,6 +1171,24 @@ fn inside_tmux_iterm2_images_are_wrapped_and_sixel_is_not() {
     }
 }
 
+#[test]
+fn switching_between_sixel_and_iterm2_redraws_with_the_new_protocol() {
+    let (doc, image, mut runtime) = sixel_scene();
+    runtime.render_flushed().unwrap();
+    let sixel_id = shown_id(&doc, image);
+
+    doc.set_image_protocol(ImageProtocol::ITerm2);
+    runtime.render_flushed().unwrap();
+    let output = String::from_utf8_lossy(runtime.flush_output()).into_owned();
+    assert_ne!(shown_id(&doc, image), sixel_id);
+    assert_eq!(output.matches("\x1b]1337;File=").count(), 1, "{output:?}");
+    assert_eq!(sixel_draws(runtime.flush_output()), []);
+
+    doc.set_image_protocol(ImageProtocol::Sixel);
+    runtime.render_flushed().unwrap();
+    assert_eq!(sixel_draws(runtime.flush_output()), [(0, 0, 30, 36)]);
+}
+
 fn kitty_image(doc: &Document, columns: u16, rows: u16, data: Arc<ImageData>) -> NodeId {
     let image = image_at_start(doc, |style| {
         style.width(Length::Cells(columns));

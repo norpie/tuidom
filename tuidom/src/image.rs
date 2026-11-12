@@ -154,14 +154,17 @@ fn pixels(value: f64, limit: u32) -> u32 {
 }
 
 /// The id a node's image is shown under, and what it was made from. An id names one image at
-/// one fitted size, crop and cell size; when any of them changes the node gets a new id, so its
-/// cells change and are rewritten, and a kitty upload under the old id is deleted.
+/// one fitted size, crop and cell size, drawn with one protocol; when any of them changes the
+/// node gets a new id, so its cells change and are rewritten, and a kitty upload under the old
+/// id is deleted. Sixel and iTerm2 mark their cells alike, so without the protocol a switch
+/// between them would leave every cell as it was and draw nothing.
 #[derive(Debug)]
 pub(crate) struct NumberedImage {
     pub image: Arc<ImageData>,
     pub size: (u16, u16),
     pub source: (u32, u32, u32, u32),
     pub cell: (u16, u16),
+    pub drawing: ImageDrawing,
     pub id: u32,
 }
 

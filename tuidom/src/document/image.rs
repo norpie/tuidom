@@ -141,15 +141,16 @@ impl Document {
         Some((fitting, cells))
     }
 
-    /// The image id `node` shows `image` under at `fitting`, handing out a new one when
-    /// the image, its fitted size, its crop or the cell size is not what the node last showed.
-    /// Ids are 24-bit and never zero.
+    /// The image id `node` shows `image` under at `fitting` with `drawing`, handing out a new
+    /// one when the image, its fitted size, its crop, the cell size or the protocol is not what
+    /// the node last showed. Ids are 24-bit and never zero.
     pub(crate) fn image_id(
         &self,
         node: NodeId,
         image: &Arc<ImageData>,
         fitting: &ImageFitting,
         cell: (u16, u16),
+        drawing: ImageDrawing,
     ) -> u32 {
         let size = (fitting.width, fitting.height);
         let mut guard = lock::mutex(&self.inner.image_ids);
@@ -159,6 +160,7 @@ impl Document {
             && entry.size == size
             && entry.source == fitting.source
             && entry.cell == cell
+            && entry.drawing == drawing
         {
             return entry.id;
         }
@@ -171,6 +173,7 @@ impl Document {
                 size,
                 source: fitting.source,
                 cell,
+                drawing,
                 id,
             },
         );
